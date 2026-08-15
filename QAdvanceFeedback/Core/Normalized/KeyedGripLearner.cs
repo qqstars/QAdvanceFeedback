@@ -26,6 +26,19 @@ namespace QAdvanceFeedback.Core.Normalized
         public const string LegacyImportKey = "__legacy_import__";
 
         private readonly Dictionary<string, GripLearner> _learners = new Dictionary<string, GripLearner>(StringComparer.Ordinal);
+        private readonly double _learnCapG;
+
+        /// <param name="learnCapG">The channel-specific learning-path reject ceiling (see
+        /// <see cref="GripLearner.LearnCapG"/>) passed to every <see cref="GripLearner"/> THIS
+        /// instance creates (fresh, legacy-seeded, or restored via <see cref="ImportAll"/>) - defaults
+        /// to <see cref="GripLearner.MaxPlausibleG"/> so every pre-existing
+        /// <c>new KeyedGripLearner()</c> call site is unaffected. See
+        /// <see cref="NormalizedWheelLockSlipEngine"/>'s own Lock/Slip constants for the asymmetric
+        /// values this plugin actually uses.</param>
+        public KeyedGripLearner(double learnCapG = GripLearner.MaxPlausibleG)
+        {
+            _learnCapG = learnCapG;
+        }
 
         public static string MakeKey(string gameId, string carId)
             => (gameId ?? string.Empty) + KeySeparator + (carId ?? string.Empty);
@@ -64,7 +77,7 @@ namespace QAdvanceFeedback.Core.Normalized
             string key = MakeKey(gameId, carId);
             if (_learners.TryGetValue(key, out GripLearner learner)) return learner;
 
-            learner = new GripLearner();
+            learner = new GripLearner(_learnCapG);
             // A brand-new (gameId, carId) starts from whatever a pre-per-car runtime file had already
             // learned (if anything was imported - see SeedLegacy), rather than the generic 1.0 seed -
             // "don't lose learned data" applied to the cold-start value a NEW car gets, not just to
@@ -81,16 +94,25 @@ namespace QAdvanceFeedback.Core.Normalized
         /// needs no clearing at all - that is the entire point of this class).</summary>
         public void Reset() => _learners.Clear();
 
-        /// <summary>Snapshots every key with at least one qualifying observation - the legacy-import
-        /// pseudo-key is included like any other (it is a genuine, valid learner state; only its key
-        /// is special), so it keeps serving as the seed for the next brand-new car across restarts
-        /// too, not just for the remainder of one session.</summary>
+        /// <summary>Snapshots every key with at least <see cref="GripLearner.MinPersistSamples"/>
+        /// qualifying observations - the legacy-import pseudo-key is included like any other (it is a
+        /// genuine, valid learner state; only its key is special), so it keeps serving as the seed for
+        /// the next brand-new car across restarts too, not just for the remainder of one session.
+        /// <para/>
+        /// A key with FEWER than <see cref="GripLearner.MinPersistSamples"/> observations is simply
+        /// left OUT of the returned dictionary - since this is called every frame with the FULL
+        /// current in-memory contents and <c>RuntimeStore</c> replaces its on-disk dictionary wholesale
+        /// with whatever is passed in, an immature key never reaches disk at all until it matures
+        /// (harmless: there was nothing of value there to lose), while an already-mature key's sample
+        /// count only ever grows, so it is never at risk of being excluded once it has ever
+        /// qualified - a short, later, low-quality session cannot make an already-persisted, mature
+        /// profile disappear.</summary>
         public Dictionary<string, GripLearnerState> ExportAll()
         {
             var export = new Dictionary<string, GripLearnerState>(StringComparer.Ordinal);
             foreach (KeyValuePair<string, GripLearner> pair in _learners)
             {
-                if (pair.Value.Samples > 0)
+                if (pair.Value.Samples >= GripLearner.MinPersistSamples)
                     export[pair.Key] = new GripLearnerState { PeakG = pair.Value.LearnedPeakG, Samples = pair.Value.Samples };
             }
             return export;
@@ -104,7 +126,7 @@ namespace QAdvanceFeedback.Core.Normalized
             foreach (KeyValuePair<string, GripLearnerState> pair in data)
             {
                 if (string.IsNullOrEmpty(pair.Key) || pair.Value == null) continue;
-                var learner = new GripLearner();
+                var learner = new GripLearner(_learnCapG);
                 learner.Load(pair.Value.PeakG, pair.Value.Samples);
                 _learners[pair.Key] = learner;
             }
@@ -121,7 +143,7 @@ namespace QAdvanceFeedback.Core.Normalized
         public void SeedLegacy(double peakG, int samples)
         {
             if (!ClampMath.IsFinite(peakG) || peakG <= 0.0 || samples <= 0) return;
-            var learner = new GripLearner();
+            var learner = new GripLearner(_learnCapG);
             learner.Load(peakG, samples);
             _learners[LegacyImportKey] = learner;
         }

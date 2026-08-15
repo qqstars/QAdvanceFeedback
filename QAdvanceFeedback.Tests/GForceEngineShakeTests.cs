@@ -17,10 +17,24 @@ namespace QAdvanceFeedback.Tests
         private const double AccelMax = 0.9;
         private const double DecelMax = 2.0;
 
+        /// <summary>DIRECTION FIX (docs\gforce-direction-fix-report.md): every call site in this file
+        /// used a negative longG (braking) - ground speed FALLING (old 101 -&gt; new 100 km/h)
+        /// resolves Slowing from the first frame, exactly like GForceEngineTests' own identically-named
+        /// helper. Magnitude/sign convention at the fixture level only - see that class's own remarks.</summary>
         private static TelemetrySample Sample(double? longG, double dtSeconds, double? latG = null)
         {
-            var newFrame = new TelemetryFrame(longitudinalG: longG, lateralG: latG);
-            return new TelemetrySample(newFrame, TelemetryFrame.Empty, DateTime.UtcNow, TimeSpan.FromSeconds(dtSeconds));
+            if (!longG.HasValue)
+            {
+                var bare = new TelemetryFrame(longitudinalG: null, lateralG: latG);
+                return new TelemetrySample(bare, TelemetryFrame.Empty, DateTime.UtcNow, TimeSpan.FromSeconds(dtSeconds));
+            }
+
+            var oldFrame = new TelemetryFrame(groundSpeedKmh: longG.Value <= 0.0 ? 101.0 : 100.0);
+            var newFrame = new TelemetryFrame(
+                groundSpeedKmh: longG.Value <= 0.0 ? 100.0 : 101.0,
+                longitudinalG: longG,
+                lateralG: latG);
+            return new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromSeconds(dtSeconds));
         }
 
         // ---------------------------------------------------------------------------------------

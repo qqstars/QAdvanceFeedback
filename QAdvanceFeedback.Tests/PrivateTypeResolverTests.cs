@@ -6,8 +6,8 @@ namespace QAdvanceFeedback.Tests
 {
     /// <summary>
     /// Tests the exact reflection mechanism <c>AlgorithmFactory</c> uses to resolve a withheld
-    /// <c>QAdvanceFeedback\Private\</c> implementation at runtime (see that factory's own remarks, and
-    /// <c>Private\README.md</c>, for the full picture) - purely against
+    /// <c>Private\QAdvanceFeedback\</c> implementation at runtime (see that factory's own remarks, and
+    /// <c>..\Private\README.md</c>, for the full picture) - purely against
     /// <see cref="PrivateTypeResolver"/> itself, which is SimHub-free and link-compiles into this
     /// net8.0 test project via the ordinary Core\**\*.cs wildcard, so it is fully exercised here
     /// without needing a live SimHub session (unlike the SimHub-touching
@@ -108,7 +108,7 @@ namespace QAdvanceFeedback.Tests
         public void Resolving_the_real_LegacyWheelLockSlipEngine_type_name_matches_whether_Private_is_present_in_this_build()
         {
             // Self-adapting rather than hard-assuming Private\ is present: this same test file
-            // compiles and runs whether QAdvanceFeedback\Private\LegacyWheelLockSlipEngine.cs is
+            // compiles and runs whether ..\Private\QAdvanceFeedback\LegacyWheelLockSlipEngine.cs is
             // linked into this build (this working copy, right now) or not (a clean third-party
             // clone with no Private\ implementation supplied yet - see the .csproj's Exists()
             // guard) - in EITHER case the resolver must do the right thing, so the assertion below

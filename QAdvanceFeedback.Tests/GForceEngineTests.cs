@@ -24,12 +24,33 @@ namespace QAdvanceFeedback.Tests
     /// TransientTimeConstantSeconds=0.15, TransientGain=1.5, all four sustain fractions=0.5,
     /// LateralReferenceG=1.6, LateralBiasGain=0.5, LateralDirection=Normal. Default maxima:
     /// accelMaxG=0.9, decelMaxG=2.0.
+    /// <para/>
+    /// DIRECTION FIX (docs\gforce-direction-fix-report.md - read this before touching the sample
+    /// helpers below): <see cref="GForceEngine"/> no longer takes which chain is active from
+    /// LongitudinalG's own sign - it comes ONLY from measured ground-speed direction (see
+    /// <see cref="BrakingSample"/>/<see cref="ThrottleSample"/> below), exactly like
+    /// <c>NormalizedWheelLockSlipEngineTests</c>' own <c>BrakingSample</c>/<c>ThrottleSample</c>
+    /// helpers already do for that sibling engine. Every test below that needs a specific chain
+    /// active now supplies real Old/New ground speed via those two helpers instead of relying on
+    /// LongitudinalG's sign alone - a faithful adaptation of the SAME test intent (magnitude and
+    /// expected chain are unchanged from before), not a change to what any test asserts. None of
+    /// these pre-existing assertions themselves encoded the old, wrong sign-based assumption (they
+    /// are calibration/shape/continuity checks that remain equally valid under either direction
+    /// source) - the NEW, dedicated inverted-convention test below is what specifically proves the
+    /// fix, and a genuine-standstill test proves the "no chain active when Unknown" gate.
     /// </summary>
     public class GForceEngineTests
     {
         private const double AccelMax = 0.9;
         private const double DecelMax = 2.0;
 
+        /// <summary>Bare frame, no ground speed at all - used only where LongitudinalG itself is
+        /// null/irrelevant to direction (the missing-data/lateral-only-fallback tests) or where the
+        /// magnitude is exactly zero (direction cannot matter). Kept for tests that rely on the
+        /// resolver HOLDING whatever direction a preceding <see cref="BrakingSample"/>/
+        /// <see cref="ThrottleSample"/> ramp already established (Dt/speed both absent here -&gt;
+        /// <c>LongitudinalDirectionResolver.Resolve</c> holds its previous state rather than
+        /// guessing - see that class's own remarks).</summary>
         private static TelemetrySample Sample(double? longG, double dtSeconds, double? latG = null)
         {
             var newFrame = new TelemetryFrame(longitudinalG: longG, lateralG: latG);
@@ -42,12 +63,50 @@ namespace QAdvanceFeedback.Tests
             return new TelemetrySample(newFrame, TelemetryFrame.Empty, DateTime.UtcNow, null);
         }
 
+        /// <summary>Ground speed FALLING (old 101 -&gt; new 100 km/h) - resolves
+        /// <c>LongitudinalMotionState.Slowing</c> from the very first frame regardless of
+        /// <paramref name="dtSeconds"/> (the fixed 1 km/h delta clears
+        /// <c>LongitudinalDirectionResolver</c>'s own dead band after a single EMA step for every dt
+        /// used in this file). <paramref name="longitudinalGMagnitude"/> is fed as LongitudinalG's
+        /// MAGNITUDE (sign no longer matters to the engine at all - kept negative here purely so a
+        /// reader can still eyeball "braking" from the fixture, matching this file's old convention);
+        /// see <see cref="Inverted_convention_title_still_drives_braking_on_bottom_front_when_the_car_is_measurably_slowing"/>
+        /// for the dedicated proof that the engine is correct even when a title's sign is the OPPOSITE
+        /// of what is used here.</summary>
+        private static TelemetrySample BrakingSample(double longitudinalGMagnitude, double dtSeconds, double? latG = null)
+        {
+            var oldFrame = new TelemetryFrame(groundSpeedKmh: 101.0);
+            var newFrame = new TelemetryFrame(groundSpeedKmh: 100.0, longitudinalG: -longitudinalGMagnitude, lateralG: latG);
+            return new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromSeconds(dtSeconds));
+        }
+
+        /// <summary>The mirror of <see cref="BrakingSample"/>: ground speed RISING (old 100 -&gt; new
+        /// 101 km/h) - resolves <c>LongitudinalMotionState.SpeedingUp</c> from the first frame.</summary>
+        private static TelemetrySample ThrottleSample(double longitudinalGMagnitude, double dtSeconds, double? latG = null)
+        {
+            var oldFrame = new TelemetryFrame(groundSpeedKmh: 100.0);
+            var newFrame = new TelemetryFrame(groundSpeedKmh: 101.0, longitudinalG: longitudinalGMagnitude, lateralG: latG);
+            return new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromSeconds(dtSeconds));
+        }
+
+        /// <summary>Preserves this file's old "sign of longG implies direction, magnitude is the
+        /// absolute value" convention at the TEST-FIXTURE level only (never inside the engine itself
+        /// any more - see this class's own remarks): negative -&gt; <see cref="BrakingSample"/>,
+        /// positive -&gt; <see cref="ThrottleSample"/>, exactly zero -&gt; direction cannot matter
+        /// (magnitude is 0 either way), so the bare <see cref="Sample"/> is used instead.</summary>
+        private static TelemetrySample SampleForLongG(double longG, double dtSeconds, double? latG = null)
+        {
+            if (longG < 0.0) return BrakingSample(-longG, dtSeconds, latG);
+            if (longG > 0.0) return ThrottleSample(longG, dtSeconds, latG);
+            return Sample(0.0, dtSeconds, latG);
+        }
+
         /// <summary>Feeds a constant longG at a constant dt for enough steps to fully converge both
         /// washout filters (tens of time constants) and returns the final output.</summary>
         private static GForceOutput RunToSteadyState(GForceEngine engine, double longG, double dtSeconds = 0.05, int steps = 400)
         {
             GForceOutput last = null;
-            for (int i = 0; i < steps; i++) last = engine.Compute(Sample(longG, dtSeconds), AccelMax, DecelMax);
+            for (int i = 0; i < steps; i++) last = engine.Compute(SampleForLongG(longG, dtSeconds), AccelMax, DecelMax);
             return last;
         }
 
@@ -126,7 +185,7 @@ namespace QAdvanceFeedback.Tests
         {
             var engine = new GForceEngine();
             RunToSteadyState(engine, -2.0);
-            var before = engine.Compute(Sample(-2.0, 0.05), AccelMax, DecelMax);
+            var before = engine.Compute(SampleForLongG(-2.0, 0.05), AccelMax, DecelMax);
 
             var afterNoDt = engine.Compute(SampleNoDt(-2.0), AccelMax, DecelMax);
 
@@ -152,7 +211,7 @@ namespace QAdvanceFeedback.Tests
             {
                 for (double latG = -20.0; latG <= 20.0; latG += 5.0)
                 {
-                    var r = engine.Compute(Sample(longG, 0.02, latG), AccelMax, DecelMax);
+                    var r = engine.Compute(SampleForLongG(longG, 0.02, latG), AccelMax, DecelMax);
                     AssertInBounds(r.BottomFrontLeft); AssertInBounds(r.BottomFrontRight);
                     AssertInBounds(r.BottomRearLeft); AssertInBounds(r.BottomRearRight);
                     AssertInBounds(r.BackLowLeft); AssertInBounds(r.BackLowRight);
@@ -222,8 +281,8 @@ namespace QAdvanceFeedback.Tests
             GForceOutput r1 = null, r2 = null;
             for (int i = 0; i < 400; i++)
             {
-                r1 = e1.Compute(Sample(-1.0, 0.05, 1.6), AccelMax, DecelMax);
-                r2 = e2.Compute(Sample(-1.0, 0.05, 1.6), AccelMax, DecelMax);
+                r1 = e1.Compute(SampleForLongG(-1.0, 0.05, 1.6), AccelMax, DecelMax);
+                r2 = e2.Compute(SampleForLongG(-1.0, 0.05, 1.6), AccelMax, DecelMax);
             }
 
             Assert.Equal(r1.BottomRearLeft.Value, r2.BottomRearRight.Value, 3);
@@ -235,7 +294,7 @@ namespace QAdvanceFeedback.Tests
         {
             var engine = new GForceEngine();
             GForceOutput r = null;
-            for (int i = 0; i < 400; i++) r = engine.Compute(Sample(-1.0, 0.05, 1.6), AccelMax, DecelMax);
+            for (int i = 0; i < 400; i++) r = engine.Compute(SampleForLongG(-1.0, 0.05, 1.6), AccelMax, DecelMax);
 
             Assert.True(r.BottomRearRight.Value > r.BottomRearLeft.Value);
         }
@@ -245,7 +304,7 @@ namespace QAdvanceFeedback.Tests
         {
             var engine = new GForceEngine();
             GForceOutput r = null;
-            for (int i = 0; i < 400; i++) r = engine.Compute(Sample(-1.0, 0.05, -1.6), AccelMax, DecelMax);
+            for (int i = 0; i < 400; i++) r = engine.Compute(SampleForLongG(-1.0, 0.05, -1.6), AccelMax, DecelMax);
 
             Assert.True(r.BottomRearLeft.Value > r.BottomRearRight.Value);
         }
@@ -281,13 +340,13 @@ namespace QAdvanceFeedback.Tests
         public void Output_never_jumps_as_longitudinal_G_sweeps_continuously()
         {
             var engine = new GForceEngine();
-            for (int i = 0; i < 500; i++) engine.Compute(Sample(-2.2, 0.02), AccelMax, DecelMax); // pre-settle
+            for (int i = 0; i < 500; i++) engine.Compute(SampleForLongG(-2.2, 0.02), AccelMax, DecelMax); // pre-settle
 
             double? prevFL = null, prevRL = null, prevLL = null, prevTL = null;
 
             for (double longG = -2.2; longG <= 1.0; longG += 0.01)
             {
-                var r = engine.Compute(Sample(longG, 0.02), AccelMax, DecelMax);
+                var r = engine.Compute(SampleForLongG(longG, 0.02), AccelMax, DecelMax);
                 if (prevFL.HasValue)
                 {
                     AssertSmallStep(prevFL.Value, r.BottomFrontLeft.Value);
@@ -304,13 +363,13 @@ namespace QAdvanceFeedback.Tests
         public void No_step_change_as_braking_settles_past_saturation_with_default_sustain()
         {
             var engine = new GForceEngine();
-            for (int i = 0; i < 500; i++) engine.Compute(Sample(-1.0, 0.02), AccelMax, DecelMax); // pre-settle
+            for (int i = 0; i < 500; i++) engine.Compute(SampleForLongG(-1.0, 0.02), AccelMax, DecelMax); // pre-settle
 
             double? prev = null;
             for (int i = 0; i < 400; i++)
             {
                 double longG = -1.0 - i * 0.003; // slowly ramps from -1.0 past -2.0 (saturation) and beyond
-                var r = engine.Compute(Sample(longG, 0.02), AccelMax, DecelMax);
+                var r = engine.Compute(SampleForLongG(longG, 0.02), AccelMax, DecelMax);
                 if (prev.HasValue) AssertSmallStep(prev.Value, r.BottomRearLeft.Value);
                 prev = r.BottomRearLeft;
             }
@@ -332,13 +391,13 @@ namespace QAdvanceFeedback.Tests
         public void No_step_change_in_Back_Low_as_braking_settles_past_saturation_with_the_new_25_percent_floor()
         {
             var engine = new GForceEngine();
-            for (int i = 0; i < 500; i++) engine.Compute(Sample(-1.0, 0.02), AccelMax, DecelMax);
+            for (int i = 0; i < 500; i++) engine.Compute(SampleForLongG(-1.0, 0.02), AccelMax, DecelMax);
 
             double? prev = null;
             for (int i = 0; i < 400; i++)
             {
                 double longG = -1.0 - i * 0.003;
-                var r = engine.Compute(Sample(longG, 0.02), AccelMax, DecelMax);
+                var r = engine.Compute(SampleForLongG(longG, 0.02), AccelMax, DecelMax);
                 if (prev.HasValue) AssertSmallStep(prev.Value, r.BackLowLeft.Value);
                 prev = r.BackLowLeft;
             }
@@ -348,13 +407,13 @@ namespace QAdvanceFeedback.Tests
         public void No_step_change_in_Back_Low_or_Bottom_Rear_as_acceleration_settles_past_saturation()
         {
             var engine = new GForceEngine();
-            for (int i = 0; i < 500; i++) engine.Compute(Sample(0.5, 0.02), AccelMax, DecelMax);
+            for (int i = 0; i < 500; i++) engine.Compute(SampleForLongG(0.5, 0.02), AccelMax, DecelMax);
 
             double? prevBackLow = null, prevBottomRear = null;
             for (int i = 0; i < 400; i++)
             {
                 double longG = 0.5 + i * 0.003; // ramps past saturation (accelMaxG = 0.9) and beyond
-                var r = engine.Compute(Sample(longG, 0.02), AccelMax, DecelMax);
+                var r = engine.Compute(SampleForLongG(longG, 0.02), AccelMax, DecelMax);
                 if (prevBackLow.HasValue)
                 {
                     AssertSmallStep(prevBackLow.Value, r.BackLowLeft.Value);
@@ -402,8 +461,8 @@ namespace QAdvanceFeedback.Tests
             for (int i = 1; i <= steps; i++)
             {
                 double longG = -1.0 * i / steps;
-                var rReal = real.Compute(Sample(longG, dt), AccelMax, DecelMax);
-                var rTwin = twin.Compute(Sample(longG, dt), AccelMax, DecelMax);
+                var rReal = real.Compute(SampleForLongG(longG, dt), AccelMax, DecelMax);
+                var rTwin = twin.Compute(SampleForLongG(longG, dt), AccelMax, DecelMax);
                 maxGap = Math.Max(maxGap, Math.Abs(rReal.BottomFrontLeft.Value - rTwin.BottomFrontLeft.Value));
             }
             return maxGap;
@@ -421,16 +480,16 @@ namespace QAdvanceFeedback.Tests
             for (int i = 1; i <= 20; i++)
             {
                 double longG = -1.0 * i / 20.0;
-                real.Compute(Sample(longG, 0.01), AccelMax, DecelMax);
-                twin.Compute(Sample(longG, 0.01), AccelMax, DecelMax);
+                real.Compute(SampleForLongG(longG, 0.01), AccelMax, DecelMax);
+                twin.Compute(SampleForLongG(longG, 0.01), AccelMax, DecelMax);
             }
 
             // ...then hold flat at -1.0 for 0.5s (50 steps @ dt=0.01).
             GForceOutput rReal = null, rTwin = null;
             for (int i = 0; i < 50; i++)
             {
-                rReal = real.Compute(Sample(-1.0, 0.01), AccelMax, DecelMax);
-                rTwin = twin.Compute(Sample(-1.0, 0.01), AccelMax, DecelMax);
+                rReal = real.Compute(SampleForLongG(-1.0, 0.01), AccelMax, DecelMax);
+                rTwin = twin.Compute(SampleForLongG(-1.0, 0.01), AccelMax, DecelMax);
             }
 
             double gapAfterHold = Math.Abs(rReal.BottomFrontLeft.Value - rTwin.BottomFrontLeft.Value);
@@ -453,13 +512,13 @@ namespace QAdvanceFeedback.Tests
             // Settle at 1g first.
             for (int i = 0; i < 300; i++)
             {
-                real.Compute(Sample(-1.0, 0.02), AccelMax, DecelMax);
-                twin.Compute(Sample(-1.0, 0.02), AccelMax, DecelMax);
+                real.Compute(SampleForLongG(-1.0, 0.02), AccelMax, DecelMax);
+                twin.Compute(SampleForLongG(-1.0, 0.02), AccelMax, DecelMax);
             }
 
             // Fast step to 2g (a single large step, one frame).
-            var rRealStep = real.Compute(Sample(-2.0, 0.02), AccelMax, DecelMax);
-            var rTwinStep = twin.Compute(Sample(-2.0, 0.02), AccelMax, DecelMax);
+            var rRealStep = real.Compute(SampleForLongG(-2.0, 0.02), AccelMax, DecelMax);
+            var rTwinStep = twin.Compute(SampleForLongG(-2.0, 0.02), AccelMax, DecelMax);
             double gapAtStep = Math.Abs(rRealStep.BottomFrontLeft.Value - rTwinStep.BottomFrontLeft.Value);
 
             Assert.True(gapAtStep > 10.0, $"a fast 1g step should produce an obvious transient, got a gap of {gapAtStep}");
@@ -476,8 +535,8 @@ namespace QAdvanceFeedback.Tests
             GForceOutput rRealSettled = null, rTwinSettled = null;
             for (int i = 0; i < 400; i++)
             {
-                rRealSettled = real.Compute(Sample(-2.0, 0.02), AccelMax, DecelMax);
-                rTwinSettled = twin.Compute(Sample(-2.0, 0.02), AccelMax, DecelMax);
+                rRealSettled = real.Compute(SampleForLongG(-2.0, 0.02), AccelMax, DecelMax);
+                rTwinSettled = twin.Compute(SampleForLongG(-2.0, 0.02), AccelMax, DecelMax);
             }
             double gapSettled = Math.Abs(rRealSettled.BottomFrontLeft.Value - rTwinSettled.BottomFrontLeft.Value);
             Assert.True(gapSettled < 1.0, $"should have settled into the new sustained level, gap was {gapSettled}");
@@ -492,7 +551,7 @@ namespace QAdvanceFeedback.Tests
             // Configured max 1.5g, actual (steady) 2g -> r = 2/1.5 = 1.333, clamped to fully saturated.
             var engine = new GForceEngine();
             GForceOutput result = null;
-            for (int i = 0; i < 400; i++) result = engine.Compute(Sample(-2.0, 0.05), AccelMax, decelMaxG: 1.5);
+            for (int i = 0; i < 400; i++) result = engine.Compute(SampleForLongG(-2.0, 0.05), AccelMax, decelMaxG: 1.5);
 
             Assert.Equal(100.0, result.BottomFrontLeft.Value, 1);
             Assert.Equal(50.0, result.BottomRearLeft.Value, 1);
@@ -510,15 +569,15 @@ namespace QAdvanceFeedback.Tests
             var engine = new GForceEngine();
 
             // Settle fully saturated at 2g (r = 2/1.5 = 1.333, clamped to 1.0 sustained).
-            for (int i = 0; i < 400; i++) engine.Compute(Sample(-2.0, 0.02), AccelMax, decelMaxG);
-            var beforeStep = engine.Compute(Sample(-2.0, 0.02), AccelMax, decelMaxG);
+            for (int i = 0; i < 400; i++) engine.Compute(SampleForLongG(-2.0, 0.02), AccelMax, decelMaxG);
+            var beforeStep = engine.Compute(SampleForLongG(-2.0, 0.02), AccelMax, decelMaxG);
             Assert.Equal(50.0, beforeStep.BottomRearLeft.Value, 1);
             Assert.Equal(25.0, beforeStep.BackLowLeft.Value, 1);
             Assert.Equal(100.0, beforeStep.BottomFrontLeft.Value, 1);
 
             // Fast step to 3g (r = 3/1.5 = 2.0) - well beyond saturation, but the UNCLAMPED gap still
             // drives a real transient.
-            var afterStep = engine.Compute(Sample(-3.0, 0.02), AccelMax, decelMaxG);
+            var afterStep = engine.Compute(SampleForLongG(-3.0, 0.02), AccelMax, decelMaxG);
 
             Assert.True(afterStep.BottomRearLeft.Value > beforeStep.BottomRearLeft.Value + 5.0,
                 $"Bottom Rear should rise above its saturated sustain floor using its headroom, was {beforeStep.BottomRearLeft.Value} now {afterStep.BottomRearLeft.Value}");
@@ -549,8 +608,8 @@ namespace QAdvanceFeedback.Tests
             // Settle at 2g first.
             for (int i = 0; i < 300; i++)
             {
-                real.Compute(Sample(-2.0, 0.02), AccelMax, DecelMax);
-                twin.Compute(Sample(-2.0, 0.02), AccelMax, DecelMax);
+                real.Compute(SampleForLongG(-2.0, 0.02), AccelMax, DecelMax);
+                twin.Compute(SampleForLongG(-2.0, 0.02), AccelMax, DecelMax);
             }
 
             // Slowly, continuously bleed off from 2g toward 1g over 5 seconds (250 steps @ dt=0.02).
@@ -559,8 +618,8 @@ namespace QAdvanceFeedback.Tests
             for (int i = 1; i <= bleedSteps; i++)
             {
                 double longG = -2.0 + (1.0 * i / bleedSteps); // -2.0 -> -1.0
-                var rReal = real.Compute(Sample(longG, 0.02), AccelMax, DecelMax);
-                var rTwin = twin.Compute(Sample(longG, 0.02), AccelMax, DecelMax);
+                var rReal = real.Compute(SampleForLongG(longG, 0.02), AccelMax, DecelMax);
+                var rTwin = twin.Compute(SampleForLongG(longG, 0.02), AccelMax, DecelMax);
                 double gap = Math.Abs(rReal.BottomFrontLeft.Value - rTwin.BottomFrontLeft.Value);
 
                 Assert.True(gap < 15.0, $"a slow bleed-off must stay a SMALL transient, got {gap} at step {i}");
@@ -580,5 +639,140 @@ namespace QAdvanceFeedback.Tests
         // (b) removing headroom scaling -> S5 fails.
         // (c) removing washout (transient never decays) -> S2 fails.
         // ---------------------------------------------------------------------------------------
+
+        // ---------------------------------------------------------------------------------------
+        // DIRECTION FIX (docs\gforce-direction-fix-report.md) - the driver's own complaint: braking
+        // and accelerating chains were swapped, and pads shook slightly at a genuine standstill. Both
+        // traced to GForceEngine deriving direction from LongitudinalG's own (unverified) sign instead
+        // of measured ground-speed direction - fixed by routing through the same
+        // LongitudinalDirectionResolver NormalizedWheelLockSlipEngine already uses.
+        //
+        // MUTATION (a): in Compute, replace the direction-based brakeG/accelG split with the OLD
+        // `Math.Max(0.0, -longG.Value)` / `Math.Max(0.0, longG.Value)` sign-based one - the two
+        // "Inverted_convention" tests below must fail (this was verified manually: reverting to the
+        // sign-based split made both tests fail with the chains swapped, then reverted back to green -
+        // see the report for the exact run).
+        // ---------------------------------------------------------------------------------------
+
+        /// <summary>ACCEPTANCE: "on a title reporting the INVERTED longitudinal convention the chains
+        /// are still the right way round." Ground speed genuinely FALLS (braking) but LongitudinalG is
+        /// reported POSITIVE - the exact inverted convention this codebase's own
+        /// NormalizedWheelLockSlipEngine already documents for Forza Horizon 6 (positive while
+        /// genuinely slowing, 95.8% of qualifying frames). The braking chain (Bottom Front) must still
+        /// light up, and the accelerating chain (Back Top) must stay at zero.</summary>
+        [Fact]
+        public void Inverted_convention_title_still_drives_braking_on_bottom_front_when_the_car_is_measurably_slowing()
+        {
+            var engine = new GForceEngine();
+            var oldFrame = new TelemetryFrame(groundSpeedKmh: 150.0);
+            var newFrame = new TelemetryFrame(groundSpeedKmh: 148.0, longitudinalG: +2.0); // inverted sign
+            var sample = new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromMilliseconds(16));
+
+            GForceOutput result = null;
+            for (int i = 0; i < 400; i++) result = engine.Compute(sample, AccelMax, DecelMax);
+
+            Assert.True(result.BottomFrontLeft.Value > 50.0,
+                $"an inverted LongitudinalG convention must not suppress the braking chain when the car is measurably slowing, got {result.BottomFrontLeft.Value}");
+            Assert.Equal(0.0, result.BackTopLeft.Value, 3);
+        }
+
+        /// <summary>The mirror of the test above: ground speed genuinely RISES (accelerating) but
+        /// LongitudinalG is reported NEGATIVE. The accelerating chain (Back Top) must still light up,
+        /// and the braking chain (Bottom Front) must stay at zero.</summary>
+        [Fact]
+        public void Inverted_convention_title_still_drives_acceleration_on_back_top_when_the_car_is_measurably_speeding_up()
+        {
+            var engine = new GForceEngine();
+            var oldFrame = new TelemetryFrame(groundSpeedKmh: 100.0);
+            var newFrame = new TelemetryFrame(groundSpeedKmh: 102.0, longitudinalG: -0.8); // inverted sign
+            var sample = new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromMilliseconds(16));
+
+            GForceOutput result = null;
+            for (int i = 0; i < 400; i++) result = engine.Compute(sample, AccelMax, DecelMax);
+
+            Assert.True(result.BackTopLeft.Value > 50.0,
+                $"an inverted LongitudinalG convention must not suppress the accelerating chain when the car is measurably speeding up, got {result.BackTopLeft.Value}");
+            Assert.Equal(0.0, result.BottomFrontLeft.Value, 3);
+        }
+
+        /// <summary>
+        /// MUTATION (b) target: the driver's second complaint ("Bottom Rear shaking slightly while
+        /// stopped"). A genuine standstill: ground speed constant (well inside
+        /// LongitudinalDirectionResolver's own dead band -&gt; Unknown), but LongitudinalG still
+        /// carries small, real sensor noise (a nonzero reading with nothing to attribute it to).
+        /// EVERY pad must settle at (or very near) zero - not just the terminal ones, the shared
+        /// Bottom Rear/Back Low zones too, which is exactly where the driver reported feeling it.
+        /// </summary>
+        [Fact]
+        public void Genuine_standstill_produces_near_zero_output_on_every_pad_despite_small_longitudinalG_noise()
+        {
+            var engine = new GForceEngine();
+            // Ground speed essentially constant (a 0.01 km/h drift is well inside the resolver's own
+            // dead band) - direction settles to Unknown. LongitudinalG carries small sensor noise
+            // (0.03g) - plausible standstill noise, not a real driving event.
+            var oldFrame = new TelemetryFrame(groundSpeedKmh: 0.02);
+            var newFrame = new TelemetryFrame(groundSpeedKmh: 0.01, longitudinalG: -0.03);
+            var sample = new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromMilliseconds(16));
+
+            GForceOutput result = null;
+            for (int i = 0; i < 100; i++) result = engine.Compute(sample, AccelMax, DecelMax);
+
+            Assert.True(result.BottomFrontLeft.Value < 1.0, $"BottomFrontLeft={result.BottomFrontLeft.Value}");
+            Assert.True(result.BottomRearLeft.Value < 1.0, $"BottomRearLeft={result.BottomRearLeft.Value}");
+            Assert.True(result.BackLowLeft.Value < 1.0, $"BackLowLeft={result.BackLowLeft.Value}");
+            Assert.True(result.BackTopLeft.Value < 1.0, $"BackTopLeft={result.BackTopLeft.Value}");
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // REJECT vs CLAMP (docs\gforce-direction-fix-report.md, the owner's plausibility-limit ask):
+        // the LEARNING path (GForceMaxLearner/GripLearner) REJECTS an impact-magnitude reading outright
+        // (see those classes' own tests); this LIVE path must instead CLAMP - a real, in-range,
+        // finite, saturated cue for the impact frame itself, recovering immediately once ordinary
+        // readings resume, rather than dropping the frame (which would look like the plugin hanging).
+        //
+        // MUTATION (a): change the live clamp to a reject/hold instead (e.g. return the previous
+        // frame's own output unchanged when magnitude exceeds LiveMagnitudeClampG) - the "produces a
+        // different, saturated reading" assertion below must fail (verified manually - see the report).
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void An_impact_magnitude_frame_clamps_to_a_finite_saturated_in_range_reading_instead_of_freezing()
+        {
+            var engine = new GForceEngine();
+
+            // Settle at a modest, ordinary braking level first.
+            GForceOutput before = null;
+            for (int i = 0; i < 400; i++) before = engine.Compute(BrakingSample(0.5, 0.02), AccelMax, DecelMax);
+
+            // One impact-magnitude frame (a wall-tap-scale ~19.8g reading - this session's own captured
+            // spike, converted to G) while still measurably Slowing.
+            GForceOutput impact = engine.Compute(BrakingSample(19.8, 0.02), AccelMax, DecelMax);
+
+            AssertInBounds(impact.BottomFrontLeft);
+            AssertInBounds(impact.BottomRearLeft);
+            AssertInBounds(impact.BackLowLeft);
+            Assert.True(double.IsFinite(impact.BottomFrontLeft.Value));
+            Assert.True(impact.BottomFrontLeft.Value > before.BottomFrontLeft.Value,
+                "an impact-magnitude frame must produce a real, different (saturated) reading, not a frozen/unchanged one");
+        }
+
+        [Fact]
+        public void Output_recovers_to_normal_on_the_frame_after_an_impact_magnitude_spike()
+        {
+            var engine = new GForceEngine();
+
+            GForceOutput before = null;
+            for (int i = 0; i < 400; i++) before = engine.Compute(BrakingSample(0.5, 0.02), AccelMax, DecelMax);
+
+            engine.Compute(BrakingSample(19.8, 0.02), AccelMax, DecelMax); // the impact frame
+
+            // Back to the SAME ordinary level immediately after - recovers close to the pre-impact
+            // reading within a handful of frames (a few sustain time constants), not stuck saturated.
+            GForceOutput after = null;
+            for (int i = 0; i < 30; i++) after = engine.Compute(BrakingSample(0.5, 0.02), AccelMax, DecelMax);
+
+            Assert.True(Math.Abs(after.BottomFrontLeft.Value - before.BottomFrontLeft.Value) < 15.0,
+                $"output should recover close to the pre-impact level, before={before.BottomFrontLeft.Value} after={after.BottomFrontLeft.Value}");
+        }
     }
 }

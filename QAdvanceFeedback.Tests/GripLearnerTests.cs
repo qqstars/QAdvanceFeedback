@@ -130,5 +130,70 @@ namespace QAdvanceFeedback.Tests
 
             Assert.Equal(before, learner.LearnedPeakG, 9);
         }
+
+        // ---------------------------------------------------------------------------------------
+        // REJECT vs CLAMP (docs\gforce-direction-fix-report.md, the owner's plausibility-limit ask):
+        // Observe (learning) REJECTS above LearnCapG; Ratio (live) CLAMPS against the separate, higher
+        // LiveClampG - different bounds for different needs.
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void A_plain_constructor_defaults_LearnCapG_to_the_shared_MaxPlausibleG()
+        {
+            var learner = new GripLearner();
+            Assert.Equal(GripLearner.MaxPlausibleG, learner.LearnCapG, 6);
+        }
+
+        [Fact]
+        public void A_custom_learn_cap_rejects_above_its_own_ceiling_even_though_it_is_below_the_shared_default()
+        {
+            // A channel-specific cap (e.g. Slip's 6g) must reject a magnitude that the SHARED default
+            // (8g) would have accepted.
+            var learner = new GripLearner(learnCapG: 6.0);
+            learner.Observe(7.0);
+
+            Assert.Equal(0, learner.Samples);
+            Assert.Equal(GripLearner.SeedPeakG, learner.LearnedPeakG, 9);
+        }
+
+        [Fact]
+        public void A_custom_learn_cap_still_accepts_a_magnitude_at_or_below_its_own_ceiling()
+        {
+            var learner = new GripLearner(learnCapG: 6.0);
+            learner.Observe(5.5);
+
+            Assert.Equal(1, learner.Samples);
+        }
+
+        [Fact]
+        public void A_non_positive_or_non_finite_custom_learn_cap_falls_back_to_the_default()
+        {
+            Assert.Equal(GripLearner.MaxPlausibleG, new GripLearner(learnCapG: 0.0).LearnCapG, 6);
+            Assert.Equal(GripLearner.MaxPlausibleG, new GripLearner(learnCapG: -1.0).LearnCapG, 6);
+            Assert.Equal(GripLearner.MaxPlausibleG, new GripLearner(learnCapG: double.NaN).LearnCapG, 6);
+        }
+
+        [Fact]
+        public void Ratio_clamps_an_impact_magnitude_reading_against_the_higher_LiveClampG_instead_of_rejecting_it()
+        {
+            var learner = new GripLearner(learnCapG: 6.0); // e.g. the Slip channel
+            for (int i = 0; i < GripLearner.MaturitySamples; i++) learner.Observe(2.0); // mature, no cold-start ceiling
+
+            // 18g exceeds BOTH LearnCapG (6.0) and would have exceeded the old, single MaxPlausibleG
+            // (8.0) too - but Ratio must still produce a real, finite, clamped-not-rejected number
+            // (clamped at LiveClampG = 15.0), not zero/garbage/an exception.
+            double ratio = learner.Ratio(18.0);
+
+            Assert.True(double.IsFinite(ratio));
+            Assert.True(ratio > 0.0);
+            Assert.Equal(GripLearner.LiveClampG / learner.LearnedPeakG, ratio, 3);
+        }
+
+        [Fact]
+        public void LiveClampG_is_higher_than_the_default_learning_cap()
+        {
+            Assert.True(GripLearner.LiveClampG > GripLearner.MaxPlausibleG,
+                "the live-path clamp must be a HIGHER bound than the learning-path reject ceiling - different needs, see both constants' own remarks");
+        }
     }
 }

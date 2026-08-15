@@ -2,6 +2,11 @@
 
 > **Naming note (added later, see docs/refinements-report.md):** the property tiers this report calls "Reliable" and "Final" were subsequently renamed to **"Normalized"** and **"Projected"** respectively (published names `WheelLock.Normalized.*`/`WheelLock.Projected.*` etc.) - this report is left as a historical record of what was true at the time and is NOT updated throughout for the new names.
 
+> **Path note (added later, see docs/private-relocation-report.md):** this report refers to
+> `QAdvanceFeedback\Private\` and `QAdvanceFeedback.Tests\Private\`; both were later consolidated
+> into one top-level `Private\` folder beside the `.sln` (`Private\QAdvanceFeedback\` and
+> `Private\QAdvanceFeedback.Tests\`) - left unchanged below as a historical record.
+
 
 ## Status
 

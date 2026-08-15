@@ -43,26 +43,36 @@
     <Compile Include="..\QAdvanceFeedback\CsvExportWriter.cs" LinkBase="Adapters" />
   </ItemGroup>
   <ItemGroup>
-    <!-- QAdvanceFeedback\Private\ (the withheld Layer 2/3 implementations - see Private\README.md)
-         is gitignored, so it exists in THIS working copy but will not exist in a fresh clone that
-         has not been given a Private\ implementation. Included by explicit path, guarded by
-         Exists(), rather than a wildcard, so this test project builds either way:
-         - Private\ present (this repo, right now): the two files below compile in exactly as
-           before the Layer 2/3 split, and THIS project's own
-           Private\LegacySlipAlgorithmTests.cs / Private\LegacyWheelLockSlipEngineTests.cs (see
-           QAdvanceFeedback.Tests\Private\README.md - which reference these concrete types
-           directly) keep passing unchanged.
-         - Private\ absent (a clean third-party clone with no Private\ implementation supplied
-           yet): this ItemGroup contributes nothing. No test-file Remove is needed here any more:
-           the tests that reference these concrete types physically live in THIS project's own
-           gitignored Private\ folder (mirroring the plugin's split), so on a clean clone they are
-           simply absent from disk and the SDK's default `**/*.cs` glob finds nothing to compile
-           there - no filename-based exclusion list to keep in sync as tests are added or renamed.
-           Everything else in this test project still builds and runs. -->
-    <Compile Include="..\QAdvanceFeedback\Private\LegacySlipAlgorithm.cs" LinkBase="Core"
-             Condition="Exists('..\QAdvanceFeedback\Private\LegacySlipAlgorithm.cs')" />
-    <Compile Include="..\QAdvanceFeedback\Private\LegacyWheelLockSlipEngine.cs" LinkBase="Core"
-             Condition="Exists('..\QAdvanceFeedback\Private\LegacyWheelLockSlipEngine.cs')" />
+    <!-- The plugin's withheld Layer 2/3 implementations (see ..\Private\README.md) now live in a
+         single top-level ..\Private\QAdvanceFeedback\ folder beside the .sln (mirroring the
+         plugin's own project name) instead of a Private\ folder inside the plugin's project
+         directory. This project link-compiles the two SimHub-free algorithm files directly (NOT
+         SimHubTelemetryAdapter.cs, which needs GameReaderCommon/SimHub types this test project
+         deliberately does not reference) so its own withheld fidelity tests, immediately below,
+         can exercise the real concrete classes without a ProjectReference to the plugin.
+         Named explicitly (not a Private\QAdvanceFeedback\**\*.cs wildcard) because only these two
+         of the three files there are safe to compile into this SimHub-free assembly; each is
+         still individually Exists()-guarded so a clean clone with the folder absent still builds
+         this test project (0 errors) with just those two Compile items contributing nothing. -->
+    <Compile Include="..\Private\QAdvanceFeedback\LegacySlipAlgorithm.cs" LinkBase="Core"
+             Condition="Exists('..\Private\QAdvanceFeedback\LegacySlipAlgorithm.cs')" />
+    <Compile Include="..\Private\QAdvanceFeedback\LegacyWheelLockSlipEngine.cs" LinkBase="Core"
+             Condition="Exists('..\Private\QAdvanceFeedback\LegacyWheelLockSlipEngine.cs')" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- This project's OWN withheld fidelity tests (see ..\Private\README.md) now live in a
+         single top-level ..\Private\QAdvanceFeedback.Tests\ folder beside the .sln, instead of a
+         Private\ folder inside this project's own directory. Because it is now OUTSIDE this
+         project's directory, the SDK's default `**\*.cs` glob no longer finds it automatically
+         (it used to, when Private\ was nested inside this project), so it needs this explicit
+         Include - the equivalent of the plugin project's own Include above. This wildcard
+         evaluates to an empty item list (not a build error) when
+         ..\Private\QAdvanceFeedback.Tests\ is completely absent - the state of a fresh clone - so
+         every other test in this project still builds and passes without it. `Link` re-parents
+         the files under a virtual "Private" folder in Solution Explorer instead of flattening
+         them at the project root. -->
+    <Compile Include="..\Private\QAdvanceFeedback.Tests\**\*.cs"
+             Link="Private\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />

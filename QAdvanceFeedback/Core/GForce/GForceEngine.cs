@@ -1,4 +1,5 @@
 using System;
+using QAdvanceFeedback.Core.Normalized;
 
 namespace QAdvanceFeedback.Core.GForce
 {
@@ -24,15 +25,42 @@ namespace QAdvanceFeedback.Core.GForce
     /// docs\wiring-ui-report.md for the six acceptance scenarios this structure was built against and
     /// the reasoning behind the chosen time constants/gain.
     /// <para/>
-    /// UNVERIFIED SIGN-CONVENTION ASSUMPTION (flagged explicitly, same spirit as
-    /// SimHubTelemetryAdapter's GroundSpeed-unit inference): <see cref="ITelemetryFrame.LongitudinalG"/>
-    /// (SimHub AccelerationSurge) is assumed positive = accelerating, negative = braking/decelerating.
-    /// <see cref="ITelemetryFrame.LateralG"/> (SimHub AccelerationSway) is assumed positive = biases
-    /// toward the Right pads under <see cref="LateralDirectionMode.Normal"/> (see
-    /// <see cref="LateralDirection"/> for the owner's driver-facing toggle over this). Neither sign is
-    /// documented in the decompiled GameReaderCommon.dll. If either is backwards in a real game, the
-    /// longitudinal fix is a single-line negation at the clearly-marked spot below; the lateral one is
-    /// driver-adjustable without a code change, via <see cref="LateralDirection"/>.
+    /// DIRECTION FIX (docs\gforce-direction-fix-report.md - read this before touching the brake/accel
+    /// split again): this class used to derive WHICH chain is active from
+    /// <see cref="ITelemetryFrame.LongitudinalG"/>'s own sign (positive = accelerating, negative =
+    /// braking) - flagged, at the time, as an unverified assumption. It was backwards for at least one
+    /// title: this exact codebase's <see cref="NormalizedWheelLockSlipEngine"/> already documents, as
+    /// an established finding, that Forza Horizon 6 reports the OPPOSITE convention (positive while
+    /// genuinely slowing, in 95.8% of qualifying frames) - which is why the Lock/Slip engine moved
+    /// direction off <see cref="ITelemetryFrame.LongitudinalG"/>'s sign entirely, years before this
+    /// class was. Direct log evidence (2,612-frame Forza Horizon 6 session) confirmed the same
+    /// inversion here: under measured <see cref="LongitudinalMotionState.SpeedingUp"/> (real,
+    /// ground-speed-confirmed acceleration), the OLD sign-based code drove Bottom Front (the BRAKING
+    /// chain's own terminal pad) to a mean of 76/100 while Back Top (the accelerating chain's
+    /// terminal) sat at 0.55/100 - and the mirror-image swap under measured Slowing - exactly matching
+    /// the driver's own complaint ("Bottom Front shaking under acceleration").
+    /// <para/>
+    /// THE FIX: DIRECTION and MAGNITUDE are now two separate signals, exactly like
+    /// <see cref="NormalizedWheelLockSlipEngine"/> already treats them. This class now owns its own
+    /// <see cref="LongitudinalDirectionResolver"/> (constructor-injectable, mirroring that engine's own
+    /// DI pattern) and asks it, EVERY frame, which way the car is measurably going (from differentiated
+    /// ground speed - sign-agnostic by construction, needing no per-game telemetry convention to be
+    /// trusted). <see cref="ITelemetryFrame.LongitudinalG"/>'s own sign is NEVER read for this decision
+    /// any more - only its MAGNITUDE (<c>Math.Abs</c>) is used, attributed to whichever axis
+    /// <see cref="LongitudinalDirectionResolver"/> measured this frame. When direction is
+    /// <see cref="LongitudinalMotionState.Unknown"/> (no derivative yet, or speed changing by less than
+    /// the resolver's own dead band - i.e. a genuine standstill or steady cruise) NEITHER axis gets a
+    /// non-zero reading - this is also the direct fix for the driver's second complaint ("Bottom Rear
+    /// shaking slightly while stopped"): a stationary car has nothing honest to attribute
+    /// <see cref="ITelemetryFrame.LongitudinalG"/>'s own sensor noise to, so both chains now correctly
+    /// read (or decay toward) zero instead of the old sign-flicker occasionally lighting up whichever
+    /// axis the noise happened to point at.
+    /// <para/>
+    /// <see cref="ITelemetryFrame.LateralG"/> (SimHub AccelerationSway) is still assumed positive =
+    /// biases toward the Right pads under <see cref="LateralDirectionMode.Normal"/> (see
+    /// <see cref="LateralDirection"/> for the owner's driver-facing toggle over this) - this sign is
+    /// NOT part of the fix above (lateral bias is independent of the longitudinal chain-selection logic
+    /// that was actually wrong), and remains driver-adjustable without a code change.
     /// <para/>
     /// STATEFUL, UNLIKE THE OLD MODEL: this class now holds per-chain filter state (the low-pass
     /// level and the resulting transient) across calls, since a washout structure is inherently a
@@ -134,6 +162,25 @@ namespace QAdvanceFeedback.Core.GForce
         /// reasonable fixed reference covering everything from road cars to GT3-class content.</summary>
         public double LateralReferenceG { get; set; } = 1.6;
 
+        /// <summary>
+        /// LIVE-PATH-ONLY plausibility clamp on LongitudinalG's own magnitude, applied BEFORE the
+        /// direction-based brake/accel split (docs\gforce-direction-fix-report.md - REJECT and CLAMP
+        /// are different needs, per the owner's own explicit ask): the LEARNING path (see
+        /// <see cref="GForceMaxLearner.LearnCapG"/>/<see cref="Settings.GForceSettings.AccelLearnMaxPlausibleG"/>/
+        /// <see cref="Settings.GForceSettings.DecelLearnMaxPlausibleG"/>) REJECTS an impact-magnitude
+        /// reading outright, since one bad sample would otherwise become the persistent normalisation
+        /// reference for every subsequent frame. This LIVE path must NOT do the same thing - dropping
+        /// the frame (or freezing the output) during a crash would feel exactly like the plugin
+        /// hanging; instead the magnitude is CLAMPED here to a large-but-finite value, producing a
+        /// real, saturated, in-range cue for the impact frame that recovers immediately once ordinary
+        /// readings resume. 15g is deliberately HIGHER than either learning cap (6g/8g - see those
+        /// constants' own remarks for the real-world peak data this is derived from) so it never
+        /// clips a genuinely extreme but real event, while remaining far below a genuine wall-impact
+        /// spike (this plugin's own captured session showed a ~19.8g-equivalent collision reading) -
+        /// high enough to be a true "this is not real driving" backstop, not a everyday ceiling.
+        /// </summary>
+        public const double LiveMagnitudeClampG = 15.0;
+
         /// <summary>How far a fully-saturated lateral bias pushes the left/right split apart. 0.5
         /// means the "loaded" side gets up to 1.5x its unbiased value and the "unloaded" side down to
         /// 0.5x.</summary>
@@ -198,9 +245,34 @@ namespace QAdvanceFeedback.Core.GForce
         private double _accelSustainRatio;
         private double _accelTransient;
 
+        // ---- DIRECTION FIX - see this class's own remarks. Owns its own resolver instance, exactly
+        // like NormalizedWheelLockSlipEngine does, so it needs no shared/singleton state with that
+        // engine - both resolvers, fed the same per-frame sample sequence, converge on identical
+        // answers by construction (the same deterministic maths over the same inputs).
+        private readonly LongitudinalDirectionResolver _direction;
+
+        public GForceEngine() : this(null) { }
+
+        /// <param name="directionResolver">Constructor-injectable for tests that need to observe/
+        /// control the resolver directly; defaults to a fresh instance, mirroring
+        /// <see cref="NormalizedWheelLockSlipEngine"/>'s own DI pattern.</param>
+        public GForceEngine(LongitudinalDirectionResolver directionResolver)
+        {
+            _direction = directionResolver ?? new LongitudinalDirectionResolver();
+        }
+
+        /// <summary>The most recently resolved direction - exposed for diagnostics and so the plugin
+        /// composition root can attribute an AUTO-mode learner observation to the SAME axis this
+        /// frame's chain selection used, rather than re-deriving (or mis-deriving) it separately - see
+        /// <c>QAdvanceFeedback.cs</c>'s own remarks. Mirrors
+        /// <see cref="NormalizedWheelLockSlipEngine.CurrentDirection"/>.</summary>
+        public LongitudinalMotionState CurrentDirection => _direction.State;
+
         /// <summary>Clears all washout filter state back to zero - call on a session/game/car switch
         /// so a fresh session does not inherit a stale sustained level or an in-flight transient from
-        /// whatever the car was doing a moment before the switch.</summary>
+        /// whatever the car was doing a moment before the switch. Also clears the direction resolver's
+        /// own filter (see this class's own remarks) so a fresh session's first frame is not compared
+        /// against stale speed history from whatever the previous game/car was doing.</summary>
         public void Reset()
         {
             _brakeSustainRatio = 0.0;
@@ -209,6 +281,7 @@ namespace QAdvanceFeedback.Core.GForce
             _accelTransient = 0.0;
             _shakeActive = false;
             _shakePhaseSeconds = 0.0;
+            _direction.Reset();
         }
 
         /// <summary>
@@ -269,6 +342,12 @@ namespace QAdvanceFeedback.Core.GForce
 
             double dtSeconds = sample.Dt.HasValue && sample.Dt.Value.TotalSeconds > 0.0 ? sample.Dt.Value.TotalSeconds : 0.0;
 
+            // DIRECTION FIX (see this class's own remarks) - resolved UNCONDITIONALLY, every frame,
+            // exactly like NormalizedWheelLockSlipEngine.Compute's own unconditional call, so the
+            // resolver's internal smoothing filter stays continuously up to date regardless of whether
+            // LongitudinalG itself happens to be available this particular frame.
+            LongitudinalMotionState direction = _direction.Resolve(sample);
+
             // The shake's own clock only advances while the feature is actually enabled - re-entering
             // it always starts THIS frame at t=0 (sin(0)=0, output==centre) and only advances by dt
             // from the SECOND active frame onward - the same "freshly active starts at t=0, then
@@ -312,10 +391,28 @@ namespace QAdvanceFeedback.Core.GForce
                     : GForceOutput.Empty;
             }
 
-            // Sign convention (flagged in this class's own remarks): positive LongitudinalG =
-            // accelerating, negative = braking.
-            double brakeG = Math.Max(0.0, -longG.Value);
-            double accelG = Math.Max(0.0, longG.Value);
+            // DIRECTION FIX (see this class's own remarks): magnitude comes from LongitudinalG
+            // (Math.Abs - sign-agnostic), direction comes ONLY from the resolver above, NEVER from
+            // LongitudinalG's own sign. Unknown (standstill / within the dead band / no derivative
+            // yet) -> both zero - "the standstill gate" (see MUTATION (b) below).
+            //
+            // MUTATION (a) in the report: replace `direction`-based attribution with the OLD
+            // `Math.Max(0.0, -longG.Value)` / `Math.Max(0.0, longG.Value)` sign-based split - a
+            // dedicated test using the INVERTED longitudinal convention (ground speed says one thing,
+            // LongitudinalG's sign says the opposite) must fail, since the sign-based split would then
+            // drive the wrong chain.
+            // CLAMP, not reject (see LiveMagnitudeClampG's own remarks) - MUTATION (a) in the report:
+            // reject/hold the previous output instead of clamping and proceeding - a dedicated test
+            // (an impact-magnitude frame must still produce a real, saturated, in-range, DIFFERENT
+            // reading from whatever preceded it, and recover the following frame) must fail.
+            double magnitude = Math.Min(Math.Abs(longG.Value), LiveMagnitudeClampG);
+
+            // MUTATION (b) in the report: change the Unknown branch below from 0.0 to a raw-sign
+            // fallback (e.g. `Math.Max(0.0, -longG.Value)` for brake) - a dedicated genuine-standstill
+            // test (direction Unknown, small sensor-noise-scale LongitudinalG) must then fail, since
+            // the mutated code would let a nonzero reading leak through instead of gating to zero.
+            double brakeG = direction == LongitudinalMotionState.Slowing ? magnitude : 0.0;
+            double accelG = direction == LongitudinalMotionState.SpeedingUp ? magnitude : 0.0;
 
             double safeDecelMax = decelMaxG > 1e-6 ? decelMaxG : 1e-6;
             double safeAccelMax = accelMaxG > 1e-6 ? accelMaxG : 1e-6;

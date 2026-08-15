@@ -4,10 +4,10 @@ using Xunit;
 namespace QAdvanceFeedback.Tests
 {
     /// <summary>
-    /// Proves the stub path for Layer 3 (see <c>Private\README.md</c> and <c>AlgorithmFactory</c>'s
+    /// Proves the stub path for Layer 3 (see <c>..\Private\README.md</c> and <c>AlgorithmFactory</c>'s
     /// own remarks) is genuinely inert and never throws, regardless of what it is given - this is the
     /// exact object <c>AlgorithmFactory.CreateLegacyEngine</c> falls back to when
-    /// <c>QAdvanceFeedback\Private\LegacyWheelLockSlipEngine.cs</c> is absent from a build.
+    /// <c>Private\QAdvanceFeedback\LegacyWheelLockSlipEngine.cs</c> is absent from a build.
     /// </summary>
     public class InertLegacyWheelLockSlipEngineTests
     {

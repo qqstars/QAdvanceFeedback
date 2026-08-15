@@ -77,5 +77,28 @@ namespace QAdvanceFeedback.Core
         /// - exposed for later layers (G-force channels are explicitly out of scope here).
         /// </summary>
         double? LateralG { get; }
+
+        /// <summary>
+        /// Whether the car is currently in the pit or pit lane (SimHub: StatusDataBase.IsInPit != 0
+        /// OR IsInPitLane != 0). Added for <see cref="TelemetryLearningGate"/> - a car sitting in the
+        /// pit is not evidence of the car's own real driving limits, and its speed/G readings must not
+        /// be folded into a cross-frame learner. Null when the title does not report either field at
+        /// all (the gate treats null as "not known to be a problem", never as an invented rejection).
+        /// </summary>
+        bool? IsInPit { get; }
+
+        /// <summary>
+        /// Whether this frame is being played back from a replay rather than driven live (SimHub:
+        /// StatusDataBase.IsGameReplay). See <see cref="IsInPit"/>'s remarks - same reasoning,
+        /// different signal.
+        /// </summary>
+        bool? IsReplay { get; }
+
+        /// <summary>
+        /// Whether this frame marks a session restart (SimHub: StatusDataBase.IsSessionRestart) - a
+        /// teleport-like discontinuity in everything the frame reports, not a real driving moment.
+        /// See <see cref="IsInPit"/>'s remarks.
+        /// </summary>
+        bool? IsSessionRestart { get; }
     }
 }

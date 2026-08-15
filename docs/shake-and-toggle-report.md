@@ -1,5 +1,11 @@
 # QAdvanceFeedback - ShakeIt source-mode toggle fix + G-Force wheel lock/slip shake
 
+> **Path note (added later, see docs/private-relocation-report.md):** this report refers to
+> `QAdvanceFeedback\Private\*.cs` and `QAdvanceFeedback.Tests\Private\*.cs`; both withheld folders
+> were later consolidated into one top-level `Private\` folder beside the `.sln`
+> (`Private\QAdvanceFeedback\` and `Private\QAdvanceFeedback.Tests\`) - left unchanged below as a
+> historical record.
+
 ## STATUS
 
 Complete. Both features implemented, tested, and documented; both owner-confirmed decisions

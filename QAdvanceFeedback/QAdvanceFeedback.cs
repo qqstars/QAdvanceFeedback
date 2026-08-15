@@ -44,10 +44,11 @@ namespace QAdvanceFeedback
 
         // Layers 2/3 are resolved at RUNTIME, not constructed directly: this repository withholds its
         // own concrete SimHub telemetry adapter and legacy-algorithm implementations under
-        // QAdvanceFeedback\Private\ (gitignored - see Private\README.md), so a fresh open-source
+        // ..\Private\QAdvanceFeedback\ (gitignored - see ..\Private\README.md), so a fresh open-source
         // clone still compiles and runs, just with these two channels inert (see AlgorithmFactory's
         // own remarks and InertTelemetryAdapter/InertLegacyWheelLockSlipEngine) until a third party
-        // supplies their own Private\ implementation. Everything else in this class is unaffected.
+        // supplies their own Private\QAdvanceFeedback\ implementation. Everything else in this class
+        // is unaffected.
         private readonly ITelemetryAdapter _adapter = AlgorithmFactory.CreateTelemetryAdapter();
         private readonly ILegacyWheelLockSlipEngine _legacyEngine = AlgorithmFactory.CreateLegacyEngine();
         private readonly NormalizedWheelLockSlipEngine _normalizedEngine = new NormalizedWheelLockSlipEngine();
@@ -124,7 +125,14 @@ namespace QAdvanceFeedback
         {
             try
             {
-                if (data == null || !data.GameRunning || data.NewData == null || data.OldData == null)
+                // GamePaused/GameInMenu joined this guard alongside the pre-existing GameRunning check
+                // (docs\gforce-direction-fix-report.md, the owner's learning-validity-gate ask): a
+                // paused game or a menu screen must not reach ANY of Core, including the cross-frame
+                // learners - this is the SimHub-specific half of that gate (see
+                // Core.TelemetryLearningGate's own remarks for why "game running/paused/menu" is
+                // deliberately NOT re-checked a second time down in Core).
+                if (data == null || !data.GameRunning || data.GamePaused || data.GameInMenu
+                    || data.NewData == null || data.OldData == null)
                 {
                     return;
                 }
@@ -174,12 +182,6 @@ namespace QAdvanceFeedback
 
                 // ---- G-force channels.
                 _settings.GForce.SetCurrentGameAndCar(gameId, carId);
-                double? longG = sample.New?.LongitudinalG;
-                if (longG.HasValue && ClampMath.IsFinite(longG.Value))
-                {
-                    _settings.GForce.ObserveAccelG(gameId, carId, Math.Max(0.0, longG.Value));
-                    _settings.GForce.ObserveDecelG(gameId, carId, Math.Max(0.0, -longG.Value));
-                }
 
                 double accelMaxG = _settings.GForce.EffectiveAccelMaxG(gameId, carId);
                 double decelMaxG = _settings.GForce.EffectiveDecelMaxG(gameId, carId);
@@ -190,6 +192,34 @@ namespace QAdvanceFeedback
                 // Normalized values.
                 GForceOutput gforce = _gforceEngine.Compute(sample, accelMaxG, decelMaxG, projected.LockAll, projected.SlipAll);
                 _publisher.UpdateGForce(gforce);
+
+                // DIRECTION FIX (docs\gforce-direction-fix-report.md): feed the AUTO-mode learners the
+                // SAME direction-correct attribution _gforceEngine.Compute (just above) used
+                // (GForceEngine.CurrentDirection - resolved from differentiated ground speed), never
+                // LongitudinalG's own unverified sign - the OLD code fed ObserveAccelG/ObserveDecelG
+                // straight off Math.Max(0, +-longG), which had the exact same braking/accelerating
+                // swap bug the engine itself had (confirmed inverted on Forza Horizon 6). Also gated by
+                // the owner-requested learning validity gate (pit/replay/session-restart/dt/speed/
+                // teleport - see GForceSettings.IsFrameValidForLearning's own remarks) so a menu,
+                // loading screen, or discontinuity cannot corrupt the learned maxima.
+                // NOTE: this necessarily reads AFTER Compute above, so this frame's OWN observation
+                // affects the NEXT frame's EffectiveAccelMaxG/EffectiveDecelMaxG rather than this one's
+                // (a harmless, one-frame lag for a value GForceMaxLearner only confirms after two
+                // consecutive similar readings anyway) - calling the stateful direction resolver a
+                // second time here, ahead of Compute, would incorrectly advance it twice for one frame.
+                if (_settings.GForce.IsFrameValidForLearning(sample))
+                {
+                    double? longG = sample.New?.LongitudinalG;
+                    if (longG.HasValue && ClampMath.IsFinite(longG.Value))
+                    {
+                        double magnitude = Math.Abs(longG.Value);
+                        LongitudinalMotionState gforceDirection = _gforceEngine.CurrentDirection;
+                        if (gforceDirection == LongitudinalMotionState.SpeedingUp)
+                            _settings.GForce.ObserveAccelG(gameId, carId, magnitude);
+                        else if (gforceDirection == LongitudinalMotionState.Slowing)
+                            _settings.GForce.ObserveDecelG(gameId, carId, magnitude);
+                    }
+                }
 
                 // ---- Runtime persistence: in-memory cache only every frame (see RuntimeStore's own
                 // remarks) - the background timer/Flush is what actually reaches disk.
