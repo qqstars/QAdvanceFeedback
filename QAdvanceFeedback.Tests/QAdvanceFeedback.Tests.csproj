@@ -1,0 +1,77 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>QAdvanceFeedback.Tests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Link-compiled, NOT a ProjectReference: keeps the tests free of SimHub and enforces that
+         Core\ has no SimHub dependencies at all - see QAdvanceFeedback\Core's own remarks. -->
+    <Compile Include="..\QAdvanceFeedback\Core\**\*.cs" LinkBase="Core" />
+    <!-- GForceSettings.cs specifically (not a Settings\**\*.cs wildcard): this task owns only that
+         one file under Settings\, and a deliberately narrow, explicit Include avoids silently
+         pulling in whatever the parallel WheelChannelSettings/persistence task adds to Settings\
+         later. Also SimHub-free (only references QAdvanceFeedback.Core/.Core.GForce). -->
+    <Compile Include="..\QAdvanceFeedback\Settings\GForceSettings.cs" LinkBase="Settings" />
+
+    <!-- Layers 4/5 (WheelChannelSettings/persistence task): same narrow-Include convention as
+         GForceSettings.cs above, for the same reason (this task owns only these specific files
+         under Settings\, not the whole folder) - explicit files rather than a Settings\**\*.cs
+         wildcard, so the two parallel tasks' Includes cannot silently collide. All SimHub-free
+         (Newtonsoft round-trips them with no attributes; ConfigStore/RuntimeStore take logging as
+         plain Action&lt;string&gt; delegates instead of a direct SimHub.Logging reference - see
+         their own remarks), so persistence is tested against the REAL classes, real temp files
+         included, not a re-implementation. -->
+    <Compile Include="..\QAdvanceFeedback\Settings\WheelChannelSettings.cs" LinkBase="Settings" />
+    <Compile Include="..\QAdvanceFeedback\Settings\ScriptType.cs" LinkBase="Settings" />
+    <!-- SourceMode (the Manual/ShakeIt toggle, owner-requested) - WheelChannelSettings.cs (above)
+         now references this enum. Core\ShakeIt\*.cs already arrives via the Core\**\*.cs wildcard. -->
+    <Compile Include="..\QAdvanceFeedback\Settings\SourceMode.cs" LinkBase="Settings" />
+    <Compile Include="..\QAdvanceFeedback\Settings\DefaultWheelSources.cs" LinkBase="Settings" />
+    <Compile Include="..\QAdvanceFeedback\Settings\QAdvanceFeedbackSettings.cs" LinkBase="Settings" />
+    <Compile Include="..\QAdvanceFeedback\ConfigStore.cs" LinkBase="Adapters" />
+    <Compile Include="..\QAdvanceFeedback\RuntimeStore.cs" LinkBase="Adapters" />
+
+    <!-- Wiring task's own additions (this task now owns composing every settings group into the
+         plugin, so these are plain, direct Includes rather than continuing the narrow-per-task
+         convention above, which existed only to keep concurrent parallel tasks from colliding). -->
+    <Compile Include="..\QAdvanceFeedback\Settings\GeneralSettings.cs" LinkBase="Settings" />
+    <Compile Include="..\QAdvanceFeedback\Settings\SourceButtonMode.cs" LinkBase="Settings" />
+    <!-- AllPublishedProperties.cs and Core\Localization\*.cs already arrive via the Core\**\*.cs
+         wildcard above - no separate Include needed (and would be a duplicate-Compile-item error). -->
+    <Compile Include="..\QAdvanceFeedback\CsvExportWriter.cs" LinkBase="Adapters" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- QAdvanceFeedback\Private\ (the withheld Layer 2/3 implementations - see Private\README.md)
+         is gitignored, so it exists in THIS working copy but will not exist in a fresh clone that
+         has not been given a Private\ implementation. Included by explicit path, guarded by
+         Exists(), rather than a wildcard, so this test project builds either way:
+         - Private\ present (this repo, right now): the two files below compile in exactly as
+           before the Layer 2/3 split, and THIS project's own
+           Private\LegacySlipAlgorithmTests.cs / Private\LegacyWheelLockSlipEngineTests.cs (see
+           QAdvanceFeedback.Tests\Private\README.md - which reference these concrete types
+           directly) keep passing unchanged.
+         - Private\ absent (a clean third-party clone with no Private\ implementation supplied
+           yet): this ItemGroup contributes nothing. No test-file Remove is needed here any more:
+           the tests that reference these concrete types physically live in THIS project's own
+           gitignored Private\ folder (mirroring the plugin's split), so on a clean clone they are
+           simply absent from disk and the SDK's default `**/*.cs` glob finds nothing to compile
+           there - no filename-based exclusion list to keep in sync as tests are added or renamed.
+           Everything else in this test project still builds and runs. -->
+    <Compile Include="..\QAdvanceFeedback\Private\LegacySlipAlgorithm.cs" LinkBase="Core"
+             Condition="Exists('..\QAdvanceFeedback\Private\LegacySlipAlgorithm.cs')" />
+    <Compile Include="..\QAdvanceFeedback\Private\LegacyWheelLockSlipEngine.cs" LinkBase="Core"
+             Condition="Exists('..\QAdvanceFeedback\Private\LegacyWheelLockSlipEngine.cs')" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+
+    <!-- Only for the Newtonsoft-serialised Settings/Runtime POCOs and the two link-compiled
+         ConfigStore/RuntimeStore adapter files above - not used by anything in Core\'s own
+         algorithm files. -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+</Project>

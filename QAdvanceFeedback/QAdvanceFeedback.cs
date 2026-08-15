@@ -1,0 +1,325 @@
+using System;
+using System.Windows.Controls;
+using System.Windows.Media;
+using GameReaderCommon;
+using QAdvanceFeedback.Core;
+using QAdvanceFeedback.Core.GForce;
+using QAdvanceFeedback.Core.Projection;
+using QAdvanceFeedback.Core.Normalized;
+using QAdvanceFeedback.Settings;
+using SimHub.Plugins;
+
+namespace QAdvanceFeedback
+{
+    [PluginDescription("Legacy/Normalized/Projected wheel lock & slip (0-100) plus G-force feedback channels for ShakeIt and dashboards.")]
+    [PluginAuthor("Mr.Q")]
+    [PluginName("QAdvanceFeedback")]
+    // IMPORTANT - read before renaming this class:
+    // SimHub.Plugins.PluginManager.GetName(name, pluginType) is hard-coded (confirmed by decompiling
+    // SimHub.Plugins.dll) as `pluginType.Name + "." + name` for every AttachDelegate/AddProperty/
+    // AddAction overload - so THIS CLASS'S OWN NAME is unavoidably the first segment of every
+    // property this plugin publishes. This class is named QAdvanceFeedback (matching the namespace
+    // root), NOT QAdvanceFeedbackPlugin, so Type.Name supplies the required "QAdvanceFeedback."
+    // prefix exactly once - see docs\layer123-report.md for the full reasoning (this is a deliberate,
+    // verified-by-decompilation resolution of the brief's own literal-vs-functional conflict, not a
+    // guess).
+    //
+    // IPluginExtensions.AttachDelegate<T,U> also resolves typeof(T) from the STATIC type of its
+    // receiver, not GetType() - PropertyPublisher.Register is generic in the concrete plugin type
+    // (TPlugin) for exactly this reason (see its own remarks) - a plain IPlugin parameter there would
+    // silently publish everything under "IPlugin.*" regardless of this class's name.
+    public sealed class QAdvanceFeedback : IPlugin, IDataPlugin, IWPFSettingsV2
+    {
+        // Renamed per the owner's request (was plugin.QAdvanceFeedback.*.json) - the OLD names are
+        // kept as constants purely so ConfigStore/RuntimeStore can import a still-present old file
+        // exactly once (see their own remarks); nothing ever writes to the old names again.
+        private const string ConfigFileName = "QAdvanceFeedback.config.json";
+        private const string LegacyConfigFileName = "plugin.QAdvanceFeedback.config.json";
+        private const string ParametersFileName = "QAdvanceFeedback.Parameters.json";
+        private const string LegacyParametersFileName = "plugin.QAdvanceFeedback.runtime.json";
+
+        private string _configPath;
+
+        private QAdvanceFeedbackSettings _settings;
+
+        // Layers 2/3 are resolved at RUNTIME, not constructed directly: this repository withholds its
+        // own concrete SimHub telemetry adapter and legacy-algorithm implementations under
+        // QAdvanceFeedback\Private\ (gitignored - see Private\README.md), so a fresh open-source
+        // clone still compiles and runs, just with these two channels inert (see AlgorithmFactory's
+        // own remarks and InertTelemetryAdapter/InertLegacyWheelLockSlipEngine) until a third party
+        // supplies their own Private\ implementation. Everything else in this class is unaffected.
+        private readonly ITelemetryAdapter _adapter = AlgorithmFactory.CreateTelemetryAdapter();
+        private readonly ILegacyWheelLockSlipEngine _legacyEngine = AlgorithmFactory.CreateLegacyEngine();
+        private readonly NormalizedWheelLockSlipEngine _normalizedEngine = new NormalizedWheelLockSlipEngine();
+        private readonly GForceEngine _gforceEngine = new GForceEngine();
+        private readonly WheelSourceResolver _sourceResolver = new WheelSourceResolver();
+        private readonly PropertyPublisher _publisher = new PropertyPublisher();
+        private readonly CsvExportWriter _csv = new CsvExportWriter();
+
+        // Rebuilt whenever settings change (Init, and the settings UI's Apply) - see RebuildProjectedEngine.
+        private ProjectedWheelLockSlipEngine _projectedEngine;
+
+        private RuntimeStore _runtimeStore;
+
+        // Tracks the game/car SimHub is currently reporting, so a switch can be detected. Empty, not
+        // null, so the very first frame (an empty -> real name transition) also triggers one harmless
+        // reset rather than needing a separate "have we seen a game yet" flag.
+        private string _lastGameName = string.Empty;
+        private string _lastCarId = string.Empty;
+
+        private string _loggedDataUpdateFault;
+
+        public PluginManager PluginManager { get; set; }
+
+        public string LeftMenuTitle => "QAdvanceFeedback";
+
+        public ImageSource PictureIcon => null;
+
+        /// <summary>Exposed so the settings UI edits/saves the SAME live object this plugin reads
+        /// from every frame - matching the sibling project's own convention.</summary>
+        public QAdvanceFeedbackSettings Settings => _settings;
+
+        public void Init(PluginManager pluginManager)
+        {
+            _configPath = pluginManager.GetCommonStoragePath(ConfigFileName);
+            string legacyConfigPath = pluginManager.GetCommonStoragePath(LegacyConfigFileName);
+            _settings = ConfigStore.Load(_configPath, LogWarning, legacyPath: legacyConfigPath);
+
+            string parametersPath = pluginManager.GetCommonStoragePath(ParametersFileName);
+            string legacyParametersPath = pluginManager.GetCommonStoragePath(LegacyParametersFileName);
+            _runtimeStore = new RuntimeStore(parametersPath, legacyParametersPath, logInfo: LogInfo, logWarning: LogWarning);
+
+            // Per-(game,car) keyed Lock/Slip learned parameters (see KeyedGripLearner) - load
+            // whatever was already persisted for every key, then seed the pre-per-car legacy global
+            // value (if any) as the cold-start default for the first brand-new key each channel
+            // encounters, rather than discarding it outright.
+            _runtimeStore.LoadLockLearners(out var lockLearnerData);
+            _normalizedEngine.LockLearners.ImportAll(lockLearnerData);
+            _runtimeStore.LoadSlipLearners(out var slipLearnerData);
+            _normalizedEngine.SlipLearners.ImportAll(slipLearnerData);
+
+            if (_runtimeStore.TryGetLegacyLockSeed(out double legacyLockPeak, out int legacyLockSamples))
+                _normalizedEngine.LockLearners.SeedLegacy(legacyLockPeak, legacyLockSamples);
+            if (_runtimeStore.TryGetLegacySlipSeed(out double legacySlipPeak, out int legacySlipSamples))
+                _normalizedEngine.SlipLearners.SeedLegacy(legacySlipPeak, legacySlipSamples);
+
+            _runtimeStore.LoadGForceLearners(out var accelMaxima, out var decelMaxima);
+            _settings.GForce.ImportLearnedMaxima(accelMaxima, decelMaxima);
+
+            RebuildProjectedEngine();
+            _settings.GForce.ApplyTo(_gforceEngine);
+
+            _publisher.Register(this, _settings.General.EnableDiagnostics);
+
+            // "When [diagnostics is] off... write NO log output" (per the brief) - scoped to this
+            // plugin's own informational/diagnostic tracing (Init/End notices and anything similar),
+            // NOT to genuine warnings/errors (a corrupt config file, a CSV write failure): silencing
+            // those too would make a real operational problem invisible with no way to diagnose it,
+            // which would work against the very purpose of the toggle. This is a judgment call on an
+            // otherwise-underspecified interaction, flagged rather than silently assumed.
+            LogInfoIfDiagnostics("initialised");
+        }
+
+        public void DataUpdate(PluginManager pluginManager, ref GameData data)
+        {
+            try
+            {
+                if (data == null || !data.GameRunning || data.NewData == null || data.OldData == null)
+                {
+                    return;
+                }
+
+                string gameId = data.GameName ?? string.Empty;
+                string carId = data.NewData.CarId ?? string.Empty;
+                ResetOnGameSwitch(gameId);
+
+                TelemetrySample sample = _adapter.Read(data);
+
+                // ---- Layer 3: legacy RPM/speed algorithm - published as-is, unaffected by any
+                // user-configured Layer 4 source below. Pedal thresholds are owner-configurable
+                // (deliberate deviation from SimHub's own hard-coded Brake>20/Throttle>40 - see
+                // LegacyThresholds' own remarks) and apply in BOTH Manual and ShakeIt source modes,
+                // since they gate Layer 3 itself, upstream of which Layer 4 source is selected.
+                var thresholds = new LegacyThresholds
+                {
+                    LockBrakeThresholdPercent = _settings.Lock.BrakeThresholdPercent,
+                    SlipBrakeThresholdPercent = _settings.Slip.BrakeThresholdPercent,
+                    SlipThrottleThresholdPercent = _settings.Slip.ThrottleThresholdPercent
+                };
+                LegacyWheelLockSlipResult legacy = _legacyEngine.Compute(sample, thresholds);
+                _publisher.UpdateRaw(legacy);
+
+                // ---- Layer 4 input selection: each of the four wheels, per channel, resolves either
+                // the shipped default (a plain reference back to Layer 3's own Raw property) or
+                // whatever the driver configured instead - see WheelSourceResolver's remarks. Falls
+                // back to Layer 3's own value for that wheel on any resolution failure.
+                Corners lockSources = new Corners(
+                    _sourceResolver.Resolve(pluginManager, _settings.Lock.SourceFrontLeft, _settings.Lock.ScriptTypeFrontLeft, legacy.LockWheels.FrontLeft),
+                    _sourceResolver.Resolve(pluginManager, _settings.Lock.SourceFrontRight, _settings.Lock.ScriptTypeFrontRight, legacy.LockWheels.FrontRight),
+                    _sourceResolver.Resolve(pluginManager, _settings.Lock.SourceRearLeft, _settings.Lock.ScriptTypeRearLeft, legacy.LockWheels.RearLeft),
+                    _sourceResolver.Resolve(pluginManager, _settings.Lock.SourceRearRight, _settings.Lock.ScriptTypeRearRight, legacy.LockWheels.RearRight));
+
+                Corners slipSources = new Corners(
+                    _sourceResolver.Resolve(pluginManager, _settings.Slip.SourceFrontLeft, _settings.Slip.ScriptTypeFrontLeft, legacy.SlipWheels.FrontLeft),
+                    _sourceResolver.Resolve(pluginManager, _settings.Slip.SourceFrontRight, _settings.Slip.ScriptTypeFrontRight, legacy.SlipWheels.FrontRight),
+                    _sourceResolver.Resolve(pluginManager, _settings.Slip.SourceRearLeft, _settings.Slip.ScriptTypeRearLeft, legacy.SlipWheels.RearLeft),
+                    _sourceResolver.Resolve(pluginManager, _settings.Slip.SourceRearRight, _settings.Slip.ScriptTypeRearRight, legacy.SlipWheels.RearRight));
+
+                NormalizedWheelLockSlipResult normalized = _normalizedEngine.Compute(sample, lockSources, slipSources, gameId, carId);
+                _publisher.UpdateNormalized(normalized);
+
+                double dtSeconds = sample.Dt.HasValue && sample.Dt.Value.TotalSeconds > 0 ? sample.Dt.Value.TotalSeconds : 0.0;
+                ProjectedWheelLockSlipResult projected = _projectedEngine.Compute(normalized, dtSeconds);
+                _publisher.UpdateProjected(projected);
+
+                // ---- G-force channels.
+                _settings.GForce.SetCurrentGameAndCar(gameId, carId);
+                double? longG = sample.New?.LongitudinalG;
+                if (longG.HasValue && ClampMath.IsFinite(longG.Value))
+                {
+                    _settings.GForce.ObserveAccelG(gameId, carId, Math.Max(0.0, longG.Value));
+                    _settings.GForce.ObserveDecelG(gameId, carId, Math.Max(0.0, -longG.Value));
+                }
+
+                double accelMaxG = _settings.GForce.EffectiveAccelMaxG(gameId, carId);
+                double decelMaxG = _settings.GForce.EffectiveDecelMaxG(gameId, carId);
+                // The owner-requested "Integrate Wheel Lock and Slip" shake reads the same published
+                // Layer 5 WheelLock.Projected.All/WheelSlip.Projected.All values a driver would already
+                // see on a dashboard - the most user-relevant, already-curve-shaped signal available at
+                // this point in the pipeline, rather than reaching back to Layer 3's Raw or Layer 4's
+                // Normalized values.
+                GForceOutput gforce = _gforceEngine.Compute(sample, accelMaxG, decelMaxG, projected.LockAll, projected.SlipAll);
+                _publisher.UpdateGForce(gforce);
+
+                // ---- Runtime persistence: in-memory cache only every frame (see RuntimeStore's own
+                // remarks) - the background timer/Flush is what actually reaches disk.
+                _runtimeStore.SaveLockLearners(_normalizedEngine.LockLearners.ExportAll());
+                _runtimeStore.SaveSlipLearners(_normalizedEngine.SlipLearners.ExportAll());
+                _settings.GForce.ExportLearnedMaxima(out var accelSnapshot, out var decelSnapshot);
+                _runtimeStore.SaveGForceLearners(accelSnapshot, decelSnapshot);
+
+                // ---- Diagnostics (always computed; SimHub only sees them if EnableDiagnostics was on
+                // at Init - see PropertyPublisher.Register).
+                AchievedMotion.Result motion = AchievedMotion.Resolve(sample);
+                _publisher.UpdateDiagnostics(
+                    _normalizedEngine.CurrentDirection, motion.Level, motion.MagnitudeG,
+                    _normalizedEngine.LockLearners.LearnedPeakG(gameId, carId), _normalizedEngine.LockLearners.Confidence(gameId, carId),
+                    _normalizedEngine.SlipLearners.LearnedPeakG(gameId, carId), _normalizedEngine.SlipLearners.Confidence(gameId, carId),
+                    _settings.GForce.CurrentLearnedAccelMaxG, _settings.GForce.CurrentLearnedDecelMaxG);
+
+                UpdateCsvExport(pluginManager);
+            }
+            catch (Exception e)
+            {
+                // Logged once per distinct fault rather than every frame - a persistent problem would
+                // otherwise write 60-100 lines a second to the SimHub log for as long as it lasts. This
+                // is a genuine operational error, not diagnostic tracing, so it is NOT gated behind
+                // EnableDiagnostics (see Init's own remarks on that distinction).
+                string message = "QAdvanceFeedback: DataUpdate failed - " + e;
+                if (!string.Equals(_loggedDataUpdateFault, message, StringComparison.Ordinal))
+                {
+                    _loggedDataUpdateFault = message;
+                    SimHub.Logging.Current.Error(message);
+                }
+            }
+        }
+
+        /// <summary>SimHub keeps running across a game switch; the adapter's Dt bookkeeping and the
+        /// Normalized engine's learned direction filter must not carry stale state across the gap - see
+        /// SimHubTelemetryAdapter.Reset/NormalizedWheelLockSlipEngine.ResetDirection's own remarks.
+        /// <para/>
+        /// GForceSettings.ResetLearning() is hooked here too, at GAME-change granularity only (NOT on
+        /// every same-game car change): GForceMaxLearner already keys its learned maxima per
+        /// (game, car) - see that class's remarks - so a car swap within the same game naturally
+        /// starts a fresh, isolated key on its own; calling the wholesale ResetLearning() on every car
+        /// change would needlessly discard every OTHER car's already-learned maximum too, defeating
+        /// the entire point of that per-car keying. This is a judgment call on the brief's literal
+        /// "session/vehicle-change reset" wording, flagged rather than assumed - the safer, less
+        /// destructive reading is applied.</summary>
+        private void ResetOnGameSwitch(string gameId)
+        {
+            if (string.IsNullOrEmpty(gameId)) return;
+            if (string.Equals(gameId, _lastGameName, StringComparison.Ordinal)) return;
+
+            _adapter.Reset();
+            _normalizedEngine.ResetDirection();
+            _settings.GForce.ResetLearning();
+            _gforceEngine.Reset();
+            _lastGameName = gameId;
+        }
+
+        private void UpdateCsvExport(PluginManager pluginManager)
+        {
+            if (_settings.General.ExportCsv)
+            {
+                if (!_csv.IsRecording)
+                {
+                    string fileName = "QAdvanceFeedback.session-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".csv";
+                    string path = pluginManager.GetCommonStoragePath(fileName);
+                    var header = new System.Collections.Generic.List<string>(AllPublishedProperties.ProductNames());
+                    header.AddRange(AllPublishedProperties.DiagnosticNames());
+                    _csv.Start(path, header, LogWarning);
+                }
+                _csv.WriteRow(_publisher.SnapshotAllValuesForCsv(), LogWarning);
+            }
+            else if (_csv.IsRecording)
+            {
+                _csv.Stop();
+            }
+        }
+
+        public void End(PluginManager pluginManager)
+        {
+            try
+            {
+                _csv.Stop();
+
+                // Final, synchronous flush - guaranteed to write the last few seconds of learning
+                // before the process is allowed to exit (see RuntimeStore.Flush's own remarks).
+                _runtimeStore?.Flush();
+                _runtimeStore?.Dispose();
+
+                ConfigStore.Save(_configPath, _settings, LogWarning);
+                LogInfoIfDiagnostics("shut down");
+            }
+            catch (Exception e)
+            {
+                SimHub.Logging.Current.Error("QAdvanceFeedback: shutdown failed - " + e);
+            }
+        }
+
+        public Control GetWPFSettingsControl(PluginManager pluginManager) => new Settings.SettingsControl(this, pluginManager);
+
+        /// <summary>
+        /// Applies edited settings: rebuilds the Layer 5 (curve+pulse) engine from the current
+        /// Lock/Slip Projector/Pulse settings, re-applies the G-force engine's tunables, and persists
+        /// to disk. Called from the settings UI's single global Apply button.
+        /// </summary>
+        public void ApplySettings()
+        {
+            RebuildProjectedEngine();
+            _settings.GForce.ApplyTo(_gforceEngine);
+            ConfigStore.Save(_configPath, _settings, LogWarning);
+        }
+
+        private void RebuildProjectedEngine()
+        {
+            _projectedEngine = new ProjectedWheelLockSlipEngine(
+                new OutputProjector(_settings.Lock.Projector), _settings.Lock.Pulse,
+                new OutputProjector(_settings.Slip.Projector), _settings.Slip.Pulse);
+        }
+
+        private void LogInfoIfDiagnostics(string message)
+        {
+            if (!_settings.General.EnableDiagnostics) return;
+            SimHub.Logging.Current.Info("QAdvanceFeedback: " + message);
+        }
+
+        // ConfigStore/RuntimeStore take logging as plain Action<string> delegates rather than a
+        // SimHub reference directly (see their own remarks) - these adapt SimHub's actual logger to
+        // that shape, once, here at the composition root. Warnings/errors are never gated behind
+        // EnableDiagnostics - see Init's own remarks on why.
+        private static void LogInfo(string message) => SimHub.Logging.Current.Info(message);
+        private static void LogWarning(string message) => SimHub.Logging.Current.Warn(message);
+    }
+}

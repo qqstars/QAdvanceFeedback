@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <!-- Wiring/UI task's addition: the settings control (Settings/SettingsControl.xaml) needs WPF
+         compilation (XAML -> BAML/g.cs). PresentationFramework/PresentationCore/WindowsBase/
+         System.Xaml are all part of the .NET Framework itself, so referencing them via UseWPF does
+         NOT affect single-DLL distribution (they are framework assemblies SimHub's own host process
+         already has loaded, never copied into bin\Release\net48 regardless of Private). -->
+    <UseWPF>true</UseWPF>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>QAdvanceFeedback</AssemblyName>
+    <RootNamespace>QAdvanceFeedback</RootNamespace>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <SimHubRefPath Condition="'$(SimHubRefPath)' == ''">$(MSBuildThisFileDirectory)..\lib</SimHubRefPath>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <!-- Single-DLL distribution (hard requirement): every SimHub/GameReaderCommon/MahApps reference
+         below is <Private>false</Private>, so none of them are copied into bin\Release\net48 - only
+         QAdvanceFeedback.dll and its .pdb land there. -->
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="SimHub.Plugins">
+      <HintPath>$(SimHubRefPath)\SimHub.Plugins.dll</HintPath><Private>false</Private>
+    </Reference>
+    <Reference Include="GameReaderCommon">
+      <HintPath>$(SimHubRefPath)\GameReaderCommon.dll</HintPath><Private>false</Private>
+    </Reference>
+    <Reference Include="SimHub.Logging">
+      <HintPath>$(SimHubRefPath)\SimHub.Logging.dll</HintPath><Private>false</Private>
+    </Reference>
+    <Reference Include="log4net">
+      <HintPath>$(SimHubRefPath)\log4net.dll</HintPath><Private>false</Private>
+    </Reference>
+    <!-- ConfigStore/RuntimeStore need Newtonsoft.Json for settings/runtime persistence. SimHub itself
+         ships this assembly (same convention as the sibling ReliableWheelLockSlip project's csproj)
+         so it is Private=false too - single-DLL distribution is unaffected. -->
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(SimHubRefPath)\Newtonsoft.Json.dll</HintPath><Private>false</Private>
+    </Reference>
+    <!-- The settings UI (Settings/SettingsControl.xaml) uses MahApps' NumericUpDown for the curve
+         editor's spinners, same as the sibling project. -->
+    <Reference Include="MahApps.Metro">
+      <HintPath>$(SimHubRefPath)\MahApps.Metro.dll</HintPath><Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
