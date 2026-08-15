@@ -1,0 +1,42 @@
+Quick Steps:
+1. Fully shutdown SimHub. And copy QAdvanceFeedback.dll into the SimHub root folder (Default: C:\Program Files (x86)\SimHub).
+2. Launch SimHub. From the left side "Add/Remove Plugins", enabling "ShakeIt Motors" and "QAdvanceFeedback". Check "Show in the left side menu".
+3. Enter the "ShakeIt Motors" setting via Left menu. Click "Profile Manager", then "Import config file".
+4. Import the provided "QAdvanceFeedback - WheelLockSlip.siprofile" file, after importing, you will see "QAdvanceFeedback - WheelLockSlip" under "Any Game". And disable "Auto switch profile".
+5. You are ready now.
+6. Config your vibrating devices:
+    - ShakeIt Motor, such as Simagic HPR, or BaseShaker:
+        - You can via "ShakeIt Motors" - "QAdvanceFeedback - WheelLockSlip", copy and paste "Custom Effect - QAdvanceFeedBack - WheelLock/Slip" into your own ShakeIt profiles.
+        - Or, you can add by yourself, in your own profile, add "Custom Effect", select "Mono", config "FrontLeft", import property "QAdvanceFeedback.WheelLock.Projected.All" in the editor.
+    - Haptic Seat Pad (8 Channels), such as HF-8, Sensit Haptic Extreme 2:
+        - If you are using Sensit Haptic Extreme 2, import "QAdvanceFeedback - GForce" in the "ShakeIt BaseShaker". If you are using HF-8, import in the "ShakeIt Motors".
+            - NOTICE!!! If you are using HF-8, then you MUST active the "QAdvanceFeedback - GForce" profile. But if you are using Simagic HPR at the same time, then you CANNOT active the two different profiles at the same time.
+            - In thise case, you need to COMBINE the two configuration yourself. And then, you need to project the effects to the device channel properly.
+        - Import the sichannels file in the output device channel mapping configuraiton.
+        - Or configure the channels yourself:
+            - QAdvanceFeedBack-Bottom -> FrontLeft/FrontRight：	The far thigh channels
+            - QAdvanceFeedBack-Bottom -> RearLeft/RearRight：		The upper thigh channels
+            - QAdvanceFeedBack-Back 	  -> FrontLeft/FrontRight：	The waist (Low back) channels
+            - QAdvanceFeedBack-Back 	  -> RearLeft/RearRight：		The back (High back) channels
+
+
+快速指南：
+1. 彻底关闭SimHub，将 QAdvanceFeedback.dll 拷贝到SimHub安装目录（默认路径：C:\Program Files (x86)\SimHub）。
+2. 启动SimHub，在左侧“添加/移除插件”，启用“震动电机”和“QAdvanceFeedback”。确保勾选“在左侧主菜单中显示”。
+3. 在左侧进入“振动电机”设置。点击“文件管理器”，选择“导入配置文件”。
+4. 导入提供的 QAdvanceFeedback - WheelLockSlip.siprofile，导入后应该会在Any Game下显示“QAdvanceFeedback - WheelLockSlip”。在右侧“自动切换配置文件”选择为“停用”。
+5. 现在应该已经准备好了。
+6. 具体震动设备配置：
+    - 震动电机诸如Simagic HPR，或者BaseShaker震动音响：
+        - 可以通过“振动电机”- “QAdvanceFeedback - WheelLockSlip”直接拷贝“自定义效果 - QAdvanceFeedBack - WheelLock/Slip”，到你自己的震动电机或者振动音响配置文件里。
+        - 或者，你可以自行在你的震动电机或者震动音响配置里，添加“自定义效果”，选择“Mono”，配置“左前”，在编辑器里导入属性：“QAdvanceFeedback.WheelLock.Projected.All”。
+    - 震动坐垫（8通道），例如HF-8，或者Sensit Extreme 2：
+        - 如果是Sensit Haptic Extreme 2在“震动音响”里导入“QAdvanceFeedback - GForce”。如果是HF-8，则是在“震动电机”里导入。
+            - 注意！！！如果您使用HF-8，则必须让“QAdvanceFeedback - GForce”成为您的激活配置文件。如果您同时还有Simagic HPR震动电机，则两者配置文件会出现冲突不能同时使用。
+            - 您需要自己将两个配置文件进行合并，然后在对应设备中正确的进行通道映射和匹配！
+        - 在输出设备的通道设置里，导入对应的sichannels通道映射文件。
+        - 手动配置（配置对应震动效果映射到对应的震动通道）：
+            - QAdvanceFeedBack-Bottom -> FrontLeft/FrontRight：	对应大腿远端的震动单元通道
+            - QAdvanceFeedBack-Bottom -> RearLeft/RearRight：		对应大腿根部的震动单元通道
+            - QAdvanceFeedBack-Back 	  -> FrontLeft/FrontRight：	对应腰部（下背部）的震动单元通道
+            - QAdvanceFeedBack-Back 	  -> RearLeft/RearRight：		对应上背部的震动单元通道

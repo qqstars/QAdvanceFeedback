@@ -1,0 +1,660 @@
+{
+  "CarChoices": [],
+  "OutputManager": {
+    "ChannelsSettingsV3": [
+      {
+        "ControlVolume": true,
+        "UseLowPassFilter": false,
+        "LowPassFilter": 200,
+        "UseHighPassFilter": false,
+        "HighPassFilter": 20,
+        "IsEnabled": true,
+        "AudioMode": 3,
+        "DeviceType": 0,
+        "HardwareID2": "{1}.USB\\VID_1FC9&PID_832B&MI_01\\8&398053A8&0&0001",
+        "HardwareID1": "USB\\Class_01&SubClass_00&Prot_20",
+        "HardwareID3": "{2}.\\\\?\\usb#vid_1fc9&pid_832b&mi_01#8&398053a8&0&0001#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\\msft_wave",
+        "EffectToChannelsMapStore": {
+          "WheelsImpactContainer": {
+            "FrontLeft": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "FrontRight": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearLeft": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearRight": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "WheelsSlipContainerSmall Slip": {
+            "FrontLeft": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "FrontRight": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearLeft": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearRight": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "CustomEffectContainerFull Lock - IRacing": {
+            "FrontLeft": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "FrontRight": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearLeft": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearRight": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "All": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;1;100;;;|5;1;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "DecelerationGforceContainer": {
+            "Front": {
+              "MapsStore": "0;1;100;;;|1;1;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "GearEffectContainer": {
+            "All": {
+              "MapsStore": "0;1;100;;;|1;1;100;;;|2;1;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "LateralGforceContainer": {
+            "Left": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "Right": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "CustomEffectContainerQAdvanceFeedback-Back": {
+            "FrontLeft": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "FrontRight": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearLeft": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;1;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearRight": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;1;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "ImpactEffectContainer": {
+            "All": {
+              "MapsStore": "0;1;100;;;|1;1;100;;;|2;1;100;;;|3;1;100;;;|4;1;100;;;|5;1;100;;;|6;1;100;;;|7;1;100;;;"
+            }
+          },
+          "CustomEffectContainerSmall Slip - Original": {
+            "FrontLeft": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "FrontRight": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearLeft": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearRight": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "CustomEffectContainerSmall Lock - Original": {
+            "Left": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;1;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "Right": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;1;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "CustomEffectContainerFull Slip - IRacing": {
+            "FrontLeft": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "FrontRight": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearLeft": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearRight": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "All": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;1;100;;;|7;1;100;;;"
+            }
+          },
+          "WheelsVibrationContainer": {
+            "FrontLeft": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "FrontRight": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearLeft": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearRight": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "CustomEffectContainerQAdvanceFeedback-BottomFront": {
+            "Left": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "Right": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "CustomEffectContainer": {
+            "FrontLeft": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "FrontRight": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearLeft": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearRight": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "Left": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "Right": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "WheelsSlipContainerFull Slip": {
+            "All": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;1;100;;;|7;1;100;;;"
+            }
+          },
+          "CustomEffectContainerQAdvanceFeedback-Bottom": {
+            "Left": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "Right": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "FrontLeft": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "FrontRight": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearLeft": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;1;100;;;|7;0;100;;;"
+            },
+            "RearRight": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;1;100;;;"
+            }
+          },
+          "WheelsRumbleContainer": {
+            "FrontLeft": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "FrontRight": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearLeft": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearRight": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "GearMissedContainer": {
+            "All": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "WheelsLockContainerFull Lock": {
+            "All": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;1;100;;;|5;1;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "AccelerationGforceContainer": {
+            "Rear": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "RPMContainer": {
+            "All": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "WheelsLockContainerSmall Lock": {
+            "Left": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;1;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "Right": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;1;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          }
+        },
+        "GlobalChannelsSettings": {
+          "Quad": {
+            "MapsStore": "0;1;100;Front left;;|1;1;100;Front right;;|2;1;100;Rear left;;|3;1;100;Rear right;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+          },
+          "Custom": {
+            "MapsStore": "0;1;100;1 SEAT TOP LEFT;;|1;1;100;2 SEAT TOP RIGHT;;|2;1;100;3 BACK MID LEFT;;|3;1;100;4 BACK MID RIGHT;;|4;0;100;5 BACK TOP LEFT;;|5;0;100;6 BACK TOP RIGHT;;|6;0;100;7 SEAT MID LEFT;;|7;0;100;8 SEAT MID RIGHT;;"
+          }
+        },
+        "Name": "扬声器 (3- Sensit! Haptic Core)",
+        "OutputId": "{0.0.0.00000000}.{fb6a4f13-2084-4b5f-a68b-0c13f8935b45}",
+        "InstanceId": "09755cc5-2940-45c6-918c-0a0cae9d7637",
+        "ShowPerEffectsLevels": false,
+        "IsFavorite": false
+      }
+    ],
+    "ShowOfflineDevices": false,
+    "CanShowOfflineDevices": true,
+    "TypeName": "SoundOutputManager"
+  },
+  "IncludeOutputSettingsInProfile": true,
+  "UnmuteEffectsAfterSimhubRestart": true,
+  "EffectsContainers": [
+    {
+      "ContainerType": "GroupContainer",
+      "IsEnabled": true,
+      "Gain": 100.0,
+      "Description": "G-Force-QAdvanceFeedback",
+      "EffectsContainers": [
+        {
+          "ContainerType": "CustomEffectContainer",
+          "IsEnabled": true,
+          "Gain": 100.0,
+          "Description": "G-Force-QAdvanceFeedback-Bottom",
+          "FrontLeftFormula": {
+            "Expression": "[QAdvanceFeedback.GForce.Bottom.FrontLeft]"
+          },
+          "FrontRightFormula": {
+            "Expression": "[QAdvanceFeedback.GForce.Bottom.FrontRight]"
+          },
+          "RearLeftFormula": {
+            "Expression": "[QAdvanceFeedback.GForce.Bottom.RearLeft]"
+          },
+          "RearRightFormula": {
+            "Expression": "[QAdvanceFeedback.GForce.Bottom.RearRight]"
+          },
+          "ForceFrequencies": false,
+          "FrontLeftFrequencyFormula": {
+            "Expression": ""
+          },
+          "FrontRightFrequencyFormula": {
+            "Expression": ""
+          },
+          "RearLeftFrequencyFormula": {
+            "Expression": ""
+          },
+          "RearRightFrequencyFormula": {
+            "Expression": ""
+          },
+          "AlwaysExecute": false,
+          "ContainerId": "4e97e104-9743-4f21-b63b-428e853ead92",
+          "AggregationMode": "Corners",
+          "Filter": {
+            "GammaValue": 1.0,
+            "InputGain": 100.0,
+            "MinimumForce": 0,
+            "Threshold": 0,
+            "FilterType": "GammaFilter"
+          },
+          "Output": {
+            "UseHighFrequency": true,
+            "HighFrequency": 20,
+            "WhiteNoise": 10,
+            "UseWhiteNoise": false,
+            "FrequencyBasedOnPreFilter": false,
+            "UsePrehemptiveMode": false,
+            "Frequency": 50,
+            "AssignToChannelGroup": true,
+            "ChannelGroupName": "QAdvanceFeedback-Bottom",
+            "OutputType": "ToneOutput"
+          }
+        },
+        {
+          "ContainerType": "CustomEffectContainer",
+          "IsEnabled": true,
+          "Gain": 100.0,
+          "Description": "G-Force-QAdvanceFeedback-Back",
+          "FrontLeftFormula": {
+            "Expression": "[QAdvanceFeedback.GForce.Back.LowLeft]"
+          },
+          "FrontRightFormula": {
+            "Expression": "[QAdvanceFeedback.GForce.Back.LowRight]"
+          },
+          "RearLeftFormula": {
+            "Expression": "[QAdvanceFeedback.GForce.Back.TopLeft]"
+          },
+          "RearRightFormula": {
+            "Expression": "[QAdvanceFeedback.GForce.Back.TopRight]"
+          },
+          "ForceFrequencies": false,
+          "FrontLeftFrequencyFormula": {
+            "Expression": ""
+          },
+          "FrontRightFrequencyFormula": {
+            "Expression": ""
+          },
+          "RearLeftFrequencyFormula": {
+            "Expression": ""
+          },
+          "RearRightFrequencyFormula": {
+            "Expression": ""
+          },
+          "AlwaysExecute": false,
+          "ContainerId": "c68d12e2-0cbf-4fcc-a6b6-0e6dc445ddc2",
+          "AggregationMode": "Corners",
+          "Filter": {
+            "GammaValue": 1.0,
+            "InputGain": 100.0,
+            "MinimumForce": 0,
+            "Threshold": 0,
+            "FilterType": "GammaFilter"
+          },
+          "Output": {
+            "UseHighFrequency": true,
+            "HighFrequency": 20,
+            "WhiteNoise": 10,
+            "UseWhiteNoise": false,
+            "FrequencyBasedOnPreFilter": false,
+            "UsePrehemptiveMode": false,
+            "Frequency": 50,
+            "AssignToChannelGroup": true,
+            "ChannelGroupName": "QAdvanceFeedback-Back",
+            "OutputType": "ToneOutput"
+          }
+        }
+      ],
+      "ContainerId": "74318d9c-df24-4e5a-b79d-174aa654a2e2",
+      "Filter": null,
+      "Output": null
+    },
+    {
+      "ContainerType": "GroupContainer",
+      "IsEnabled": true,
+      "Gain": 49.952380952381354,
+      "Description": "Gears",
+      "EffectsContainers": [
+        {
+          "ContainerType": "GearEffectContainer",
+          "IsEnabled": true,
+          "Gain": 19.761904761905466,
+          "ModulateGainUsingRpms": false,
+          "MaxFeedbackRpmPercent": 90,
+          "MinFeedbackRpmPercent": 50,
+          "GearMode": 2,
+          "AlwaysIgnoreNeutral": false,
+          "IgnoreNeutral": true,
+          "NeutralDebouningTime": 200.0,
+          "EngagingDebouningTime": 100.0,
+          "ContainerId": "075ccb70-0bd2-4ec3-be8b-35c4375c586e",
+          "Filter": {
+            "Duration": 80,
+            "FilterType": "PulseFilter"
+          },
+          "Output": {
+            "UsePrehemptiveMode": false,
+            "Frequency": 44,
+            "OutputType": "SingleToneOutput"
+          }
+        },
+        {
+          "ContainerType": "RPMContainer",
+          "IsEnabled": true,
+          "Gain": 24.714285714286579,
+          "ContainerId": "06dac516-673a-4847-b370-24a315e15829",
+          "Filter": {
+            "ControlPoints": [
+              "5;88",
+              "18;92",
+              "38;0",
+              "93;43",
+              "100;58",
+              "86;0"
+            ],
+            "CurveFitting": 0,
+            "FilterType": "SplineFilter"
+          },
+          "Output": {
+            "UseHighFrequency": true,
+            "HighFrequency": 50,
+            "WhiteNoise": 40,
+            "UseWhiteNoise": true,
+            "FrequencyBasedOnPreFilter": true,
+            "UsePrehemptiveMode": false,
+            "Frequency": 34,
+            "OutputType": "ToneOutput"
+          }
+        },
+        {
+          "ContainerType": "GearMissedContainer",
+          "IsEnabled": true,
+          "Gain": 50.0,
+          "Gear1": {
+            "Triggers": [
+              {
+                "Trigger": "JoystickPlugin.DS-8X_Shifter_B00",
+                "PressType": 3
+              }
+            ]
+          },
+          "Gear2": {
+            "Triggers": [
+              {
+                "Trigger": "JoystickPlugin.DS-8X_Shifter_B01",
+                "PressType": 3
+              }
+            ]
+          },
+          "Gear3": {
+            "Triggers": [
+              {
+                "Trigger": "JoystickPlugin.DS-8X_Shifter_B02",
+                "PressType": 3
+              }
+            ]
+          },
+          "Gear4": {
+            "Triggers": [
+              {
+                "Trigger": "JoystickPlugin.DS-8X_Shifter_B03",
+                "PressType": 3
+              }
+            ]
+          },
+          "Gear5": {
+            "Triggers": [
+              {
+                "Trigger": "JoystickPlugin.DS-8X_Shifter_B04",
+                "PressType": 3
+              }
+            ]
+          },
+          "Gear6": {
+            "Triggers": [
+              {
+                "Trigger": "JoystickPlugin.DS-8X_Shifter_B05",
+                "PressType": 3
+              }
+            ]
+          },
+          "Gear7": {
+            "Triggers": [
+              {
+                "Trigger": "JoystickPlugin.DS-8X_Shifter_B06",
+                "PressType": 3
+              }
+            ]
+          },
+          "GearR": {
+            "Triggers": [
+              {
+                "Trigger": "JoystickPlugin.DS-8X_Shifter_B08",
+                "PressType": 3
+              }
+            ]
+          },
+          "ContainerId": "9fd5e0ac-b516-4a59-9b6d-c59ac8feb702",
+          "Filter": {
+            "GammaValue": 1.2,
+            "FilterType": "SimpleGammaFilter"
+          },
+          "Output": {
+            "UseHighFrequency": true,
+            "HighFrequency": 50,
+            "WhiteNoise": 10,
+            "UseWhiteNoise": false,
+            "FrequencyBasedOnPreFilter": false,
+            "UsePrehemptiveMode": false,
+            "Frequency": 44,
+            "OutputType": "ToneOutput"
+          }
+        }
+      ],
+      "ContainerId": "ca17a759-8d36-47ba-a481-032979d3d917",
+      "Filter": null,
+      "Output": null
+    },
+    {
+      "ContainerType": "GroupContainer",
+      "IsEnabled": true,
+      "Gain": 39.71428571428573,
+      "Description": "Road Feeling",
+      "EffectsContainers": [
+        {
+          "ContainerType": "ImpactEffectContainer",
+          "IsEnabled": true,
+          "Gain": 100.0,
+          "Sensitivity": 95.0,
+          "ContainerId": "b478b008-8f3f-4b9e-8e2a-4ec8b4897421",
+          "Filter": {
+            "GammaValue": 1.0,
+            "InputGain": 100.0,
+            "MinimumForce": 0,
+            "Threshold": 0,
+            "FilterType": "GammaFilter"
+          },
+          "Output": {
+            "UseHighFrequency": true,
+            "HighFrequency": 44,
+            "WhiteNoise": 10,
+            "UseWhiteNoise": false,
+            "FrequencyBasedOnPreFilter": false,
+            "UsePrehemptiveMode": false,
+            "Frequency": 50,
+            "OutputType": "ToneOutput"
+          }
+        },
+        {
+          "ContainerType": "WheelsImpactContainer",
+          "IsEnabled": true,
+          "Gain": 90.0,
+          "AutocalibrationMin": 50.0,
+          "ContainerId": "6d42c639-b637-4802-b86b-0876f66fbfbf",
+          "AggregationMode": "Corners",
+          "Filter": {
+            "GammaValue": 1.0,
+            "InputGain": 100.0,
+            "MinimumForce": 0,
+            "Threshold": 0,
+            "FilterType": "GammaFilter"
+          },
+          "Output": {
+            "UseHighFrequency": false,
+            "HighFrequency": 50,
+            "WhiteNoise": 10,
+            "UseWhiteNoise": false,
+            "FrequencyBasedOnPreFilter": false,
+            "UsePrehemptiveMode": false,
+            "Frequency": 44,
+            "OutputType": "ToneOutput"
+          }
+        },
+        {
+          "ContainerType": "WheelsRumbleContainer",
+          "IsEnabled": true,
+          "Gain": 49.904761904762005,
+          "MaxEffectSpeed": 80.0,
+          "RampDownDelay": 1000.0,
+          "RampDownTo": 25.0,
+          "UseVibrationRampDown": true,
+          "Localization": 50.0,
+          "ContainerId": "a6b3263b-2c96-4508-b4ea-3807159605ff",
+          "AggregationMode": "Corners",
+          "Filter": {
+            "GammaValue": 1.0,
+            "InputGain": 100.0,
+            "MinimumForce": 0,
+            "Threshold": 0,
+            "FilterType": "GammaFilter"
+          },
+          "Output": {
+            "UseHighFrequency": false,
+            "HighFrequency": 50,
+            "WhiteNoise": 10,
+            "UseWhiteNoise": false,
+            "FrequencyBasedOnPreFilter": false,
+            "UsePrehemptiveMode": false,
+            "Frequency": 44,
+            "OutputType": "ToneOutput"
+          }
+        },
+        {
+          "ContainerType": "WheelsVibrationContainer",
+          "IsEnabled": true,
+          "Gain": 59.904761904761585,
+          "AutocalibrationMax": 100.0,
+          "UseAutoThreshold": true,
+          "AutoThresholdValue": 50.0,
+          "ContainerId": "96e68c3d-bc0a-4eda-a562-462e0b204680",
+          "AggregationMode": "Corners",
+          "Filter": {
+            "GammaValue": 1.0,
+            "InputGain": 100.0,
+            "MinimumForce": 0,
+            "Threshold": 0,
+            "FilterType": "GammaFilter"
+          },
+          "Output": {
+            "UseHighFrequency": true,
+            "HighFrequency": 44,
+            "WhiteNoise": 10,
+            "UseWhiteNoise": false,
+            "FrequencyBasedOnPreFilter": false,
+            "UsePrehemptiveMode": false,
+            "Frequency": 50,
+            "OutputType": "ToneOutput"
+          }
+        }
+      ],
+      "ContainerId": "0db3165d-6d7d-4b80-9bbd-22e4eb72822e",
+      "Filter": null,
+      "Output": null
+    }
+  ],
+  "AutoCalibrationRatio2": 100,
+  "OutputMode": 1,
+  "GlobalGain": 100.0,
+  "UseProfileGain": true,
+  "LastLoaded": "0001-01-01T00:00:00",
+  "Name": "QAdvanceFeedback - GForce",
+  "ProfileId": "0e143e8c-3905-44db-b5f6-1a80594d5dec",
+  "GameCode": null,
+  "CarChoice": null
+}

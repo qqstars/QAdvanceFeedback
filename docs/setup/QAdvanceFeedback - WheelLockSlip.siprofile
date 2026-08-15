@@ -1,0 +1,560 @@
+{
+  "CarChoices": [],
+  "OutputManager": {
+    "ArduinoSettings": {
+      "ArduinoPluginDisabled": false,
+      "MaxChannels": 12,
+      "DeviceType": 1,
+      "IsEnabled": false,
+      "MinimumForce": 0,
+      "Threshold": 0,
+      "EffectToChannelsMapStore": {},
+      "GlobalChannelsSettings": {},
+      "Name": "Arduino motors and fans",
+      "OutputId": "Arduino",
+      "InstanceId": "2b2ca3f6-1c99-4108-a676-639f24984543",
+      "ShowPerEffectsLevels": false,
+      "IsFavorite": false
+    },
+    "FanatecSettings": {
+      "MaxChannels": 2,
+      "DeviceType": 5,
+      "IsEnabled": false,
+      "MinimumForce": 80,
+      "Threshold": 25,
+      "EffectToChannelsMapStore": {},
+      "GlobalChannelsSettings": {},
+      "Name": "Fanatec pedals (USB only)",
+      "OutputId": "Fanatec",
+      "InstanceId": "a87010db-c604-4a5e-b2d8-d899f4fe962e",
+      "ShowPerEffectsLevels": false,
+      "IsFavorite": false
+    },
+    "HSRSettings": {
+      "MaxChannels": 1,
+      "DeviceType": 6,
+      "IsEnabled": false,
+      "MinimumForce": 0,
+      "Threshold": 0,
+      "EffectToChannelsMapStore": {},
+      "GlobalChannelsSettings": {},
+      "Name": "HSIMRACING R’Fun PRO V2",
+      "OutputId": "HSR",
+      "InstanceId": "dfa62288-a897-4f9c-af52-8ad5927884a8",
+      "ShowPerEffectsLevels": false,
+      "IsFavorite": false
+    },
+    "ForcefeelSettings": {
+      "MaxChannels": 8,
+      "DeviceType": 2,
+      "IsEnabled": false,
+      "MinimumForce": 10,
+      "Threshold": 5,
+      "EffectToChannelsMapStore": {},
+      "GlobalChannelsSettings": {},
+      "Name": "ForceFeel Pad / Next Level Racing HF8 Haptic Gaming Pad",
+      "OutputId": "ForceFeel",
+      "InstanceId": "d4b2c53e-31bb-4c4e-800a-2f96ab03a7b9",
+      "ShowPerEffectsLevels": false,
+      "IsFavorite": false
+    },
+    "GameTrixSettings": {
+      "MaxChannels": 6,
+      "DeviceType": 3,
+      "IsEnabled": false,
+      "MinimumForce": 10,
+      "Threshold": 5,
+      "EffectToChannelsMapStore": {},
+      "GlobalChannelsSettings": {},
+      "Name": "GameTrix Pad",
+      "OutputId": "GameTrix",
+      "InstanceId": "f19efdec-2c9d-4867-8944-836ca87358c2",
+      "ShowPerEffectsLevels": false,
+      "IsFavorite": false
+    },
+    "GameTrixJetPadSettings": {
+      "MaxChannels": 2,
+      "DeviceType": 4,
+      "IsEnabled": false,
+      "MinimumForce": 10,
+      "Threshold": 5,
+      "EffectToChannelsMapStore": {},
+      "GlobalChannelsSettings": {},
+      "Name": "GameTrix JetPad",
+      "OutputId": "GameTrixJetPad",
+      "InstanceId": "89500399-c845-40db-8ffc-3fc867182481",
+      "ShowPerEffectsLevels": false,
+      "IsFavorite": false
+    },
+    "SimagicP1000Settings": {
+      "Inverted": false,
+      "ErrorMessage": null,
+      "MaxChannels": 3,
+      "DeviceType": 7,
+      "IsEnabled": false,
+      "MinimumForce": 0,
+      "Threshold": 0,
+      "EffectToChannelsMapStore": {},
+      "GlobalChannelsSettings": {},
+      "Name": "Simagic P1000/P2000/P700/P500 Haptic Pedal Reactor (USB only)",
+      "OutputId": "SimagicP1000",
+      "InstanceId": "e1aa3c0c-c25a-4e97-bbf4-0bd47b5d4f84",
+      "ShowPerEffectsLevels": false,
+      "IsFavorite": false
+    },
+    "SimagicTBRSSettings": {
+      "ErrorMessage": null,
+      "MaxChannels": 1,
+      "DeviceType": 8,
+      "IsEnabled": false,
+      "MinimumForce": 0,
+      "Threshold": 0,
+      "EffectToChannelsMapStore": {},
+      "GlobalChannelsSettings": {},
+      "Name": "Simagic TB-RS Haptic (USB only)",
+      "OutputId": "SimagicTBRS",
+      "InstanceId": "ef0d1af8-61d1-4d3a-9c1d-e50c742541fd",
+      "ShowPerEffectsLevels": false,
+      "IsFavorite": false
+    },
+    "ConspitChannelSettings": {
+      "ErrorMessage": null,
+      "MaxChannels": 3,
+      "DeviceType": 9,
+      "IsEnabled": false,
+      "MinimumForce": 0,
+      "Threshold": 0,
+      "EffectToChannelsMapStore": {},
+      "GlobalChannelsSettings": {},
+      "Name": "Conspit CPP.Lite / CPP EVO / CPP Apex",
+      "OutputId": "ConspitCPPLite",
+      "InstanceId": "27a9b09c-f212-4856-bb0b-0c3e7da48425",
+      "ShowPerEffectsLevels": false,
+      "IsFavorite": false
+    },
+    "ThreeDRapSettings": {
+      "MaxChannels": 4,
+      "DeviceType": 10,
+      "IsEnabled": false,
+      "MinimumForce": 0,
+      "Threshold": 0,
+      "EffectToChannelsMapStore": {},
+      "GlobalChannelsSettings": {},
+      "Name": "3DRap Feeling Pro Rumble",
+      "OutputId": "3DRap",
+      "InstanceId": "d35f75b4-af6b-4ee1-9805-08a504459b1d",
+      "ShowPerEffectsLevels": false,
+      "IsFavorite": false
+    },
+    "VNMChannelSettings": {
+      "ErrorMessage": null,
+      "MaxChannels": 3,
+      "DeviceType": 11,
+      "IsEnabled": false,
+      "MinimumForce": 0,
+      "Threshold": 0,
+      "EffectToChannelsMapStore": {},
+      "GlobalChannelsSettings": {},
+      "Name": "VNM Pedals",
+      "OutputId": "VNMPedals",
+      "InstanceId": "4bc9edf3-5a8e-4b6d-ad97-ae91b746f251",
+      "ShowPerEffectsLevels": false,
+      "IsFavorite": false
+    },
+    "CanShowOfflineDevices": false,
+    "ShowOfflineDevices": false,
+    "TypeName": "VibrationOutputManager"
+  },
+  "IncludeOutputSettingsInProfile": true,
+  "UnmuteEffectsAfterSimhubRestart": false,
+  "EffectsContainers": [
+    {
+      "ContainerType": "GroupContainer",
+      "IsEnabled": true,
+      "Gain": 100.0,
+      "Description": "Data Source - DONOT MODIFY",
+      "EffectsContainers": [
+        {
+          "ContainerType": "WheelsLockContainer",
+          "IsEnabled": true,
+          "Gain": 100.0,
+          "IsLock": true,
+          "UseLegacyIracingAlgorythm": true,
+          "LockSensibility": 50.0,
+          "BrakeFilter": 20,
+          "ContainerId": "153ba5c8-d620-4c7c-89bf-eaae714c17ce",
+          "AggregationMode": "Corners",
+          "Filter": {
+            "GammaValue": 1.0,
+            "InputGain": 100.0,
+            "MinimumForce": 0,
+            "Threshold": 0,
+            "FilterType": "GammaFilter"
+          },
+          "Output": {
+            "PropertyName": "WheelLock.IRacing",
+            "ExportProperty": true,
+            "DisableOutput": true,
+            "OutputType": "VibrationOutput"
+          }
+        },
+        {
+          "ContainerType": "WheelsSlipContainer",
+          "IsEnabled": true,
+          "Gain": 100.0,
+          "BrakeFilter": 99,
+          "MuteWhenLockEffectIsActive": false,
+          "ThrottleFilter": 10,
+          "UseBrakeFilter": true,
+          "UseThrottleFilter": true,
+          "UseLegacyIracingAlgorythm": true,
+          "ContainerId": "d5130b00-f2f4-4f3d-a3a9-84c8a2e00967",
+          "AggregationMode": "Corners",
+          "Filter": {
+            "GammaValue": 1.0,
+            "InputGain": 100.0,
+            "MinimumForce": 0,
+            "Threshold": 0,
+            "FilterType": "GammaFilter"
+          },
+          "Output": {
+            "PropertyName": "WheelSlip.IRacing",
+            "ExportProperty": true,
+            "DisableOutput": true,
+            "OutputType": "VibrationOutput"
+          }
+        },
+        {
+          "ContainerType": "TractionLossContainer",
+          "IsEnabled": true,
+          "Gain": 100.0,
+          "ContainerId": "46da4bf4-31fa-4c99-9bca-b65ff3d85654",
+          "AggregationMode": "Left/Right",
+          "Filter": {
+            "GammaValue": 3.0,
+            "InputGain": 160.0,
+            "MinimumForce": 15,
+            "Threshold": 55,
+            "FilterType": "GammaFilter"
+          },
+          "Output": {
+            "PropertyName": "TractionLost.LR",
+            "ExportProperty": true,
+            "DisableOutput": true,
+            "OutputType": "VibrationOutput"
+          }
+        },
+        {
+          "ContainerType": "TractionLossContainer",
+          "IsEnabled": true,
+          "Gain": 100.0,
+          "ContainerId": "8feaf2c3-d893-4b9d-b7ee-3ad163ed930b",
+          "AggregationMode": "Mono",
+          "Filter": {
+            "GammaValue": 5.0,
+            "InputGain": 160.0,
+            "MinimumForce": 15,
+            "Threshold": 55,
+            "FilterType": "GammaFilter"
+          },
+          "Output": {
+            "PropertyName": "TractionLost.Mono",
+            "ExportProperty": true,
+            "DisableOutput": true,
+            "OutputType": "VibrationOutput"
+          }
+        },
+        {
+          "ContainerType": "CustomEffectContainer",
+          "IsEnabled": true,
+          "Gain": 100.0,
+          "Description": "Source - Clutch 10% to 65%",
+          "FrontLeftFormula": {
+            "Expression": "if([Clutch]>=40 && [Clutch]<70\r\n\t, 100 - (70-[Clutch]) / (70-40) * 100\r\n\t, if([Clutch]>10 && [Clutch]<40\r\n\t\t, 100 - ([Clutch]-10) / (40-10) * 100\r\n\t\t, 0))"
+          },
+          "FrontRightFormula": {
+            "Expression": ""
+          },
+          "RearLeftFormula": {
+            "Expression": ""
+          },
+          "RearRightFormula": {
+            "Expression": ""
+          },
+          "ForceFrequencies": false,
+          "FrontLeftFrequencyFormula": {
+            "Expression": ""
+          },
+          "FrontRightFrequencyFormula": {
+            "Expression": ""
+          },
+          "RearLeftFrequencyFormula": {
+            "Expression": ""
+          },
+          "RearRightFrequencyFormula": {
+            "Expression": ""
+          },
+          "AlwaysExecute": false,
+          "ContainerId": "b08104b9-4dfa-42a0-b38b-13a426cb17b2",
+          "AggregationMode": "Mono",
+          "Filter": {
+            "GammaValue": 2.0,
+            "InputGain": 150.0,
+            "MinimumForce": 0,
+            "Threshold": 0,
+            "FilterType": "GammaFilter"
+          },
+          "Output": {
+            "PropertyName": "MyDataFields.Clutch40",
+            "ExportProperty": true,
+            "DisableOutput": true,
+            "OutputType": "VibrationOutput"
+          }
+        }
+      ],
+      "ContainerId": "01f60d01-c682-4fa8-8e44-be1fa23bfca6",
+      "Filter": null,
+      "Output": null
+    },
+    {
+      "ContainerType": "CustomEffectContainer",
+      "IsEnabled": true,
+      "Gain": 100.0,
+      "Description": "QAdvanceFeedback - WheelLock",
+      "FrontLeftFormula": {
+        "Expression": "[QAdvanceFeedback.WheelLock.Projected.All]"
+      },
+      "FrontRightFormula": {
+        "Expression": ""
+      },
+      "RearLeftFormula": {
+        "Expression": ""
+      },
+      "RearRightFormula": {
+        "Expression": ""
+      },
+      "ForceFrequencies": false,
+      "FrontLeftFrequencyFormula": {
+        "Expression": ""
+      },
+      "FrontRightFrequencyFormula": {
+        "Expression": ""
+      },
+      "RearLeftFrequencyFormula": {
+        "Expression": ""
+      },
+      "RearRightFrequencyFormula": {
+        "Expression": ""
+      },
+      "AlwaysExecute": false,
+      "ContainerId": "b3b910a0-eb09-43d3-8609-a5e10fe973a0",
+      "AggregationMode": "Mono",
+      "Filter": {
+        "GammaValue": 1.0,
+        "InputGain": 100.0,
+        "MinimumForce": 1,
+        "Threshold": 0,
+        "FilterType": "GammaFilter"
+      },
+      "Output": {
+        "AssignToChannelGroup": true,
+        "ChannelGroupName": "Q-WheelLock",
+        "OutputType": "VibrationOutput"
+      }
+    },
+    {
+      "ContainerType": "CustomEffectContainer",
+      "IsEnabled": true,
+      "Gain": 100.0,
+      "Description": "QAdvanceFeedback - WheelSlip",
+      "FrontLeftFormula": {
+        "Expression": "[QAdvanceFeedback.WheelSlip.Projected.All]"
+      },
+      "FrontRightFormula": {
+        "Expression": ""
+      },
+      "RearLeftFormula": {
+        "Expression": ""
+      },
+      "RearRightFormula": {
+        "Expression": ""
+      },
+      "ForceFrequencies": false,
+      "FrontLeftFrequencyFormula": {
+        "Expression": ""
+      },
+      "FrontRightFrequencyFormula": {
+        "Expression": ""
+      },
+      "RearLeftFrequencyFormula": {
+        "Expression": ""
+      },
+      "RearRightFrequencyFormula": {
+        "Expression": ""
+      },
+      "AlwaysExecute": false,
+      "ContainerId": "f731bde4-2bfe-4344-ac96-919b1e1d4575",
+      "AggregationMode": "Mono",
+      "Filter": {
+        "GammaValue": 1.0,
+        "InputGain": 100.0,
+        "MinimumForce": 1,
+        "Threshold": 0,
+        "FilterType": "GammaFilter"
+      },
+      "Output": {
+        "AssignToChannelGroup": true,
+        "ChannelGroupName": "Q-WheelSlip",
+        "OutputType": "VibrationOutput"
+      }
+    },
+    {
+      "ContainerType": "CustomEffectContainer",
+      "IsEnabled": true,
+      "Gain": 100.0,
+      "Description": "TractionLost",
+      "FrontLeftFormula": {
+        "Expression": "[ShakeITMotorsV3Plugin.Export.TractionLost.Mono.All]"
+      },
+      "FrontRightFormula": {
+        "Expression": ""
+      },
+      "RearLeftFormula": {
+        "Expression": ""
+      },
+      "RearRightFormula": {
+        "Expression": ""
+      },
+      "ForceFrequencies": false,
+      "FrontLeftFrequencyFormula": {
+        "Expression": ""
+      },
+      "FrontRightFrequencyFormula": {
+        "Expression": ""
+      },
+      "RearLeftFrequencyFormula": {
+        "Expression": ""
+      },
+      "RearRightFrequencyFormula": {
+        "Expression": ""
+      },
+      "AlwaysExecute": false,
+      "ContainerId": "ec3b649d-8bcd-4b15-8c5c-75a4638b4f2b",
+      "AggregationMode": "Mono",
+      "Filter": {
+        "GammaValue": 1.0,
+        "InputGain": 100.0,
+        "MinimumForce": 1,
+        "Threshold": 0,
+        "FilterType": "GammaFilter"
+      },
+      "Output": {
+        "AssignToChannelGroup": true,
+        "ChannelGroupName": "TractionLost",
+        "OutputType": "VibrationOutput"
+      }
+    },
+    {
+      "ContainerType": "CustomEffectContainer",
+      "IsEnabled": true,
+      "Gain": 100.0,
+      "Description": "Clutch - 40%",
+      "FrontLeftFormula": {
+        "Expression": "[ShakeITMotorsV3Plugin.Export.MyDataFields.Clutch40.All]"
+      },
+      "FrontRightFormula": {
+        "Expression": ""
+      },
+      "RearLeftFormula": {
+        "Expression": ""
+      },
+      "RearRightFormula": {
+        "Expression": ""
+      },
+      "ForceFrequencies": false,
+      "FrontLeftFrequencyFormula": {
+        "Expression": ""
+      },
+      "FrontRightFrequencyFormula": {
+        "Expression": ""
+      },
+      "RearLeftFrequencyFormula": {
+        "Expression": ""
+      },
+      "RearRightFrequencyFormula": {
+        "Expression": ""
+      },
+      "AlwaysExecute": false,
+      "ContainerId": "4be78b60-95a5-4bac-8096-6b558de56965",
+      "AggregationMode": "Mono",
+      "Filter": {
+        "GammaValue": 1.0,
+        "InputGain": 100.0,
+        "MinimumForce": 0,
+        "Threshold": 0,
+        "FilterType": "GammaFilter"
+      },
+      "Output": {
+        "AssignToChannelGroup": true,
+        "ChannelGroupName": "Clutch-40%",
+        "OutputType": "VibrationOutput"
+      }
+    },
+    {
+      "ContainerType": "RPMContainer",
+      "IsEnabled": true,
+      "Gain": 40.0,
+      "ContainerId": "241fb1a7-adc6-4daf-8ff3-e74b51a23fdd",
+      "Filter": {
+        "ControlPoints": [
+          "5.20710059171598;39.6316969726515",
+          "16.9230769230769;50.4833520206698",
+          "38;0",
+          "93;43",
+          "100;58",
+          "86;0"
+        ],
+        "CurveFitting": 0,
+        "FilterType": "SplineFilter"
+      },
+      "Output": {
+        "OutputType": "VibrationOutput"
+      }
+    },
+    {
+      "ContainerType": "TCActiveEffectContainer",
+      "IsEnabled": true,
+      "Gain": 100.0,
+      "ContainerId": "0b7ca619-766f-457a-aa09-a444c77325fd",
+      "Filter": {
+        "Duration": 80,
+        "FilterType": "PulseFilter"
+      },
+      "Output": {
+        "OutputType": "VibrationOutput"
+      }
+    },
+    {
+      "ContainerType": "ABSActiveEffectContainer",
+      "IsEnabled": true,
+      "Gain": 100.0,
+      "ContainerId": "acc90ae0-02d7-4bd9-ad63-d789f9071aec",
+      "Filter": {
+        "Duration": 80,
+        "FilterType": "PulseFilter"
+      },
+      "Output": {
+        "OutputType": "VibrationOutput"
+      }
+    }
+  ],
+  "AutoCalibrationRatio2": 100,
+  "OutputMode": 0,
+  "GlobalGain": 50.0,
+  "UseProfileGain": true,
+  "LastLoaded": "0001-01-01T00:00:00",
+  "Name": "QAdvanceFeedback - WheelLockSlip",
+  "ProfileId": "f8e6d51e-1c3a-4a52-a04d-1d36a44af738",
+  "GameCode": null,
+  "CarChoice": null
+}
