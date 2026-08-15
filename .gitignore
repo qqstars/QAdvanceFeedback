@@ -1,55 +1,20 @@
-# Prerequisites
-*.d
+bin/
+obj/
+.vs/
+*.user
 
-# Object files
-*.o
-*.ko
-*.obj
-*.elf
+# lib/ is not committed - tools/fetch-simhub-refs.sh rebuilds it from a fresh clone (downloads the
+# SimHub installer, extracts the reference assemblies with innounp). See README.md's "Building"
+# section and tools/fetch-simhub-refs.sh's own header comment.
+lib/
 
-# Linker output
-*.ilk
-*.map
-*.exp
+# Scratch/working directories a fetch or packaging run may create.
+.simhub-refs-work/
+.claude/
+.github/
 
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
-
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
-
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
-
-# debug information files
-*.dwo
+# Decompiled SimHub source used as the implementation reference. NEVER commit this: it is Wotever's
+# own code verbatim, not ours, and publishing it would be a far more direct problem than publishing
+# our derived implementation. Regenerate locally with ilspycmd against lib/SimHub.Plugins.dll if
+# needed - see docs/reference/README.md.
+docs/reference/*.cs
