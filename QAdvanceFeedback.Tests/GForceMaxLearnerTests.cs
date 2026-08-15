@@ -48,11 +48,48 @@ namespace QAdvanceFeedback.Tests
         {
             // Distinguishes "single isolated spike rejected" from "the learner is just broken and
             // never learns anything above the seed" - two consecutive similar high readings represent
-            // a genuinely sustained event (e.g. real hard braking lasting more than one frame).
+            // a genuinely sustained event (e.g. real hard braking lasting more than one frame). Kept
+            // WITHIN MaxPlausibleG (unlike this test's original 19.9/19.5g fixture - see the dedicated
+            // MaxPlausibleG tests below for the "even sustained, an implausible value is never
+            // learned" case that value used to conflate with this one) so this test still isolates the
+            // 2-frame CONFIRMATION mechanism on its own, independent of the field-fixes hard ceiling.
             var learner = new GForceMaxLearner();
-            learner.Observe("Game", "Car", 19.9);
-            learner.Observe("Game", "Car", 19.5); // within tolerance of 19.9 -> confirms
-            Assert.True(learner.GetLearnedMax("Game", "Car") >= 19.5);
+            learner.Observe("Game", "Car", 5.0);
+            learner.Observe("Game", "Car", 5.2); // within tolerance of 5.0 -> confirms
+            Assert.True(learner.GetLearnedMax("Game", "Car") >= 5.0);
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // MaxPlausibleG hard ceiling (docs\field-fixes-report.md, defect A's "ALSO" clause) - a real
+        // captured session's Diag.GForce.LearnedAccelMaxG reached 179.8 (an ~18g spike) because the
+        // pre-existing 2-frame confirmation alone accepts ANY sustained repeat, however implausible.
+        // Mutation evidence (a) for this specific guard: deleting the `if (magnitude > MaxPlausibleG)
+        // return;` line reproduces exactly the scenario below (19.9g/19.5g would confirm again).
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void An_implausible_spike_is_never_learned_even_when_sustained_across_many_frames()
+        {
+            var learner = new GForceMaxLearner();
+            learner.Observe("Game", "Car", 1.0);
+            learner.Observe("Game", "Car", 1.0); // confirmed ordinary max = 1.0
+
+            // The exact real-world failure mode (see this method's own remarks): a spike well above
+            // MaxPlausibleG, repeated far more than ConfirmFrames times, must still never be trusted.
+            for (int i = 0; i < 10; i++) learner.Observe("Game", "Car", 19.9);
+            for (int i = 0; i < 10; i++) learner.Observe("Game", "Car", 19.5);
+
+            Assert.Equal(1.0, learner.GetLearnedMax("Game", "Car"), 9);
+        }
+
+        [Fact]
+        public void A_value_exactly_at_MaxPlausibleG_is_still_learnable()
+        {
+            // The ceiling rejects readings ABOVE MaxPlausibleG, not AT it - a boundary check.
+            var learner = new GForceMaxLearner();
+            learner.Observe("Game", "Car", GForceMaxLearner.MaxPlausibleG);
+            learner.Observe("Game", "Car", GForceMaxLearner.MaxPlausibleG);
+            Assert.Equal(GForceMaxLearner.MaxPlausibleG, learner.GetLearnedMax("Game", "Car"), 9);
         }
 
         [Fact]
@@ -193,6 +230,48 @@ namespace QAdvanceFeedback.Tests
             var learner = new GForceMaxLearner();
             learner.ImportLearnedMaxima(null); // must not throw
             Assert.Equal(0.0, learner.GetLearnedMax("Game", "Car"), 9);
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // Owner's asymmetric-cap/plausibility-limit ask (docs\gforce-direction-fix-report.md) -
+        // LearnCapG is per-instance and constructor-overridable; GForceSettings constructs its
+        // accel/decel instances with tighter, ASYMMETRIC values (see GForceSettingsTests for that
+        // integration) rather than the shared MaxPlausibleG default.
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void A_plain_constructor_defaults_LearnCapG_to_the_shared_MaxPlausibleG()
+        {
+            var learner = new GForceMaxLearner();
+            Assert.Equal(GForceMaxLearner.MaxPlausibleG, learner.LearnCapG, 6);
+        }
+
+        [Fact]
+        public void A_custom_learn_cap_rejects_above_its_own_ceiling_even_though_it_is_below_the_shared_default()
+        {
+            var learner = new GForceMaxLearner(learnCapG: 6.0); // e.g. the acceleration axis
+            learner.Observe("Game", "Car", 7.0);
+            learner.Observe("Game", "Car", 7.0);
+
+            Assert.Equal(0.0, learner.GetLearnedMax("Game", "Car"), 9);
+        }
+
+        [Fact]
+        public void A_custom_learn_cap_still_accepts_a_magnitude_at_or_below_its_own_ceiling()
+        {
+            var learner = new GForceMaxLearner(learnCapG: 6.0);
+            learner.Observe("Game", "Car", 5.5);
+            learner.Observe("Game", "Car", 5.5);
+
+            Assert.Equal(5.5, learner.GetLearnedMax("Game", "Car"), 9);
+        }
+
+        [Fact]
+        public void A_non_positive_or_non_finite_custom_learn_cap_falls_back_to_the_default()
+        {
+            Assert.Equal(GForceMaxLearner.MaxPlausibleG, new GForceMaxLearner(learnCapG: 0.0).LearnCapG, 6);
+            Assert.Equal(GForceMaxLearner.MaxPlausibleG, new GForceMaxLearner(learnCapG: -1.0).LearnCapG, 6);
+            Assert.Equal(GForceMaxLearner.MaxPlausibleG, new GForceMaxLearner(learnCapG: double.NaN).LearnCapG, 6);
         }
     }
 }

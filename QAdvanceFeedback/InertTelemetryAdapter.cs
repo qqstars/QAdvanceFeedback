@@ -5,8 +5,8 @@ namespace QAdvanceFeedback
 {
     /// <summary>
     /// The PUBLIC fallback for <see cref="ITelemetryAdapter"/>, used only when
-    /// <c>QAdvanceFeedback\Private\SimHubTelemetryAdapter.cs</c> (the withheld implementation) is not
-    /// present in this build - see <c>Private\README.md</c>.
+    /// <c>Private\QAdvanceFeedback\SimHubTelemetryAdapter.cs</c> (the withheld implementation) is not
+    /// present in this build - see <c>..\Private\README.md</c>.
     /// <para/>
     /// Deliberately inert and deliberately trivial: it never even looks inside
     /// <paramref name="data"/>, so it cannot throw regardless of what SimHub hands it (null, a game

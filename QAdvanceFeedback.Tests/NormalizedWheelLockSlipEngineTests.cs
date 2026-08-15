@@ -49,7 +49,18 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void Arcade_and_sim_magnitude_traces_both_span_a_useful_range_instead_of_one_saturating()
         {
-            var raw = Corners.Uniform(70.0); // constant Raw signal isolates GripUtilization's own calibration
+            // FIELD FIXES NOTE (docs\field-fixes-report.md, defects B/D): this fixture used to hold
+            // Raw at a constant 70.0 throughout, specifically so Raw's own absolute level could never
+            // influence the result - the whole point being to isolate GripUtilization's calibration.
+            // That assumption is what defect B disproved: the brief's own acceptance criteria now
+            // require Raw's own level to act as a FLOOR on the published severity (so a wheel Layer 3
+            // already measured as fully locked/spinning can never read near-zero - see
+            // NormalizedWheelLockSlipEngine's own remarks), which a constant 70 floor would swamp
+            // "light" braking's expected sub-50 reading. Lowered to RawActiveThreshold itself (1.0) -
+            // still comfortably "active" (never triggers the release envelope's decay, so this test
+            // still exercises GripUtilization's OWN calibration exactly as before) while contributing
+            // a negligible floor. No assertion below was weakened - only this one fixture value.
+            var raw = Corners.Uniform(1.0);
 
             var arcadeEngine = new NormalizedWheelLockSlipEngine();
             for (int i = 0; i < 300; i++) arcadeEngine.Compute(BrakingSample(4.0), raw, Corners.Zero);
@@ -256,18 +267,129 @@ namespace QAdvanceFeedback.Tests
         }
 
         [Fact]
-        public void Uniform_raw_of_all_zero_falls_back_to_an_even_distribution_of_grip_utilisation()
+        public void Uniform_nonzero_raw_with_no_differentiation_distributes_severity_evenly()
         {
+            // FIELD FIXES NOTE (docs\field-fixes-report.md, defect D): this test used to hold Raw at a
+            // SUSTAINED, exact zero for 300+ frames and still expected a nonzero, purely G-driven
+            // severity - precisely the release-lag defect: a real session showed WheelLock.Raw.All
+            // pinned at exactly 0 for 200+ frames after a lockup ended while Diag.Direction stayed
+            // "Slowing" (ordinary engine braking), with the published severity staying elevated for
+            // over 3 seconds. Raw now floors/gates severity (see NormalizedWheelLockSlipEngine's own
+            // remarks), so sustained zero Raw correctly releases toward zero - that is the fix, not a
+            // regression (see the dedicated release-speed test below). This test instead exercises the
+            // SAME "no per-wheel differentiation -> equal distribution" concern with a small, ACTIVE
+            // uniform Raw (comfortably above RawActiveThreshold, so the new gate does not collapse it)
+            // - still exercised via the normal w_i/mean branch (which trivially also gives equal
+            // shares for a uniform input), not the dedicated mean<=epsilon fallback branch.
             var engine = new NormalizedWheelLockSlipEngine();
+            var raw = Corners.Uniform(10.0);
             for (int i = 0; i < 300; i++)
-                engine.Compute(BrakingSample(2.0), Corners.Zero, Corners.Zero);
+                engine.Compute(BrakingSample(2.0), raw, Corners.Zero);
 
-            NormalizedWheelLockSlipResult result = engine.Compute(BrakingSample(2.0), Corners.Zero, Corners.Zero);
+            NormalizedWheelLockSlipResult result = engine.Compute(BrakingSample(2.0), raw, Corners.Zero);
 
             Assert.Equal(result.LockWheels.FrontLeft, result.LockWheels.FrontRight, 6);
             Assert.Equal(result.LockWheels.FrontRight, result.LockWheels.RearLeft, 6);
             Assert.Equal(result.LockWheels.RearLeft, result.LockWheels.RearRight, 6);
             Assert.True(result.LockWheels.FrontLeft > 0.0);
+        }
+
+        // ------------------------------------------------------------------------------------
+        // DEFECT B - slip normalisation inverted (low Raw read high, full Raw read near zero) - and
+        // DEFECT C - lock non-monotone in Raw (100 while Raw ~0, non-monotone through the middle
+        // bins) - both traced to the same root cause (severity was G-only, Raw's absolute level
+        // discarded - see NormalizedWheelLockSlipEngine's own remarks) and fixed by the same floor.
+        // MUTATION (c)/(b) in the report: removing `severity = Math.Max(effectiveGripUtilization,
+        // mean)` (reverting to `severity = effectiveGripUtilization`) reproduces both failures below.
+        // ------------------------------------------------------------------------------------
+
+        [Fact]
+        public void Lock_severity_is_never_below_Raws_own_instantaneous_value_even_when_learned_G_severity_is_low()
+        {
+            var engine = new NormalizedWheelLockSlipEngine();
+            // Mature the learner on ordinary, modest braking so its learned peak sits well below a
+            // "fully locked" Raw reading - reproducing the real-world case where a wheel is
+            // objectively fully locked (Raw=100) but the car's own achieved deceleration this instant
+            // is unremarkable relative to what this car usually achieves.
+            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(3.0), Corners.Uniform(30.0), Corners.Zero);
+
+            NormalizedWheelLockSlipResult result = engine.Compute(BrakingSample(0.5), Corners.Uniform(100.0), Corners.Zero);
+
+            Assert.True(result.LockAll > 90.0,
+                $"Raw reporting a fully locked wheel (100) must not be suppressed to near-zero by a low instantaneous G reading, got {result.LockAll}");
+        }
+
+        [Fact]
+        public void Slip_severity_climbs_monotonically_as_Raw_climbs_even_though_achieved_G_falls_during_genuine_wheelspin()
+        {
+            // Reproduces the exact evidenced pattern (docs\field-fixes-report.md, defect B): achieved
+            // chassis G stays LOW (well below this car's own matured peak - modelling a genuine
+            // wheelspin event, where torque is spent spinning the tyre rather than accelerating the
+            // car) throughout, while Raw climbs from barely-differentiated to full wheelspin. A G-only
+            // severity model reads all three frames as equally (low) severe; Raw's own floor is what
+            // must produce the rise. Warm up the SLIP learner (not Lock) on ordinary, harder traction
+            // first, so 0.4g reads as clearly "light" relative to this car's own peak.
+            var engine = new NormalizedWheelLockSlipEngine();
+            for (int i = 0; i < 300; i++) engine.Compute(ThrottleSample(4.0), Corners.Zero, Corners.Uniform(20.0));
+
+            double low = engine.Compute(ThrottleSample(0.4), Corners.Zero, Corners.Uniform(10.0)).SlipAll;
+            double mid = engine.Compute(ThrottleSample(0.4), Corners.Zero, Corners.Uniform(60.0)).SlipAll;
+            double high = engine.Compute(ThrottleSample(0.4), Corners.Zero, Corners.Uniform(100.0)).SlipAll;
+
+            Assert.True(mid >= low, $"Slip severity must not fall as Raw rises: low(Raw=10)={low}, mid(Raw=60)={mid}");
+            Assert.True(high >= mid, $"Slip severity must not fall as Raw rises: mid(Raw=60)={mid}, high(Raw=100)={high}");
+            Assert.True(high > 90.0, $"Raw reporting full wheelspin (100) must read near-max, got {high}");
+        }
+
+        // ------------------------------------------------------------------------------------
+        // DEFECT D - release lag: a captured session showed WheelLock.Projected.All staying
+        // elevated for 200+ frames (3.6s+) after WheelLock.Raw.All dropped to exactly 0, WHILE
+        // Diag.Direction stayed "Slowing" throughout (ordinary engine braking/drag, not a smoothing
+        // artefact - see NormalizedWheelLockSlipEngine's own remarks). Fixed via the fast-release
+        // envelope gating gripUtilization once Raw itself drops below RawActiveThreshold.
+        // ------------------------------------------------------------------------------------
+        [Fact]
+        public void Lock_severity_releases_quickly_once_Raw_drops_even_though_the_car_keeps_decelerating()
+        {
+            var engine = new NormalizedWheelLockSlipEngine();
+            var activeRaw = Corners.Uniform(100.0);
+
+            // Settle into a fully-locked, matured state - severity saturated near 100.
+            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(2.0), activeRaw, Corners.Zero);
+            double beforeRelease = engine.Compute(BrakingSample(2.0), activeRaw, Corners.Zero).LockAll;
+            Assert.True(beforeRelease > 90.0, $"precondition: should be saturated before release, was {beforeRelease}");
+
+            // Raw drops to 0 (the wheel itself is objectively no longer locked) but the car keeps
+            // measurably decelerating (still "Slowing", still a nonzero G magnitude) - exactly the
+            // real session's own traced release event. 16ms/frame (~60fps, matching BrakingSample's
+            // own fixed dt) - advance ~0.15s (about 9 frames) and require the severity to have
+            // released, not merely started to.
+            double lastLockAll = beforeRelease;
+            for (int i = 0; i < 9; i++)
+                lastLockAll = engine.Compute(BrakingSample(1.5), Corners.Zero, Corners.Zero).LockAll;
+
+            Assert.True(lastLockAll < 10.0,
+                $"severity should have released to near-zero within ~0.15s of Raw dropping to 0, still reading {lastLockAll}");
+        }
+
+        [Fact]
+        public void Lock_severity_does_not_lag_while_Raw_stays_continuously_active()
+        {
+            // Guards against an overly-broad release mechanism: as long as Raw keeps indicating
+            // engagement, a magnitude/severity change must still be reflected INSTANTLY (matching
+            // every pre-existing calibration test's own expectation) - the release envelope must only
+            // engage when Raw itself drops, never merely because gripUtilization drops. Raw held at a
+            // small, merely-"active" level (not a large constant) so its own floor does not itself
+            // mask the magnitude-driven drop this test is about (see the Arcade/sim test's own
+            // remarks on the same consideration).
+            var engine = new NormalizedWheelLockSlipEngine();
+            var raw = Corners.Uniform(1.0);
+            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(4.0), raw, Corners.Zero);
+
+            double immediate = engine.Compute(BrakingSample(1.0), raw, Corners.Zero).LockAll;
+
+            Assert.True(immediate < 50.0,
+                $"a lower magnitude while Raw stays active must be reflected on the very next frame, not lagged, got {immediate}");
         }
 
         [Fact]
@@ -365,6 +487,99 @@ namespace QAdvanceFeedback.Tests
             double car1HardAfterSwitchBack = engine.Compute(BrakingSample(4.0), raw, Corners.Zero, "GameA", "Car1").LockAll;
 
             Assert.Equal(car1HardBeforeSwitch, car1HardAfterSwitchBack, 3);
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // Owner's learning-validity-gate ask (docs\gforce-direction-fix-report.md): pit/replay/
+        // session-restart/pedal-minimum must exclude a frame from LEARNING only - the live severity
+        // output remains governed purely by measured direction, exactly like the pre-existing
+        // High_lateral_g_during_genuine_braking_is_excluded_from_learning_but_still_published test
+        // above (lateral isolation) already established for a different gate.
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void A_frame_reported_while_in_the_pit_is_excluded_from_learning_but_still_published()
+        {
+            var engine = new NormalizedWheelLockSlipEngine();
+            var raw = Corners.Uniform(60.0);
+
+            var oldFrame = new TelemetryFrame(groundSpeedKmh: 101.0);
+            var newFrame = new TelemetryFrame(groundSpeedKmh: 100.0, longitudinalG: -3.0, brakePercent: 80.0, isInPit: true);
+            var sample = new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromMilliseconds(16));
+
+            NormalizedWheelLockSlipResult result = engine.Compute(sample, raw, Corners.Zero);
+
+            Assert.Equal(0, engine.LockLearners.Samples(string.Empty, string.Empty));
+            Assert.True(result.LockAll > 0.0, "measured direction still drives a live reading even while excluded from learning");
+        }
+
+        [Fact]
+        public void A_low_brake_pedal_frame_is_excluded_from_lock_learning_even_while_measurably_slowing()
+        {
+            var engine = new NormalizedWheelLockSlipEngine();
+            var raw = Corners.Uniform(60.0);
+
+            // Slowing (engine braking/drag) but the brake pedal itself is barely touched - real
+            // physics (see docs\field-fixes-report.md defect D), but not representative evidence of
+            // this car's own braking peak.
+            var sample = BrakingSample(3.0, brakePercent: 2.0);
+
+            NormalizedWheelLockSlipResult result = engine.Compute(sample, raw, Corners.Zero);
+
+            Assert.Equal(0, engine.LockLearners.Samples(string.Empty, string.Empty));
+            Assert.True(result.LockAll > 0.0);
+        }
+
+        [Fact]
+        public void A_low_throttle_pedal_frame_is_excluded_from_slip_learning_even_while_measurably_speeding_up()
+        {
+            var engine = new NormalizedWheelLockSlipEngine();
+            var raw = Corners.Uniform(60.0);
+
+            var sample = ThrottleSample(3.0, throttlePercent: 2.0);
+
+            NormalizedWheelLockSlipResult result = engine.Compute(sample, Corners.Zero, raw);
+
+            Assert.Equal(0, engine.SlipLearners.Samples(string.Empty, string.Empty));
+            Assert.True(result.SlipAll > 0.0);
+        }
+
+        [Fact]
+        public void A_teleport_sized_speed_discontinuity_is_excluded_from_learning_but_still_published()
+        {
+            var engine = new NormalizedWheelLockSlipEngine();
+            var raw = Corners.Uniform(60.0);
+
+            // Establish an ordinary baseline first.
+            engine.Compute(BrakingSample(2.0), raw, Corners.Zero);
+
+            // A session-restart-style teleport: speed jumps from ~100 to 300 km/h in one 16ms frame.
+            var oldFrame = new TelemetryFrame(groundSpeedKmh: 100.0);
+            var newFrame = new TelemetryFrame(groundSpeedKmh: 300.0, longitudinalG: -3.0, brakePercent: 80.0);
+            var teleportSample = new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromMilliseconds(16));
+
+            int samplesBefore = engine.LockLearners.Samples(string.Empty, string.Empty);
+            engine.Compute(teleportSample, raw, Corners.Zero);
+
+            Assert.Equal(samplesBefore, engine.LockLearners.Samples(string.Empty, string.Empty));
+        }
+
+        [Fact]
+        public void Lock_and_slip_learning_caps_are_asymmetric_matching_the_GForce_axes()
+        {
+            Assert.Equal(8.0, NormalizedWheelLockSlipEngine.LockLearnMaxPlausibleG, 6);
+            Assert.Equal(6.0, NormalizedWheelLockSlipEngine.SlipLearnMaxPlausibleG, 6);
+        }
+
+        [Fact]
+        public void An_impact_magnitude_reading_is_rejected_by_the_lock_learner()
+        {
+            var engine = new NormalizedWheelLockSlipEngine();
+            var raw = Corners.Uniform(60.0);
+
+            for (int i = 0; i < 5; i++) engine.Compute(BrakingSample(18.0), raw, Corners.Zero);
+
+            Assert.Equal(0, engine.LockLearners.Samples(string.Empty, string.Empty));
         }
     }
 }

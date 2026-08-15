@@ -4,16 +4,18 @@ using QAdvanceFeedback.Core;
 namespace QAdvanceFeedback
 {
     /// <summary>
-    /// Resolves the withheld <c>QAdvanceFeedback\Private\</c> implementations of Layer 2
+    /// Resolves the withheld <c>Private\QAdvanceFeedback\</c> implementations of Layer 2
     /// (<see cref="ITelemetryAdapter"/>) and Layer 3 (<see cref="ILegacyWheelLockSlipEngine"/>) at
     /// runtime, by looking for each one's well-known type name IN THIS ASSEMBLY via
     /// <see cref="PrivateTypeResolver"/> - never a compile-time reference to the concrete type.
     /// <para/>
-    /// THIS IS THE WHOLE POINT of the Layer 2/3 split: <c>Private\*.cs</c> is gitignored (see
-    /// <c>Private\.gitignore</c>/<c>Private\README.md</c>), so a fresh open-source clone simply does
-    /// not have <c>Private\SimHubTelemetryAdapter.cs</c>/<c>Private\LegacyWheelLockSlipEngine.cs</c> on
-    /// disk. SDK-style projects glob <c>**\*.cs</c> under the project directory automatically
-    /// (confirmed: this csproj has no explicit &lt;Compile&gt; items at all), so on that clone those
+    /// THIS IS THE WHOLE POINT of the Layer 2/3 split: <c>..\Private\*.cs</c> is gitignored (see
+    /// <c>..\Private\.gitignore</c>/<c>..\Private\README.md</c>), so a fresh open-source clone simply
+    /// does not have <c>Private\QAdvanceFeedback\SimHubTelemetryAdapter.cs</c>/
+    /// <c>Private\QAdvanceFeedback\LegacyWheelLockSlipEngine.cs</c> on disk. This project's own csproj
+    /// has an explicit, wildcard <c>&lt;Compile Include&gt;</c> for that folder (needed because it now
+    /// lives OUTSIDE this project's own directory, so the SDK's default glob no longer reaches it) -
+    /// that wildcard simply evaluates to nothing when the folder is absent, so on that clone those
     /// two source files simply do not exist - if anything OUTSIDE <c>Private\</c> referenced
     /// <c>SimHubTelemetryAdapter</c> or <c>LegacyWheelLockSlipEngine</c> BY NAME (a field type, a
     /// `new SimHubTelemetryAdapter()`, anything the compiler has to resolve at compile time), the

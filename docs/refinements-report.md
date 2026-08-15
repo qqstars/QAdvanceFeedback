@@ -11,6 +11,12 @@
 > per this project's standing convention (see the tier-rename section further down for the same
 > convention applied to an earlier change).
 
+> **Path note (added later, see docs/private-relocation-report.md):** this report refers to
+> `QAdvanceFeedback\Private\*.cs` / `QAdvanceFeedback.Tests\Private\*.cs` and
+> `QAdvanceFeedback.Tests\Private\LegacySlipAlgorithmTests.cs`; both withheld folders were later
+> consolidated into one top-level `Private\` folder beside the `.sln` (`Private\QAdvanceFeedback\`
+> and `Private\QAdvanceFeedback.Tests\`) - left unchanged below as a historical record.
+
 ## STATUS
 
 Complete, including the two mid-task scope additions the coordinator sent (three source-row UI bugs;

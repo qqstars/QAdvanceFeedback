@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using QAdvanceFeedback.Core.Normalized;
 using Xunit;
 
@@ -113,6 +114,67 @@ namespace QAdvanceFeedback.Tests
 
             Assert.Equal(GripLearner.SeedPeakG, learner.LearnedPeakG("GameA", "Car1"), 6);
             Assert.Equal(0, learner.Samples("GameA", "Car1"));
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // Owner's "do not persist a learned parameter until it has a minimum sample count/confidence"
+        // ask (docs\gforce-direction-fix-report.md) - a short, low-sample session must not seed a
+        // persisted entry for a brand-new key at all.
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void ExportAll_excludes_a_key_below_MinPersistSamples()
+        {
+            var learner = new KeyedGripLearner();
+            for (int i = 0; i < GripLearner.MinPersistSamples - 1; i++)
+                learner.Observe("GameA", "Car1", 3.0);
+
+            Assert.DoesNotContain(KeyedGripLearner.MakeKey("GameA", "Car1"), learner.ExportAll().Keys);
+        }
+
+        [Fact]
+        public void ExportAll_includes_a_key_once_it_reaches_MinPersistSamples()
+        {
+            var learner = new KeyedGripLearner();
+            for (int i = 0; i < GripLearner.MinPersistSamples; i++)
+                learner.Observe("GameA", "Car1", 3.0);
+
+            Assert.Contains(KeyedGripLearner.MakeKey("GameA", "Car1"), learner.ExportAll().Keys);
+        }
+
+        [Fact]
+        public void A_key_that_was_already_mature_before_a_short_low_quality_session_is_still_exported()
+        {
+            // Simulates "a five-second session in a menu cannot overwrite a good profile that took a
+            // full stint to build": a key restored from a previous, mature persisted snapshot (well
+            // above MinPersistSamples) must still be exported even if THIS session barely touches it.
+            var learner = new KeyedGripLearner();
+            learner.ImportAll(new Dictionary<string, GripLearnerState>
+            {
+                [KeyedGripLearner.MakeKey("GameA", "Car1")] = new GripLearnerState { PeakG = 3.5, Samples = 5000 }
+            });
+
+            var exported = learner.ExportAll();
+
+            Assert.True(exported.ContainsKey(KeyedGripLearner.MakeKey("GameA", "Car1")));
+            Assert.Equal(3.5, exported[KeyedGripLearner.MakeKey("GameA", "Car1")].PeakG, 6);
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // Owner's asymmetric-cap ask - a channel-specific learn cap is passed through to every
+        // GripLearner this instance creates (fresh, legacy-seeded, and restored alike).
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void A_custom_learn_cap_is_used_for_every_freshly_created_learner()
+        {
+            var learner = new KeyedGripLearner(learnCapG: 6.0);
+
+            learner.Observe("GameA", "Car1", 7.0); // above the 6g cap - must be rejected
+            Assert.Equal(0, learner.Samples("GameA", "Car1"));
+
+            learner.Observe("GameA", "Car1", 5.5); // below the 6g cap - must be accepted
+            Assert.Equal(1, learner.Samples("GameA", "Car1"));
         }
     }
 }

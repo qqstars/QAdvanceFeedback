@@ -221,11 +221,48 @@ namespace QAdvanceFeedback.Settings
             engine.WheelSlipShakeScale = WheelSlipShakeScale;
         }
 
-        private readonly GForceMaxLearner _accelLearner = new GForceMaxLearner();
-        private readonly GForceMaxLearner _decelLearner = new GForceMaxLearner();
+        /// <summary>
+        /// Acceleration axis's learning-path reject ceiling (docs\gforce-direction-fix-report.md -
+        /// derived, not copied from the owner's own rougher 10g/20g proposal). Real-world acceleration
+        /// peaks: F1 launch ~1.5-2g, a top-fuel drag-launch (the most extreme acceleration event in
+        /// any wheeled motorsport) ~4-5g. 6g leaves comfortable margin above even that extreme while
+        /// still decisively excluding a wall-impact-scale (15-20g+) spike - the exact failure mode that
+        /// let a captured session's own Diag.GForce.LearnedAccelMaxG reach 179.8. See
+        /// <see cref="GForceEngine.LiveMagnitudeClampG"/> for why the LIVE path uses a separate, higher
+        /// bound instead of rejecting.
+        /// </summary>
+        public const double AccelLearnMaxPlausibleG = 6.0;
+
+        /// <summary>
+        /// Deceleration axis's learning-path reject ceiling - real-world braking peaks: road car
+        /// ~1.0-1.2g, GT3 ~1.5-2.0g, F1 braking ~5-6g (braking is consistently harder than
+        /// accelerating: tyre grip is helped by aerodynamic downforce at speed, and there is no
+        /// traction-limited driven-axle ceiling the way there is under power). 8g leaves comfortable
+        /// margin above even F1's own extreme while still decisively excluding a wall-impact-scale
+        /// spike. See <see cref="AccelLearnMaxPlausibleG"/>'s own remarks for the full reasoning this
+        /// mirrors.
+        /// </summary>
+        public const double DecelLearnMaxPlausibleG = 8.0;
+
+        private readonly GForceMaxLearner _accelLearner = new GForceMaxLearner(AccelLearnMaxPlausibleG);
+        private readonly GForceMaxLearner _decelLearner = new GForceMaxLearner(DecelLearnMaxPlausibleG);
+        private readonly TelemetryLearningGate _learningGate = new TelemetryLearningGate();
 
         private string _currentGameId = string.Empty;
         private string _currentCarId = string.Empty;
+
+        /// <summary>
+        /// Owner-requested learning validity gate (docs\gforce-direction-fix-report.md): the caller
+        /// (<c>QAdvanceFeedback.cs</c>) must check this ONCE per frame, BEFORE calling
+        /// <see cref="ObserveAccelG"/>/<see cref="ObserveDecelG"/>, so a menu/loading screen, a pit
+        /// stop, a session restart, a paused/alt-tabbed game, or a teleport-sized speed discontinuity
+        /// cannot be folded into the AUTO-mode learned maxima - see
+        /// <see cref="Core.TelemetryLearningGate"/>'s own remarks for the full reasoning and the exact
+        /// evidence (a captured session's own Diag.GForce.LearnedAccelMaxG reaching 179.8). Stateful -
+        /// call exactly once per frame (see that class's own remarks); <see cref="ResetLearning"/>
+        /// clears it alongside both magnitude learners.
+        /// </summary>
+        public bool IsFrameValidForLearning(ITelemetrySample sample) => _learningGate.IsValid(sample);
 
         /// <summary>
         /// Records which game/car is currently active, so the no-arg <see cref="CurrentLearnedAccelMaxG"/>/
@@ -292,11 +329,15 @@ namespace QAdvanceFeedback.Settings
         }
 
         /// <summary>Clears all learned state for both axes - for a full session reset (analogous to
-        /// SimHubTelemetryAdapter.Reset), not called automatically by this class.</summary>
+        /// SimHubTelemetryAdapter.Reset), not called automatically by this class. Also clears the
+        /// learning validity gate's own remembered last-good-speed baseline (see
+        /// <see cref="IsFrameValidForLearning"/>) so a fresh game/session's first frame is not rejected
+        /// as a "discontinuity" against whatever the previous game/car was doing.</summary>
         public void ResetLearning()
         {
             _accelLearner.Reset();
             _decelLearner.Reset();
+            _learningGate.Reset();
         }
 
         /// <summary>Snapshots both learners' confirmed maxima for <c>RuntimeStore</c> to persist to

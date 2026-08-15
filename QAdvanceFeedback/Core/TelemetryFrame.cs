@@ -19,6 +19,9 @@ namespace QAdvanceFeedback.Core
         public double? LateralLocalVelocity { get; }
         public double? LongitudinalG { get; }
         public double? LateralG { get; }
+        public bool? IsInPit { get; }
+        public bool? IsReplay { get; }
+        public bool? IsSessionRestart { get; }
 
         /// <summary>A frame with every reading absent - the honest "no data" default, not a frame of
         /// zeros pretending to be real readings.</summary>
@@ -35,7 +38,10 @@ namespace QAdvanceFeedback.Core
             double? clutchPercent = null,
             double? lateralLocalVelocity = null,
             double? longitudinalG = null,
-            double? lateralG = null)
+            double? lateralG = null,
+            bool? isInPit = null,
+            bool? isReplay = null,
+            bool? isSessionRestart = null)
         {
             GroundSpeedKmh = groundSpeedKmh;
             SpeedKmh = speedKmh;
@@ -48,6 +54,9 @@ namespace QAdvanceFeedback.Core
             LateralLocalVelocity = lateralLocalVelocity;
             LongitudinalG = longitudinalG;
             LateralG = lateralG;
+            IsInPit = isInPit;
+            IsReplay = isReplay;
+            IsSessionRestart = isSessionRestart;
         }
     }
 }

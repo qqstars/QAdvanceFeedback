@@ -1,8 +1,9 @@
 # docs\reference\
 
 This folder holds **decompiled SimHub source**, kept locally as reference material during
-development of the withheld Layer 2/3 implementations (see `QAdvanceFeedback\Private\README.md`
-and `QAdvanceFeedback.Tests\Private\README.md`). It is not this project's code - it is Wotever's
+development of the withheld Layer 2/3 implementations (see the top-level `Private\README.md`,
+which covers both `Private\QAdvanceFeedback\` and `Private\QAdvanceFeedback.Tests\`). It is not
+this project's code - it is Wotever's
 (SimHub's author's) own code, recovered with a decompiler, and publishing it verbatim would be a
 far more direct problem than publishing this project's own derived implementation.
 
@@ -76,11 +77,11 @@ ilspycmd -l c lib/SimHub.Plugins.dll
 
 ## Why this matters for the open-source split
 
-`QAdvanceFeedback\Private\` and `QAdvanceFeedback.Tests\Private\` hold this project's OWN code
+`Private\QAdvanceFeedback\` and `Private\QAdvanceFeedback.Tests\` hold this project's OWN code
 derived from reading these files - reproducing SimHub's arithmetic, not copying its source. Both
 of those folders are withheld from the public repository for the same underlying reason this
 folder is: none of it should appear on GitHub. If you have supplied your own Layer 2/3
-implementation (see `QAdvanceFeedback\Private\README.md`'s "What a third party must implement"
+implementation (see `Private\README.md`'s "What a third party must implement"
 section) and want to verify it against SimHub's own behaviour, regenerating the files in this
 folder locally (as above) is the way to check your port without ever committing SimHub's source,
 or your own derived reproduction of it, back into version control.

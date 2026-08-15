@@ -32,10 +32,46 @@ namespace QAdvanceFeedback.Core.GForce
         /// confirming) when they are within this fraction of each other.</summary>
         public const double ConfirmToleranceRatio = 0.15;
 
+        /// <summary>
+        /// HARD outlier ceiling (docs\field-fixes-report.md, defect A's "ALSO" clause): a magnitude
+        /// above this is rejected OUTRIGHT, before it can even start (or continue) a confirmation
+        /// streak - unlike the 2-frame confirmation above, which only protects against a SINGLE
+        /// one-off spike but does nothing if a glitch happens to repeat for exactly
+        /// <see cref="ConfirmFrames"/> consecutive frames within <see cref="ConfirmToleranceRatio"/>
+        /// of each other (e.g. a brief telemetry corruption spanning 2+ frames). This is exactly what
+        /// let a real captured session's <c>Diag.GForce.LearnedAccelMaxG</c> reach 179.8 (a ~18g
+        /// spike, physically implausible for a road/GT car - see this session's own
+        /// <c>Diag.MotionMagnitudeG</c> max of 194.5, itself a symptom of the defect-A unit bug but
+        /// independently something this learner should never have trusted regardless of units). 8.0g
+        /// mirrors <see cref="Normalized.GripLearner.MaxPlausibleG"/>'s own, already-correct
+        /// ceiling/rationale (a session-reset teleport or a one-frame/few-frame telemetry glitch, not
+        /// a real car) so both learner families in this plugin now share one consistent, documented
+        /// sanity bound.
+        /// </summary>
+        public const double MaxPlausibleG = 8.0;
+
         /// <summary>Separator used by <see cref="MakeKey"/>. Chosen to be a character that cannot
         /// appear in a SimHub GameName/CarId (both are simple identifiers in practice), so
         /// gameId="Foo", carId="Bar1" cannot collide with gameId="FooX", carId="Bar1" etc.</summary>
         private const string KeySeparator = "|#|";
+
+        /// <summary>The learning-path reject ceiling actually used by THIS instance - defaults to
+        /// <see cref="MaxPlausibleG"/> (so a plain <c>new GForceMaxLearner()</c>, including every
+        /// pre-existing test in this file, is unaffected), but <see cref="Settings.GForceSettings"/>
+        /// constructs its accel/decel instances with tighter, ASYMMETRIC values instead (see
+        /// <see cref="Settings.GForceSettings.AccelLearnMaxPlausibleG"/>/
+        /// <see cref="Settings.GForceSettings.DecelLearnMaxPlausibleG"/> for the derivation) -
+        /// docs\gforce-direction-fix-report.md: REJECT (this class) and CLAMP
+        /// (<see cref="GForceEngine.LiveMagnitudeClampG"/>, the live path) are different needs with
+        /// different, deliberately different-valued bounds.</summary>
+        public double LearnCapG { get; }
+
+        /// <param name="learnCapG">See <see cref="LearnCapG"/>. A non-positive or non-finite value
+        /// falls back to <see cref="MaxPlausibleG"/> rather than disabling rejection entirely.</param>
+        public GForceMaxLearner(double learnCapG = MaxPlausibleG)
+        {
+            LearnCapG = learnCapG > 0.0 && ClampMath.IsFinite(learnCapG) ? learnCapG : MaxPlausibleG;
+        }
 
         private sealed class LearnedState
         {
@@ -68,6 +104,11 @@ namespace QAdvanceFeedback.Core.GForce
         public void Observe(string gameId, string carId, double magnitude)
         {
             if (double.IsNaN(magnitude) || magnitude <= 0.0) return;
+
+            // Hard sanity ceiling (see LearnCapG's own remarks) - checked BEFORE the
+            // confirmation-streak logic below, so an implausible reading can never even start (or
+            // extend) a pending candidate, regardless of how many consecutive frames repeat it.
+            if (magnitude > LearnCapG) return;
 
             string key = MakeKey(gameId, carId);
             if (!_states.TryGetValue(key, out LearnedState s))

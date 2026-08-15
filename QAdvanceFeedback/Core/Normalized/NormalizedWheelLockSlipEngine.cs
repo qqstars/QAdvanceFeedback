@@ -61,19 +61,94 @@ namespace QAdvanceFeedback.Core.Normalized
 
         private const double NoRawSignalEpsilon = 1e-6;
 
+        /// <summary>
+        /// FIELD FIXES (docs\field-fixes-report.md, defects B and D) - both share one mechanism,
+        /// documented together here:
+        /// <para/>
+        /// DEFECT B (slip normalisation inverted - low Raw reads high, full Raw reads near zero):
+        /// the severity this engine publishes used to be <c>gripUtilization</c> alone (the learned
+        /// G-based ratio), with Raw's absolute level discarded entirely (only its four-way
+        /// PROPORTIONS were used - see <see cref="ComputeChannel"/>'s remarks). That is correct for
+        /// BRAKING (higher achieved deceleration genuinely means closer to lockup) but backwards for
+        /// genuine WHEELSPIN under power: achieved chassis acceleration typically DROPS once a driven
+        /// wheel starts spinning (torque is spent spinning the tyre, not moving the car), so a G-only
+        /// severity model reads a full-blown spin as LOW severity - confirmed against this session's
+        /// captured log (SpeedingUp-only frames binned by <c>WheelSlip.Raw.All</c> show achieved-G
+        /// falling, not rising, in the 60-101 bins). THE FIX: <see cref="RawActiveThreshold"/> below
+        /// floors the published severity at Raw's own instantaneous mean, so the output can never
+        /// read BELOW what Layer 3's own per-wheel measurement already says - this also directly
+        /// fixes defect C's non-monotonicity (Lock reading 100 while Raw reads ~0 is the mirror-image
+        /// symptom of the same root cause: G, not Raw, was the only thing that mattered).
+        /// <para/>
+        /// DEFECT D (release lag - Projected stays elevated for up to ~1.4s+ after Raw drops below
+        /// 1): traced to the SAME G-only model from the other direction - a car keeps decelerating
+        /// (engine braking/drag) for a second or more after a wheel stops actually locking, and
+        /// gripUtilization faithfully (if uselessly, for THIS purpose) keeps tracking that real but
+        /// no-longer-relevant chassis deceleration. Confirmed in the captured log: a traced release
+        /// event shows <c>Diag.Direction</c> staying "Slowing" (engaged) for 200+ frames after
+        /// <c>WheelLock.Raw.All</c> drops to exactly 0, with <c>Diag.MotionMagnitudeG</c> decaying
+        /// only gradually across that whole stretch - i.e. this is genuinely still-decelerating
+        /// physics, not a smoothing artefact, so units alone (defect A) cannot fix it; gripUtilization
+        /// must stop being trusted once Raw itself has nothing to say. THE FIX: <see cref="_lockRawPresence"/>/
+        /// <see cref="_slipRawPresence"/> track, per channel, an instant-attack/fast-release envelope
+        /// of "is Raw currently indicating anything" and gate gripUtilization by it - once Raw drops
+        /// below <see cref="RawActiveThreshold"/> the envelope (and therefore the published severity)
+        /// releases to zero within about <see cref="ReleaseTauSeconds"/>*3 seconds REGARDLESS of how
+        /// elevated gripUtilization still reads, while never introducing any lag while Raw stays
+        /// active (the envelope is already 1.0 and stays there, so the floor/gate above is applied
+        /// INSTANTLY in the common case - existing calibration tests that hold Raw at a constant
+        /// active level across a changing G magnitude are therefore unaffected).
+        /// </summary>
+        private const double RawActiveThreshold = 1.0;
+
+        /// <summary>Release time constant for <see cref="_lockRawPresence"/>/<see cref="_slipRawPresence"/>
+        /// - chosen so the envelope (and therefore the published severity gated by it) reaches within
+        /// about 1% of zero after 5 time constants (~0.15s), comfortably inside the brief's own "under
+        /// ~0.15s" release acceptance bar for defect D.</summary>
+        private const double ReleaseTauSeconds = 0.03;
+
+        /// <summary>
+        /// Lock channel's learning-path reject ceiling (<see cref="GripLearner.LearnCapG"/>) -
+        /// Lock is the BRAKING-referenced channel, so this mirrors
+        /// <see cref="GForce.GForceMaxLearner"/>'s own deceleration cap (see
+        /// <see cref="Settings.GForceSettings.DecelLearnMaxPlausibleG"/> for the shared derivation):
+        /// real-world braking peaks top out around F1's ~5-6g, so 8g leaves comfortable margin above
+        /// the most extreme REAL event while still decisively excluding a wall-impact-scale (15-20g+)
+        /// spike from ever becoming the learned reference - docs\gforce-direction-fix-report.md.
+        /// </summary>
+        public const double LockLearnMaxPlausibleG = 8.0;
+
+        /// <summary>
+        /// Slip channel's learning-path reject ceiling - Slip is the ACCELERATING/traction-referenced
+        /// channel, so this mirrors <see cref="GForce.GForceMaxLearner"/>'s own acceleration cap (see
+        /// <see cref="Settings.GForceSettings.AccelLearnMaxPlausibleG"/>): real-world acceleration
+        /// peaks top out around a top-fuel dragster launch's ~4-5g (well above anything a road/GT/F1
+        /// car's own driven wheels achieve), so 6g leaves margin above the most extreme REAL event
+        /// while still excluding a wall-impact-scale spike.
+        /// </summary>
+        public const double SlipLearnMaxPlausibleG = 6.0;
+
         private readonly Aggregator _aggregator;
         private readonly KeyedGripLearner _lockLearners;
         private readonly KeyedGripLearner _slipLearners;
         private readonly LongitudinalDirectionResolver _direction;
+        private readonly TelemetryLearningGate _learningGate;
+
+        // ---- Per-channel release-envelope state (defect D) - see the remarks above. Reset alongside
+        // the direction filter (ResetDirection) so a game/session switch does not inherit a stale
+        // "Raw was recently active" envelope from whatever the previous game was doing.
+        private double _lockRawPresence;
+        private double _slipRawPresence;
 
         public NormalizedWheelLockSlipEngine(
             KeyedGripLearner lockLearners = null, KeyedGripLearner slipLearners = null, Aggregator aggregator = null,
-            LongitudinalDirectionResolver directionResolver = null)
+            LongitudinalDirectionResolver directionResolver = null, TelemetryLearningGate learningGate = null)
         {
-            _lockLearners = lockLearners ?? new KeyedGripLearner();
-            _slipLearners = slipLearners ?? new KeyedGripLearner();
+            _lockLearners = lockLearners ?? new KeyedGripLearner(LockLearnMaxPlausibleG);
+            _slipLearners = slipLearners ?? new KeyedGripLearner(SlipLearnMaxPlausibleG);
             _aggregator = aggregator ?? new Aggregator(GroupMode.PNorm, 2.0, Corners.Uniform(1.0));
             _direction = directionResolver ?? new LongitudinalDirectionResolver();
+            _learningGate = learningGate ?? new TelemetryLearningGate();
         }
 
         /// <summary>The full per-(game,car) keyed Lock learner store - exposed so the plugin
@@ -93,8 +168,15 @@ namespace QAdvanceFeedback.Core.Normalized
         /// <summary>Clears the learned direction filter - call on a game/session switch, mirroring
         /// <c>SimHubTelemetryAdapter.Reset</c>. Does NOT reset the learners (see
         /// <see cref="GripLearner"/>'s own remarks on why they persist across a game switch via
-        /// RuntimeStore).</summary>
-        public void ResetDirection() => _direction.Reset();
+        /// RuntimeStore). Also clears the defect-D release envelopes (see this class's own remarks)
+        /// so a fresh game/session does not inherit a stale "Raw was recently active" state.</summary>
+        public void ResetDirection()
+        {
+            _direction.Reset();
+            _learningGate.Reset();
+            _lockRawPresence = 0.0;
+            _slipRawPresence = 0.0;
+        }
 
         /// <param name="sample">This frame's telemetry.</param>
         /// <param name="rawLockWheels">Layer 4's resolved Lock-channel per-wheel sources.</param>
@@ -113,10 +195,24 @@ namespace QAdvanceFeedback.Core.Normalized
             AchievedMotion.Result motion = AchievedMotion.Resolve(sample);
             LongitudinalMotionState direction = _direction.Resolve(sample);
 
+            // ---- Owner-requested learning validity gate (docs\gforce-direction-fix-report.md): one
+            // shared, general check per frame (pit/replay/session-restart/dt/speed/teleport - see
+            // TelemetryLearningGate's own remarks), PLUS a channel-specific pedal-commitment minimum
+            // (Lock needs meaningful brake, Slip needs meaningful throttle - mirroring the sibling
+            // project's own LearnMinBrake/LearnMinSpeedMs) - this gates ONLY whether a fresh
+            // observation is folded into the learner below; it never gates the live 0-100 severity
+            // output itself, which remains decided purely by measured "engaged" direction (see this
+            // class's own standing rule at the top of this file).
+            bool frameValidForLearning = _learningGate.IsValid(sample);
+            bool lockObserveAllowed = frameValidForLearning && (sample.New?.BrakePercent ?? 0.0) >= TelemetryLearningGate.LearnMinBrakePercent;
+            bool slipObserveAllowed = frameValidForLearning && (sample.New?.ThrottlePercent ?? 0.0) >= TelemetryLearningGate.LearnMinThrottlePercent;
+
+            double dtSeconds = sample.Dt.HasValue && sample.Dt.Value.TotalSeconds > 0.0 ? sample.Dt.Value.TotalSeconds : 0.0;
+
             Corners lockWheels = ComputeChannel(sample.New, rawLockWheels, motion, _lockLearners, gameId, carId,
-                direction == LongitudinalMotionState.Slowing);
+                direction == LongitudinalMotionState.Slowing, lockObserveAllowed, dtSeconds, ref _lockRawPresence);
             Corners slipWheels = ComputeChannel(sample.New, rawSlipWheels, motion, _slipLearners, gameId, carId,
-                direction == LongitudinalMotionState.SpeedingUp);
+                direction == LongitudinalMotionState.SpeedingUp, slipObserveAllowed, dtSeconds, ref _slipRawPresence);
 
             return new NormalizedWheelLockSlipResult(
                 lockWheels,
@@ -135,7 +231,8 @@ namespace QAdvanceFeedback.Core.Normalized
 
         private static Corners ComputeChannel(
             ITelemetryFrame frame, Corners rawWheels, AchievedMotion.Result motion,
-            KeyedGripLearner learners, string gameId, string carId, bool engaged)
+            KeyedGripLearner learners, string gameId, string carId, bool engaged, bool observeAllowed,
+            double dtSeconds, ref double rawPresence)
         {
             double w0 = ClampMath.To0100(rawWheels.FrontLeft);
             double w1 = ClampMath.To0100(rawWheels.FrontRight);
@@ -149,16 +246,35 @@ namespace QAdvanceFeedback.Core.Normalized
 
             // "engaged" = this channel's own direction (Slowing for Lock, SpeedingUp for Slip) is what
             // LongitudinalDirectionResolver measured THIS frame - see this class's own remarks on why
-            // pedal state is never consulted here.
+            // pedal state is never consulted here. Not engaged -> nothing to attribute the magnitude
+            // to at all (unchanged from before this task's fix) - the release envelope is simply held
+            // rather than advanced, so the NEXT genuinely-engaged frame does not inherit a jump.
             if (!engaged)
                 return Corners.Zero;
 
-            if (IsLongitudinallyIsolated(frame))
+            if (observeAllowed && IsLongitudinallyIsolated(frame))
                 learners.Observe(gameId, carId, motion.MagnitudeG);
 
             double gripUtilization = ClampMath.To0100(learners.Ratio(gameId, carId, motion.MagnitudeG) * 100.0);
 
             double mean = (w0 + w1 + w2 + w3) / 4.0;
+
+            // ---- DEFECTS B/D fix - see this class's own remarks on RawActiveThreshold/ReleaseTauSeconds.
+            // Instant attack (Raw active this frame -> envelope snaps to 1.0, no lag), fast release
+            // (Raw inactive -> envelope decays toward 0 with ReleaseTauSeconds) - the classical
+            // asymmetric attack/release shape, deliberately mirroring GForceEngine's own washout
+            // filter convention elsewhere in this plugin.
+            bool rawActiveNow = mean >= RawActiveThreshold;
+            rawPresence = rawActiveNow ? 1.0 : ExponentialDecayToZero(rawPresence, dtSeconds, ReleaseTauSeconds);
+
+            double effectiveGripUtilization = gripUtilization * rawPresence;
+
+            // The floor: severity can never read BELOW Raw's own instantaneous mean - this is what
+            // guarantees monotonicity in Raw (defects B/C) without needing to lag anything (the floor
+            // itself is instantaneous), while effectiveGripUtilization above is what makes the CEILING
+            // release quickly once Raw stops supporting it (defect D).
+            double severity = Math.Max(effectiveGripUtilization, mean);
+
             double s0, s1, s2, s3;
             if (mean <= NoRawSignalEpsilon)
             {
@@ -172,10 +288,22 @@ namespace QAdvanceFeedback.Core.Normalized
             }
 
             return new Corners(
-                ClampMath.To0100(gripUtilization * s0),
-                ClampMath.To0100(gripUtilization * s1),
-                ClampMath.To0100(gripUtilization * s2),
-                ClampMath.To0100(gripUtilization * s3));
+                ClampMath.To0100(severity * s0),
+                ClampMath.To0100(severity * s1),
+                ClampMath.To0100(severity * s2),
+                ClampMath.To0100(severity * s3));
+        }
+
+        /// <summary>Standard dt-correct exponential decay of <paramref name="previous"/> toward zero -
+        /// mirrors <c>GForceEngine</c>'s own <c>ExponentialSmooth</c> (kept as a separate, "toward
+        /// zero only" helper here since that is the only target this class's release envelope ever
+        /// needs). A non-positive/non-finite dt holds <paramref name="previous"/> unchanged (missing
+        /// Dt, e.g. the first sample of a session) rather than releasing incorrectly.</summary>
+        private static double ExponentialDecayToZero(double previous, double dtSeconds, double tauSeconds)
+        {
+            if (!ClampMath.IsFinite(dtSeconds) || dtSeconds <= 0.0) return previous;
+            double alpha = 1.0 - Math.Exp(-dtSeconds / tauSeconds);
+            return previous - alpha * previous;
         }
 
         private static bool IsLongitudinallyIsolated(ITelemetryFrame frame)

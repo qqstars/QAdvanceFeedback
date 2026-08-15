@@ -2,11 +2,11 @@ namespace QAdvanceFeedback.Core
 {
     /// <summary>
     /// PUBLIC CONTRACT for Layer 3 - the withheld "legacy iRacing algorithm" implementation. This
-    /// interface, this file, and everything else outside <c>QAdvanceFeedback\Private\</c> ship in the
+    /// interface, this file, and everything else outside <c>Private\QAdvanceFeedback\</c> ship in the
     /// open-source repository; the concrete implementation that actually reproduces SimHub's
     /// decompiled <c>WheelSlipEffect.GetRpmSpeedSlipLegacy</c> arithmetic lives in
-    /// <c>QAdvanceFeedback\Private\</c>, which is gitignored (see <c>Private\README.md</c> for what a
-    /// third party must supply to restore real output).
+    /// <c>Private\QAdvanceFeedback\</c>, which is gitignored (see <c>..\Private\README.md</c> for what
+    /// a third party must supply to restore real output).
     /// <para/>
     /// CONTRACT:
     /// <list type="bullet">

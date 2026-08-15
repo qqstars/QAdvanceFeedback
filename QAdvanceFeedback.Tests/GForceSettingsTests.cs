@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.GForce;
 using QAdvanceFeedback.Settings;
 using Xunit;
@@ -305,6 +307,136 @@ namespace QAdvanceFeedback.Tests
 
             Assert.Equal(1.2, restored.GetLearnedAccelMaxG("Game", "Car"), 6);
             Assert.Equal(2.4, restored.GetLearnedDecelMaxG("Game", "Car"), 6);
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // Owner's learning-validity-gate ask (docs\gforce-direction-fix-report.md) - IsFrameValidForLearning
+        // wraps TelemetryLearningGate (see TelemetryLearningGateTests for the gate's own unit tests);
+        // these tests confirm GForceSettings actually exposes and is wired to it.
+        // ---------------------------------------------------------------------------------------
+
+        private static ITelemetrySample Sample(double? newSpeedKmh, double? oldSpeedKmh, double dtSeconds = 0.02)
+        {
+            var oldFrame = new TelemetryFrame(groundSpeedKmh: oldSpeedKmh);
+            var newFrame = new TelemetryFrame(groundSpeedKmh: newSpeedKmh);
+            return new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromSeconds(dtSeconds));
+        }
+
+        [Fact]
+        public void IsFrameValidForLearning_accepts_an_ordinary_driving_frame()
+        {
+            var settings = new GForceSettings();
+            Assert.True(settings.IsFrameValidForLearning(Sample(100.0, 100.5)));
+        }
+
+        [Fact]
+        public void IsFrameValidForLearning_rejects_a_teleport_sized_speed_jump()
+        {
+            var settings = new GForceSettings();
+            settings.IsFrameValidForLearning(Sample(100.0, 100.0)); // establishes a baseline
+            Assert.False(settings.IsFrameValidForLearning(Sample(300.0, 300.0)));
+        }
+
+        [Fact]
+        public void ResetLearning_clears_the_gates_remembered_baseline_too()
+        {
+            var settings = new GForceSettings();
+            settings.IsFrameValidForLearning(Sample(100.0, 100.0));
+
+            settings.ResetLearning();
+
+            // Without the reset, jumping straight to 300 km/h would read as a teleport against the
+            // pre-reset 100 km/h baseline.
+            Assert.True(settings.IsFrameValidForLearning(Sample(300.0, 300.0)));
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // Owner's plausibility-limit refinement: asymmetric, DERIVED learning caps (6g accel / 8g
+        // decel - see GForceSettings.AccelLearnMaxPlausibleG/DecelLearnMaxPlausibleG's own remarks for
+        // the real-world-peak derivation), tighter than the owner's own rougher 10g/20g proposal.
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void Accel_and_decel_learning_caps_are_asymmetric()
+        {
+            Assert.Equal(6.0, GForceSettings.AccelLearnMaxPlausibleG, 6);
+            Assert.Equal(8.0, GForceSettings.DecelLearnMaxPlausibleG, 6);
+            Assert.True(GForceSettings.DecelLearnMaxPlausibleG > GForceSettings.AccelLearnMaxPlausibleG,
+                "braking is consistently harder than accelerating for road/GT/F1 content - decel's cap must be the looser of the two");
+        }
+
+        [Fact]
+        public void A_legitimate_F1_magnitude_braking_event_is_still_learned_not_rejected()
+        {
+            // F1 braking peaks around 5-6g - comfortably under the 8g decel cap. A cap set too tight
+            // would silently learn nothing and look identical to the plugin doing nothing at all.
+            var settings = new GForceSettings { DecelMaxMode = GMaxMode.Auto };
+            settings.ObserveDecelG("Game", "Car", 5.0);
+            settings.ObserveDecelG("Game", "Car", 5.0);
+
+            Assert.Equal(5.0, settings.EffectiveDecelMaxG("Game", "Car"), 6);
+        }
+
+        [Fact]
+        public void A_legitimate_drag_launch_magnitude_acceleration_event_is_still_learned_not_rejected()
+        {
+            // A top-fuel drag launch peaks around 4-5g - comfortably under the 6g accel cap.
+            var settings = new GForceSettings { AccelMaxMode = GMaxMode.Auto };
+            settings.ObserveAccelG("Game", "Car", 4.5);
+            settings.ObserveAccelG("Game", "Car", 4.5);
+
+            Assert.Equal(4.5, settings.EffectiveAccelMaxG("Game", "Car"), 6);
+        }
+
+        [Fact]
+        public void An_impact_magnitude_reading_is_rejected_by_both_learners()
+        {
+            // An 18g reading (wall-tap scale) exceeds BOTH the 6g accel and 8g decel caps - neither
+            // learner should ever confirm it, however many times it repeats.
+            var settings = new GForceSettings { AccelMaxMode = GMaxMode.Auto, DecelMaxMode = GMaxMode.Auto };
+            for (int i = 0; i < 5; i++)
+            {
+                settings.ObserveAccelG("Game", "Car", 18.0);
+                settings.ObserveDecelG("Game", "Car", 18.0);
+            }
+
+            Assert.Equal(0.0, settings.GetLearnedAccelMaxG("Game", "Car"), 6);
+            Assert.Equal(0.0, settings.GetLearnedDecelMaxG("Game", "Car"), 6);
+        }
+
+        [Fact]
+        public void A_magnitude_between_the_two_caps_is_learned_for_decel_but_rejected_for_accel()
+        {
+            // 7.0g sits ABOVE the 6g accel cap but BELOW the 8g decel cap - the asymmetry made concrete.
+            var settings = new GForceSettings { AccelMaxMode = GMaxMode.Auto, DecelMaxMode = GMaxMode.Auto };
+            settings.ObserveAccelG("Game", "Car", 7.0);
+            settings.ObserveAccelG("Game", "Car", 7.0);
+            settings.ObserveDecelG("Game", "Car", 7.0);
+            settings.ObserveDecelG("Game", "Car", 7.0);
+
+            Assert.Equal(0.0, settings.GetLearnedAccelMaxG("Game", "Car"), 6);
+            Assert.Equal(7.0, settings.GetLearnedDecelMaxG("Game", "Car"), 6);
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // MUTATION EVIDENCE (b) in the report: "set the learning cap symmetric and loose (20g both
+        // ways)" - reproduced directly below by constructing the loose-capped learner the mutation
+        // would produce, contrasted with the CORRECT, tight-capped learner GForceSettings actually
+        // builds (see the two tests immediately above this one). The real source mutation (loosening
+        // GForceSettings.AccelLearnMaxPlausibleG/DecelLearnMaxPlausibleG to 20.0/20.0) was additionally
+        // performed manually and reverted - see docs\gforce-direction-fix-report.md for that run.
+        // ---------------------------------------------------------------------------------------
+        [Fact]
+        public void MUTATION_evidence_a_loose_symmetric_20g_cap_would_have_learned_the_impact_reading()
+        {
+            var looseLearner = new QAdvanceFeedback.Core.GForce.GForceMaxLearner(learnCapG: 20.0);
+            looseLearner.Observe("Game", "Car", 18.0);
+            looseLearner.Observe("Game", "Car", 18.0);
+
+            // This IS the implausible-maximum failure mode the tight, derived cap (used by the real
+            // GForceSettings, see An_impact_magnitude_reading_is_rejected_by_both_learners above) exists
+            // to prevent.
+            Assert.Equal(18.0, looseLearner.GetLearnedMax("Game", "Car"), 6);
         }
     }
 }

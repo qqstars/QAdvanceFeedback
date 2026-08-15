@@ -5,7 +5,7 @@ namespace QAdvanceFeedback.Core
 {
     /// <summary>
     /// The pure, SimHub-free reflection core of how this plugin resolves a withheld
-    /// <c>QAdvanceFeedback\Private\*.cs</c> implementation at runtime: look for a type BY NAME in a
+    /// <c>Private\QAdvanceFeedback\*.cs</c> implementation at runtime: look for a type BY NAME in a
     /// given assembly, and only ever return it as <typeparamref name="T"/> if it both exists and
     /// actually implements/extends <typeparamref name="T"/>. Never a compile-time reference to the
     /// concrete Private type (there cannot be one - see <c>AlgorithmFactory</c>'s own remarks on why

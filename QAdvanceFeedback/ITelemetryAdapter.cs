@@ -6,8 +6,8 @@ namespace QAdvanceFeedback
     /// <summary>
     /// PUBLIC CONTRACT for Layer 2 - the withheld telemetry adapter. This interface ships in the
     /// open-source repository; the concrete implementation that actually reads SimHub's own
-    /// <see cref="GameData"/> shape lives in <c>QAdvanceFeedback\Private\SimHubTelemetryAdapter.cs</c>,
-    /// which is gitignored (see <c>Private\README.md</c>).
+    /// <see cref="GameData"/> shape lives in <c>Private\QAdvanceFeedback\SimHubTelemetryAdapter.cs</c>,
+    /// which is gitignored (see <c>..\Private\README.md</c>).
     /// <para/>
     /// Note this interface itself is allowed to name <see cref="GameData"/> - the constraint isn't
     /// "no SimHub types anywhere outside Private", it is "no code outside Private references the
