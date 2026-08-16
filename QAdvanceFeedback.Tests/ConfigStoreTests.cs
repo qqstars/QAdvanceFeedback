@@ -162,17 +162,22 @@ namespace QAdvanceFeedback.Tests
         {
             QAdvanceFeedbackSettings loaded = ConfigStore.Load(_path);
 
-            Assert.False(loaded.GForce.IntegrateWheelLockAndSlip);
-            Assert.Equal(5.0, loaded.GForce.ShakeFrequencyHz, 6);
-            Assert.Equal(1.0, loaded.GForce.WheelLockShakeScale, 6);
-            Assert.Equal(1.0, loaded.GForce.WheelSlipShakeScale, 6);
+            // IntegrateWheelLockAndSlip now defaults ON (docs\integrate-default-report.md) - a legitimate
+            // default change, not a weakened assertion: the owner wants a fresh install to feel this
+            // without hunting for the toggle.
+            Assert.True(loaded.GForce.IntegrateWheelLockAndSlip);
+            Assert.Equal(3.0, loaded.GForce.ShakeFrequencyHz, 6);
+            Assert.Equal(1.5, loaded.GForce.WheelLockShakeScale, 6);
+            Assert.Equal(1.5, loaded.GForce.WheelSlipShakeScale, 6);
         }
 
         [Fact]
-        public void Save_then_Load_round_trips_the_shake_settings()
+        public void Save_then_Load_round_trips_the_shake_settings_when_explicitly_disabled()
         {
             var settings = new QAdvanceFeedbackSettings();
-            settings.GForce.IntegrateWheelLockAndSlip = true;
+            // Explicitly OFF here (rather than relying on the now-ON default) so this test still proves
+            // the round trip carries a non-default value, not just echoes the shipped default back.
+            settings.GForce.IntegrateWheelLockAndSlip = false;
             settings.GForce.ShakeFrequencyHz = 14.0;
             settings.GForce.WheelLockShakeScale = 2.5;
             settings.GForce.WheelSlipShakeScale = 0.5;
@@ -180,7 +185,7 @@ namespace QAdvanceFeedback.Tests
             ConfigStore.Save(_path, settings);
             QAdvanceFeedbackSettings loaded = ConfigStore.Load(_path);
 
-            Assert.True(loaded.GForce.IntegrateWheelLockAndSlip);
+            Assert.False(loaded.GForce.IntegrateWheelLockAndSlip);
             Assert.Equal(14.0, loaded.GForce.ShakeFrequencyHz, 6);
             Assert.Equal(2.5, loaded.GForce.WheelLockShakeScale, 6);
             Assert.Equal(0.5, loaded.GForce.WheelSlipShakeScale, 6);
@@ -230,6 +235,97 @@ namespace QAdvanceFeedback.Tests
         {
             QAdvanceFeedbackSettings loaded = ConfigStore.Load(_path, legacyPath: _legacyPath);
             Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelLock.IRacing.FrontLeft", loaded.Lock.SourceFrontLeft);
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // Aggregation (docs\aggregation-report.md) round-tripping through the real JSON file.
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void Missing_file_yields_the_owners_aggregation_defaults_for_both_channels()
+        {
+            QAdvanceFeedbackSettings loaded = ConfigStore.Load(_path);
+
+            Assert.Equal(0.45, loaded.Lock.AggregationWMax, 9);
+            Assert.Equal(0.55, loaded.Lock.AggregationWMin, 9);
+            Assert.Equal(0.90, loaded.Lock.AggregationWFront, 9);
+            Assert.Equal(0.10, loaded.Lock.AggregationWRear, 9);
+            Assert.Equal(0.0, loaded.Lock.SlipFloorFactor, 9);
+
+            Assert.Equal(0.55, loaded.Slip.AggregationWMax, 9);
+            Assert.Equal(0.45, loaded.Slip.AggregationWMin, 9);
+            Assert.Equal(0.65, loaded.Slip.AggregationWFront, 9);
+            Assert.Equal(0.35, loaded.Slip.AggregationWRear, 9);
+            Assert.Equal(0.4, loaded.Slip.SlipFloorFactor, 9);
+        }
+
+        [Fact]
+        public void Save_then_Load_round_trips_edited_aggregation_weights_for_both_channels()
+        {
+            var settings = new QAdvanceFeedbackSettings();
+            settings.Lock.AggregationWMax = 0.3;
+            settings.Lock.AggregationWMin = 0.7;
+            settings.Lock.AggregationWFront = 0.8;
+            settings.Lock.AggregationWRear = 0.2;
+            settings.Lock.SlipFloorFactor = 0.15;
+
+            settings.Slip.AggregationWMax = 0.2;
+            settings.Slip.AggregationWMin = 0.8;
+            settings.Slip.AggregationWFront = 0.1;
+            settings.Slip.AggregationWRear = 0.9;
+            settings.Slip.SlipFloorFactor = 0.6;
+
+            ConfigStore.Save(_path, settings);
+            QAdvanceFeedbackSettings loaded = ConfigStore.Load(_path);
+
+            Assert.Equal(0.3, loaded.Lock.AggregationWMax, 9);
+            Assert.Equal(0.7, loaded.Lock.AggregationWMin, 9);
+            Assert.Equal(0.8, loaded.Lock.AggregationWFront, 9);
+            Assert.Equal(0.2, loaded.Lock.AggregationWRear, 9);
+            Assert.Equal(0.15, loaded.Lock.SlipFloorFactor, 9);
+
+            Assert.Equal(0.2, loaded.Slip.AggregationWMax, 9);
+            Assert.Equal(0.8, loaded.Slip.AggregationWMin, 9);
+            Assert.Equal(0.1, loaded.Slip.AggregationWFront, 9);
+            Assert.Equal(0.9, loaded.Slip.AggregationWRear, 9);
+            Assert.Equal(0.6, loaded.Slip.SlipFloorFactor, 9);
+        }
+
+        [Fact]
+        public void RestoreDefaults_restores_the_owners_aggregation_weights_through_the_full_settings_object()
+        {
+            var settings = new QAdvanceFeedbackSettings();
+            settings.Lock.AggregationWMax = 0.0;
+            settings.Slip.SlipFloorFactor = 0.0;
+
+            settings.RestoreDefaults();
+
+            Assert.Equal(0.45, settings.Lock.AggregationWMax, 9);
+            Assert.Equal(0.4, settings.Slip.SlipFloorFactor, 9);
+        }
+
+        [Fact]
+        public void A_config_file_saved_before_this_feature_existed_still_loads_this_channels_real_aggregation_defaults()
+        {
+            // Simulates a settings file from before the aggregation feature existed - no
+            // AggregationW*/SlipFloorFactor keys at all for Lock. Newtonsoft's default object-population
+            // behaviour (ObjectCreationHandling.Auto) REUSES the existing Lock instance - which
+            // QAdvanceFeedbackSettings' own field initialiser already set to CreateLockDefaults(), not a
+            // bare WheelChannelSettings() - and only overwrites the JSON-present properties
+            // (SourceFrontLeft here), so every absent property (including the five new aggregation ones)
+            // keeps CreateLockDefaults()' REAL Lock numbers automatically. No explicit migration is
+            // needed for a property added to WheelChannelSettings, exactly like every other field added
+            // to this class after BrakeThresholdPercent/ThrottleThresholdPercent first shipped.
+            File.WriteAllText(_path, "{ \"Lock\": { \"SourceFrontLeft\": \"Custom.Wheel.FL\" } }");
+
+            QAdvanceFeedbackSettings loaded = ConfigStore.Load(_path);
+
+            Assert.Equal("Custom.Wheel.FL", loaded.Lock.SourceFrontLeft);
+            Assert.Equal(0.45, loaded.Lock.AggregationWMax, 9);
+            Assert.Equal(0.55, loaded.Lock.AggregationWMin, 9);
+            Assert.Equal(0.90, loaded.Lock.AggregationWFront, 9);
+            Assert.Equal(0.10, loaded.Lock.AggregationWRear, 9);
+            Assert.Equal(0.0, loaded.Lock.SlipFloorFactor, 9);
         }
     }
 }

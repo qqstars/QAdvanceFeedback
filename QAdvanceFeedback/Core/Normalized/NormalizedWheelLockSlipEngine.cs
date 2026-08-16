@@ -128,7 +128,16 @@ namespace QAdvanceFeedback.Core.Normalized
         /// </summary>
         public const double SlipLearnMaxPlausibleG = 6.0;
 
-        private readonly Aggregator _aggregator;
+        // NOTE: an earlier revision of this file added a "low-speed lock compensation" here, based on
+        // the hypothesis that Layer 3's own RPM/speed brake term is proportional to ground speed.
+        // SUPERSEDED (docs\lock-and-animation-report.md): the owner confirmed switching the Wheel Lock
+        // SOURCE to SimHub's own ShakeIt export resolves the driver's complaint entirely, proving THIS
+        // layer (Normalized/Projected) was never the defect - it was Layer 3's own reproduction of
+        // SimHub's algorithm using the WRONG branch. Applying a Layer-4 compensation here would have
+        // incorrectly altered the ALREADY-CORRECT ShakeIt-sourced values too (this layer cannot know
+        // where rawLockWheels came from) - removed entirely; the real fix now lives in
+        // Private\QAdvanceFeedback\SimpleBrakingLockAlgorithm.cs / LegacyWheelLockSlipEngine.cs.
+
         private readonly KeyedGripLearner _lockLearners;
         private readonly KeyedGripLearner _slipLearners;
         private readonly LongitudinalDirectionResolver _direction;
@@ -141,12 +150,11 @@ namespace QAdvanceFeedback.Core.Normalized
         private double _slipRawPresence;
 
         public NormalizedWheelLockSlipEngine(
-            KeyedGripLearner lockLearners = null, KeyedGripLearner slipLearners = null, Aggregator aggregator = null,
+            KeyedGripLearner lockLearners = null, KeyedGripLearner slipLearners = null,
             LongitudinalDirectionResolver directionResolver = null, TelemetryLearningGate learningGate = null)
         {
             _lockLearners = lockLearners ?? new KeyedGripLearner(LockLearnMaxPlausibleG);
             _slipLearners = slipLearners ?? new KeyedGripLearner(SlipLearnMaxPlausibleG);
-            _aggregator = aggregator ?? new Aggregator(GroupMode.PNorm, 2.0, Corners.Uniform(1.0));
             _direction = directionResolver ?? new LongitudinalDirectionResolver();
             _learningGate = learningGate ?? new TelemetryLearningGate();
         }
@@ -186,11 +194,44 @@ namespace QAdvanceFeedback.Core.Normalized
         /// existing single-game caller/test keeps compiling and behaving exactly as before (an empty
         /// gameId/carId is still a perfectly valid, isolated key of its own).</param>
         /// <param name="carId">The current SimHub car id. See <paramref name="gameId"/>.</param>
+        /// <param name="thresholds">
+        /// TRIGGER THRESHOLD (owner-requested restructure - see <see cref="LegacyThresholds"/>'s own
+        /// remarks and docs\lock-and-animation-report.md). Null (the default) uses
+        /// <see cref="LegacyThresholds.Defaults"/>, mirroring every other threshold-consuming method in
+        /// this plugin family (<c>LegacySlipAlgorithm.Compute</c>, <c>LegacyWheelLockSlipEngine.Compute</c>)
+        /// - every pre-existing caller/test keeps compiling and behaving exactly as before. Below the
+        /// channel's own pedal threshold, THIS layer's own output (in addition to Layer 3's Raw - see
+        /// <c>LegacyWheelLockSlipEngine</c>) reads an unconditional zero for the whole channel - see
+        /// <see cref="ComputeChannel"/>'s own remarks for exactly where this is applied relative to the
+        /// pre-existing "no signal at all" fallback and the direction-based "engaged" gate.
+        /// </param>
+        /// <param name="lockAggregation">Wheel Lock's own <see cref="Aggregator"/> weights
+        /// (docs\aggregation-report.md), applied to THIS layer's own per-wheel output - see this
+        /// class's own remarks on why Raw's aggregation is not simply reused (each tier aggregates its
+        /// OWN per-wheel values with the SAME formula/weights, "inheriting" the scheme rather than the
+        /// numbers). Read fresh every call, exactly like <paramref name="thresholds"/> - no engine
+        /// rebuild needed when a driver edits these weights. Null (the default) means
+        /// <see cref="AggregationWeights.LockDefaults"/>.</param>
+        /// <param name="slipAggregation">Wheel Slip's own <see cref="Aggregator"/> weights - see
+        /// <paramref name="lockAggregation"/>'s own remarks. Null (the default) means
+        /// <see cref="AggregationWeights.SlipDefaults"/>.</param>
         public NormalizedWheelLockSlipResult Compute(
             ITelemetrySample sample, Corners rawLockWheels, Corners rawSlipWheels,
-            string gameId = "", string carId = "")
+            string gameId = "", string carId = "", LegacyThresholds? thresholds = null,
+            AggregationWeights? lockAggregation = null, AggregationWeights? slipAggregation = null)
         {
             if (sample == null) throw new ArgumentNullException(nameof(sample));
+
+            LegacyThresholds t = thresholds ?? LegacyThresholds.Defaults;
+            AggregationWeights lockWeights = lockAggregation ?? AggregationWeights.LockDefaults;
+            AggregationWeights slipWeights = slipAggregation ?? AggregationWeights.SlipDefaults;
+            double? brakePercent = sample.New?.BrakePercent;
+            double? throttlePercent = sample.New?.ThrottlePercent;
+
+            // "At/above the threshold, normal behaviour" - car-level, >= (see this parameter's own
+            // remarks on the fail-closed treatment of a missing/null pedal reading).
+            bool lockTriggered = brakePercent >= t.LockBrakeThresholdPercent;
+            bool slipTriggered = brakePercent >= t.SlipBrakeThresholdPercent || throttlePercent >= t.SlipThrottleThresholdPercent;
 
             AchievedMotion.Result motion = AchievedMotion.Resolve(sample);
             LongitudinalMotionState direction = _direction.Resolve(sample);
@@ -210,37 +251,47 @@ namespace QAdvanceFeedback.Core.Normalized
             double dtSeconds = sample.Dt.HasValue && sample.Dt.Value.TotalSeconds > 0.0 ? sample.Dt.Value.TotalSeconds : 0.0;
 
             Corners lockWheels = ComputeChannel(sample.New, rawLockWheels, motion, _lockLearners, gameId, carId,
-                direction == LongitudinalMotionState.Slowing, lockObserveAllowed, dtSeconds, ref _lockRawPresence);
+                direction == LongitudinalMotionState.Slowing, lockTriggered, lockObserveAllowed, dtSeconds,
+                ref _lockRawPresence);
             Corners slipWheels = ComputeChannel(sample.New, rawSlipWheels, motion, _slipLearners, gameId, carId,
-                direction == LongitudinalMotionState.SpeedingUp, slipObserveAllowed, dtSeconds, ref _slipRawPresence);
+                direction == LongitudinalMotionState.SpeedingUp, slipTriggered, slipObserveAllowed, dtSeconds,
+                ref _slipRawPresence);
+
+            WheelAggregate lockAggregate = Aggregator.Compute(lockWheels, lockWeights);
+            WheelAggregate slipAggregate = Aggregator.Compute(slipWheels, slipWeights);
 
             return new NormalizedWheelLockSlipResult(
                 lockWheels,
-                _aggregator.Pair(Corners.FL, Corners.FR, lockWheels),
-                _aggregator.Pair(Corners.RL, Corners.RR, lockWheels),
-                _aggregator.Pair(Corners.FL, Corners.RL, lockWheels),
-                _aggregator.Pair(Corners.FR, Corners.RR, lockWheels),
-                _aggregator.Quad(lockWheels),
+                lockAggregate.Front, lockAggregate.Rear, lockAggregate.Left, lockAggregate.Right, lockAggregate.All,
                 slipWheels,
-                _aggregator.Pair(Corners.FL, Corners.FR, slipWheels),
-                _aggregator.Pair(Corners.RL, Corners.RR, slipWheels),
-                _aggregator.Pair(Corners.FL, Corners.RL, slipWheels),
-                _aggregator.Pair(Corners.FR, Corners.RR, slipWheels),
-                _aggregator.Quad(slipWheels));
+                slipAggregate.Front, slipAggregate.Rear, slipAggregate.Left, slipAggregate.Right, slipAggregate.All);
         }
 
         private static Corners ComputeChannel(
             ITelemetryFrame frame, Corners rawWheels, AchievedMotion.Result motion,
-            KeyedGripLearner learners, string gameId, string carId, bool engaged, bool observeAllowed,
-            double dtSeconds, ref double rawPresence)
+            KeyedGripLearner learners, string gameId, string carId, bool engaged, bool triggered,
+            bool observeAllowed, double dtSeconds, ref double rawPresence)
         {
             double w0 = ClampMath.To0100(rawWheels.FrontLeft);
             double w1 = ClampMath.To0100(rawWheels.FrontRight);
             double w2 = ClampMath.To0100(rawWheels.RearLeft);
             double w3 = ClampMath.To0100(rawWheels.RearRight);
 
+            // TRIGGER THRESHOLD (owner-requested restructure, and the owner's OWN clarification: this
+            // gate applies at the SOURCE BOUNDARY, unconditionally, whatever the configured source is
+            // (our own Raw, a ShakeIt export, or a Manual property/expression) and regardless of
+            // anything else this method might otherwise fall back to - see
+            // NormalizedWheelLockSlipEngine.Compute's own remarks). Deliberately checked BEFORE the
+            // "no G/speed signal at all" degradation floor below (NOT after, as an earlier revision of
+            // this method had it) - the owner was explicit that "below threshold the channel is
+            // inactive" has no carve-out: a title with no G/speed telemetry is not exempt just because
+            // it also happens to hit the level-3 fallback.
+            if (!triggered)
+                return Corners.Zero;
+
             // Degradation floor (ladder level 3): no g signal at all, direct or derived - Raw is the
-            // only available basis, so it is passed through rather than reading zero or garbage.
+            // only available basis, so it is passed through rather than reading zero or garbage (but
+            // only once the trigger threshold above has already been cleared).
             if (motion.Level == AchievedMotion.SignalLevel.Unavailable)
                 return new Corners(w0, w1, w2, w3);
 

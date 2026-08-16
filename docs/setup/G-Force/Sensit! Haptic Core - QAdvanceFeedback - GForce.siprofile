@@ -78,6 +78,34 @@
               "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
             }
           },
+          "CustomEffectContainerQ-BackTop": {
+            "FrontLeft": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "FrontRight": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearLeft": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearRight": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "Left": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;1;50;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "Right": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;1;50;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "CustomEffectContainerQA-BottomFront": {
+            "Left": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "Right": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
           "CustomEffectContainerQAdvanceFeedback-Back": {
             "FrontLeft": {
               "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
@@ -148,6 +176,34 @@
             },
             "RearRight": {
               "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "CustomEffectContainerQ-BackLow": {
+            "FrontLeft": {
+              "MapsStore": "0;1;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "FrontRight": {
+              "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearLeft": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "RearRight": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "Left": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;1;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            },
+            "Right": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+            }
+          },
+          "CustomEffectContainerQA-BottomRear": {
+            "Left": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;1;100;;;|7;0;100;;;"
+            },
+            "Right": {
+              "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;1;100;;;"
             }
           },
           "CustomEffectContainerQAdvanceFeedback-BottomFront": {
@@ -257,7 +313,7 @@
         "Name": "扬声器 (3- Sensit! Haptic Core)",
         "OutputId": "{0.0.0.00000000}.{fb6a4f13-2084-4b5f-a68b-0c13f8935b45}",
         "InstanceId": "09755cc5-2940-45c6-918c-0a0cae9d7637",
-        "ShowPerEffectsLevels": false,
+        "ShowPerEffectsLevels": true,
         "IsFavorite": false
       }
     ],
@@ -278,7 +334,7 @@
           "ContainerType": "CustomEffectContainer",
           "IsEnabled": true,
           "Gain": 100.0,
-          "Description": "G-Force-QAdvanceFeedback-Bottom",
+          "Description": "G-Force-Q-BottomFront",
           "FrontLeftFormula": {
             "Expression": "[QAdvanceFeedback.GForce.Bottom.FrontLeft]"
           },
@@ -286,10 +342,10 @@
             "Expression": "[QAdvanceFeedback.GForce.Bottom.FrontRight]"
           },
           "RearLeftFormula": {
-            "Expression": "[QAdvanceFeedback.GForce.Bottom.RearLeft]"
+            "Expression": ""
           },
           "RearRightFormula": {
-            "Expression": "[QAdvanceFeedback.GForce.Bottom.RearRight]"
+            "Expression": ""
           },
           "ForceFrequencies": false,
           "FrontLeftFrequencyFormula": {
@@ -306,7 +362,7 @@
           },
           "AlwaysExecute": false,
           "ContainerId": "4e97e104-9743-4f21-b63b-428e853ead92",
-          "AggregationMode": "Corners",
+          "AggregationMode": "Left/Right",
           "Filter": {
             "GammaValue": 1.0,
             "InputGain": 100.0,
@@ -316,14 +372,14 @@
           },
           "Output": {
             "UseHighFrequency": true,
-            "HighFrequency": 20,
+            "HighFrequency": 60,
             "WhiteNoise": 10,
             "UseWhiteNoise": false,
             "FrequencyBasedOnPreFilter": false,
             "UsePrehemptiveMode": false,
-            "Frequency": 50,
+            "Frequency": 100,
             "AssignToChannelGroup": true,
-            "ChannelGroupName": "QAdvanceFeedback-Bottom",
+            "ChannelGroupName": "QA-BottomFront",
             "OutputType": "ToneOutput"
           }
         },
@@ -331,7 +387,60 @@
           "ContainerType": "CustomEffectContainer",
           "IsEnabled": true,
           "Gain": 100.0,
-          "Description": "G-Force-QAdvanceFeedback-Back",
+          "Description": "G-Force-Q-BottomRear",
+          "FrontLeftFormula": {
+            "Expression": "[QAdvanceFeedback.GForce.Bottom.RearLeft]"
+          },
+          "FrontRightFormula": {
+            "Expression": "[QAdvanceFeedback.GForce.Bottom.RearRight]"
+          },
+          "RearLeftFormula": {
+            "Expression": ""
+          },
+          "RearRightFormula": {
+            "Expression": ""
+          },
+          "ForceFrequencies": false,
+          "FrontLeftFrequencyFormula": {
+            "Expression": ""
+          },
+          "FrontRightFrequencyFormula": {
+            "Expression": ""
+          },
+          "RearLeftFrequencyFormula": {
+            "Expression": ""
+          },
+          "RearRightFrequencyFormula": {
+            "Expression": ""
+          },
+          "AlwaysExecute": false,
+          "ContainerId": "29fae256-d0c6-419b-b5c4-66e61805001a",
+          "AggregationMode": "Left/Right",
+          "Filter": {
+            "GammaValue": 1.0,
+            "InputGain": 100.0,
+            "MinimumForce": 0,
+            "Threshold": 0,
+            "FilterType": "GammaFilter"
+          },
+          "Output": {
+            "UseHighFrequency": true,
+            "HighFrequency": 70,
+            "WhiteNoise": 10,
+            "UseWhiteNoise": false,
+            "FrequencyBasedOnPreFilter": false,
+            "UsePrehemptiveMode": false,
+            "Frequency": 100,
+            "AssignToChannelGroup": true,
+            "ChannelGroupName": "QA-BottomRear",
+            "OutputType": "ToneOutput"
+          }
+        },
+        {
+          "ContainerType": "CustomEffectContainer",
+          "IsEnabled": true,
+          "Gain": 100.0,
+          "Description": "G-Force-Q-BackLow",
           "FrontLeftFormula": {
             "Expression": "[QAdvanceFeedback.GForce.Back.LowLeft]"
           },
@@ -339,10 +448,10 @@
             "Expression": "[QAdvanceFeedback.GForce.Back.LowRight]"
           },
           "RearLeftFormula": {
-            "Expression": "[QAdvanceFeedback.GForce.Back.TopLeft]"
+            "Expression": ""
           },
           "RearRightFormula": {
-            "Expression": "[QAdvanceFeedback.GForce.Back.TopRight]"
+            "Expression": ""
           },
           "ForceFrequencies": false,
           "FrontLeftFrequencyFormula": {
@@ -359,7 +468,7 @@
           },
           "AlwaysExecute": false,
           "ContainerId": "c68d12e2-0cbf-4fcc-a6b6-0e6dc445ddc2",
-          "AggregationMode": "Corners",
+          "AggregationMode": "Left/Right",
           "Filter": {
             "GammaValue": 1.0,
             "InputGain": 100.0,
@@ -369,14 +478,67 @@
           },
           "Output": {
             "UseHighFrequency": true,
-            "HighFrequency": 20,
+            "HighFrequency": 70,
             "WhiteNoise": 10,
             "UseWhiteNoise": false,
             "FrequencyBasedOnPreFilter": false,
             "UsePrehemptiveMode": false,
-            "Frequency": 50,
+            "Frequency": 100,
             "AssignToChannelGroup": true,
-            "ChannelGroupName": "QAdvanceFeedback-Back",
+            "ChannelGroupName": "Q-BackLow",
+            "OutputType": "ToneOutput"
+          }
+        },
+        {
+          "ContainerType": "CustomEffectContainer",
+          "IsEnabled": true,
+          "Gain": 100.0,
+          "Description": "G-Force-Q-BackTop",
+          "FrontLeftFormula": {
+            "Expression": "[QAdvanceFeedback.GForce.Back.TopLeft]"
+          },
+          "FrontRightFormula": {
+            "Expression": "[QAdvanceFeedback.GForce.Back.TopRight]"
+          },
+          "RearLeftFormula": {
+            "Expression": ""
+          },
+          "RearRightFormula": {
+            "Expression": ""
+          },
+          "ForceFrequencies": false,
+          "FrontLeftFrequencyFormula": {
+            "Expression": ""
+          },
+          "FrontRightFrequencyFormula": {
+            "Expression": ""
+          },
+          "RearLeftFrequencyFormula": {
+            "Expression": ""
+          },
+          "RearRightFrequencyFormula": {
+            "Expression": ""
+          },
+          "AlwaysExecute": false,
+          "ContainerId": "c0b28c3e-d343-4e30-85fb-caab56f683bc",
+          "AggregationMode": "Left/Right",
+          "Filter": {
+            "GammaValue": 1.0,
+            "InputGain": 100.0,
+            "MinimumForce": 0,
+            "Threshold": 0,
+            "FilterType": "GammaFilter"
+          },
+          "Output": {
+            "UseHighFrequency": true,
+            "HighFrequency": 60,
+            "WhiteNoise": 10,
+            "UseWhiteNoise": false,
+            "FrequencyBasedOnPreFilter": false,
+            "UsePrehemptiveMode": false,
+            "Frequency": 100,
+            "AssignToChannelGroup": true,
+            "ChannelGroupName": "Q-BackTop",
             "OutputType": "ToneOutput"
           }
         }

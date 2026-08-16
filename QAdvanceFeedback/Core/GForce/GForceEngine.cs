@@ -9,153 +9,116 @@ namespace QAdvanceFeedback.Core.GForce
     public enum LateralDirectionMode { Normal, Reversed }
 
     /// <summary>
-    /// The G-force "washout" model - a classical motion-cueing structure (as used by SimTools/FlyPT
-    /// Mover/SFX-100-style 4-axis rigs, adapted here for a fixed set of 8 per-pad VOLUME channels
-    /// rather than actuator position) that separates LEVEL from MOTION:
+    /// The G-force STAGED TRAVEL model (docs\lock-and-animation-report.md - this REPLACES the previous
+    /// pass's washout model, "sustained low-pass + transient high-pass", per the driver's own explicit
+    /// specification: "the chains are now correct but the driver does not FEEL the travel"). Two
+    /// independent signals drive every chain (braking/accelerating), exactly as the driver specified:
     /// <list type="bullet">
-    /// <item>a low-pass ("sustained") path that tracks the steady-state G level and drives the
-    /// existing hat+sustain-floor spatial distribution - this REPLACES the old single "travel"
-    /// parameter, which conflated level and motion into one number.</item>
-    /// <item>a high-pass ("transient") path - the classical washout complement of the same low-pass
-    /// filter (transient = raw - lowpass(raw)) - which responds to the RATE at which G is changing and
-    /// decays ("washes out") back to zero once the input holds steady, returning every pad to its
-    /// sustained distribution and freeing up headroom for the next onset.</item>
+    /// <item>a low-pass ("sustain") LEVEL that tracks the steady-state G ratio (unchanged mechanism from
+    /// the previous pass, <see cref="SustainTimeConstantSeconds"/>) - this is what "the SUSTAIN level is
+    /// driven by the G VALUE itself" means, and it is what makes a falling G (same direction) scale the
+    /// whole distribution down proportionally while preserving the sustain ratios (the driver's own
+    /// 90/45/22.5 -&gt; 60/30/15 worked example - see <see cref="StagedShape"/>'s remarks for why this
+    /// falls out automatically).</item>
+    /// <item>an explicit, three-keyframe STAGE PROGRESS (0-&gt;1) that sweeps the pad distribution from
+    /// the far pad (fully lit) through the middle pad to the terminal pad (the "sustain" shape) - this
+    /// is the actual TRAVEL the driver asked to feel. Its own SPEED (not level) is driven by the DELTA
+    /// in the sustain ratio, not its absolute value - "stamping the throttle from rest is a large delta
+    /// -&gt; a quick, strong sweep; a gentle change -&gt; a small, slow sweep" - see
+    /// <see cref="AdvanceStageProgress"/>.</item>
     /// </list>
-    /// See <see cref="Compute"/>'s own remarks for the full per-frame sequence, and
-    /// docs\wiring-ui-report.md for the six acceptance scenarios this structure was built against and
-    /// the reasoning behind the chosen time constants/gain.
     /// <para/>
-    /// DIRECTION FIX (docs\gforce-direction-fix-report.md - read this before touching the brake/accel
-    /// split again): this class used to derive WHICH chain is active from
-    /// <see cref="ITelemetryFrame.LongitudinalG"/>'s own sign (positive = accelerating, negative =
-    /// braking) - flagged, at the time, as an unverified assumption. It was backwards for at least one
-    /// title: this exact codebase's <see cref="NormalizedWheelLockSlipEngine"/> already documents, as
-    /// an established finding, that Forza Horizon 6 reports the OPPOSITE convention (positive while
-    /// genuinely slowing, in 95.8% of qualifying frames) - which is why the Lock/Slip engine moved
-    /// direction off <see cref="ITelemetryFrame.LongitudinalG"/>'s sign entirely, years before this
-    /// class was. Direct log evidence (2,612-frame Forza Horizon 6 session) confirmed the same
-    /// inversion here: under measured <see cref="LongitudinalMotionState.SpeedingUp"/> (real,
-    /// ground-speed-confirmed acceleration), the OLD sign-based code drove Bottom Front (the BRAKING
-    /// chain's own terminal pad) to a mean of 76/100 while Back Top (the accelerating chain's
-    /// terminal) sat at 0.55/100 - and the mirror-image swap under measured Slowing - exactly matching
-    /// the driver's own complaint ("Bottom Front shaking under acceleration").
+    /// PAD GEOMETRY (owner-confirmed): Bottom Front = far-leg side (braking's own TERMINAL pad); Bottom
+    /// Rear = leg-root side (braking's MIDDLE pad / acceleration's FAR pad); Low Back (<c>BackLow</c>) =
+    /// waist (braking's FAR pad / acceleration's MIDDLE pad); Top Back (<c>BackTop</c>) = upper back
+    /// (acceleration's own TERMINAL pad).
     /// <para/>
-    /// THE FIX: DIRECTION and MAGNITUDE are now two separate signals, exactly like
-    /// <see cref="NormalizedWheelLockSlipEngine"/> already treats them. This class now owns its own
-    /// <see cref="LongitudinalDirectionResolver"/> (constructor-injectable, mirroring that engine's own
-    /// DI pattern) and asks it, EVERY frame, which way the car is measurably going (from differentiated
-    /// ground speed - sign-agnostic by construction, needing no per-game telemetry convention to be
-    /// trusted). <see cref="ITelemetryFrame.LongitudinalG"/>'s own sign is NEVER read for this decision
-    /// any more - only its MAGNITUDE (<c>Math.Abs</c>) is used, attributed to whichever axis
-    /// <see cref="LongitudinalDirectionResolver"/> measured this frame. When direction is
-    /// <see cref="LongitudinalMotionState.Unknown"/> (no derivative yet, or speed changing by less than
-    /// the resolver's own dead band - i.e. a genuine standstill or steady cruise) NEITHER axis gets a
-    /// non-zero reading - this is also the direct fix for the driver's second complaint ("Bottom Rear
-    /// shaking slightly while stopped"): a stationary car has nothing honest to attribute
-    /// <see cref="ITelemetryFrame.LongitudinalG"/>'s own sensor noise to, so both chains now correctly
-    /// read (or decay toward) zero instead of the old sign-flicker occasionally lighting up whichever
-    /// axis the noise happened to point at.
+    /// THE THREE STAGES (owner's own specification, verbatim):
+    /// <code>
+    /// ACCELERATION: BottomRear HIGH/LowBack LOW/TopBack LOW
+    ///            -&gt; BottomRear MID/LowBack HIGH/TopBack LOW
+    ///            -&gt; BottomRear LOW/LowBack MID/TopBack HIGH (= sustain)
+    /// DECELERATION (mirrored): LowBack HIGH/BottomRear LOW/BottomFront LOW
+    ///                       -&gt; LowBack MID/BottomRear HIGH/BottomFront LOW
+    ///                       -&gt; LowBack LOW/BottomRear MID/BottomFront HIGH (= sustain)
+    /// </code>
+    /// HIGH is always 1.0 (the terminal pad's own hat, not a setting). MID/LOW reuse the EXISTING,
+    /// already-configurable sustain-fraction settings (<see cref="BrakeBottomRearSustainFraction"/> etc)
+    /// - the middle zone's own fraction is used as MID, the far zone's own fraction as LOW, WHICHEVER
+    /// pad happens to occupy that qualitative slot at a given stage - this is a deliberate reuse (not a
+    /// new setting) so a driver's already-tuned sustain fractions carry over unchanged.
     /// <para/>
-    /// <see cref="ITelemetryFrame.LateralG"/> (SimHub AccelerationSway) is still assumed positive =
-    /// biases toward the Right pads under <see cref="LateralDirectionMode.Normal"/> (see
-    /// <see cref="LateralDirection"/> for the owner's driver-facing toggle over this) - this sign is
-    /// NOT part of the fix above (lateral bias is independent of the longitudinal chain-selection logic
-    /// that was actually wrong), and remains driver-adjustable without a code change.
+    /// DIRECTION SELECTION FOR THE ANIMATION ITSELF (owner's own rules, distinct from - and layered on
+    /// top of - the established magnitude/direction split below): accelerating requires BOTH measured
+    /// SpeedingUp direction AND the throttle pedal actually applied; braking requires the brake pedal
+    /// applied (direction continues to gate the underlying magnitude split as before, so a brake press
+    /// while genuinely SpeedingUp still contributes nothing - see <see cref="_direction"/>'s own
+    /// remarks); coasting (neither pedal) instead watches the DECELERATION-direction chain's own DELTA -
+    /// a large one (engine braking / a forced downshift) still runs the deceleration animation, a small
+    /// one (<see cref="CoastingDeltaDeadBandPerSecond"/> - ordinary rolling resistance) produces NO cue
+    /// at all.
     /// <para/>
-    /// STATEFUL, UNLIKE THE OLD MODEL: this class now holds per-chain filter state (the low-pass
-    /// level and the resulting transient) across calls, since a washout structure is inherently a
-    /// function of TIME, not just the current instant. <see cref="Reset"/> clears it - callers should
-    /// call this on a session/game/car switch, mirroring every other stateful engine in this plugin
-    /// (see <c>QAdvanceFeedback.cs</c>'s own reset hooks).
+    /// DIRECTION STILL COMES FROM DIFFERENTIATED SPEED, NEVER THE REPORTED G SIGN (established fix,
+    /// unchanged by this restructure - docs\gforce-direction-fix-report.md): this class still owns its
+    /// own <see cref="LongitudinalDirectionResolver"/>, and <see cref="ITelemetryFrame.LongitudinalG"/>'s
+    /// sign is still never read for chain selection, only its magnitude.
+    /// <para/>
+    /// SUPERSEDED FROM THE PREVIOUS PASS'S SIX ACCEPTANCE SCENARIOS (S1-S6, docs\wiring-ui-report.md):
+    /// S1/S3/S6 are re-verified under new, direct measurements (delta-driven sweep speed) rather than
+    /// the old "gap against a TransientGain=0 twin" technique, since the additive transient concept the
+    /// twin isolated no longer exists. S5 ("a transient while already saturated spends the headroom
+    /// above the sustain floors") is EXPLICITLY SUPERSEDED: once the stage progress has fully swept
+    /// (reached the terminal/sustain shape) and the sustain level is itself already saturated at 1.0,
+    /// there is no further "travel" left to show - the owner's own specification calls only for
+    /// delta-driven TRAVEL and G-driven SUSTAIN SCALING, neither of which describes a residual bump
+    /// while both are already at their own ceiling. This is a deliberate departure, not an oversight -
+    /// see docs\lock-and-animation-report.md for the full reasoning.
     /// </summary>
     public sealed class GForceEngine
     {
         /// <summary>
-        /// How quickly the SUSTAINED path's low-pass filter tracks a new steady-state G level, in
-        /// seconds. 0.15s was chosen (and verified numerically - see docs\wiring-ui-report.md for the
-        /// simulation) so that the S2 acceptance scenario's own stated hold duration (~0.5s, more than
-        /// 3 time constants) is long enough for the sustained level to fully settle and the transient
-        /// to wash out to a negligible residual, while still being slow enough, relative to a single
-        /// frame, for a fast step (S3/S5) to produce a clearly visible transient in the frame or two
-        /// immediately following it.
+        /// How quickly the SUSTAIN level's low-pass filter tracks a new steady-state G ratio, in
+        /// seconds - UNCHANGED role from the previous pass. This is what makes "G falling while still in
+        /// the same direction" scale the whole distribution down smoothly (see
+        /// <see cref="StagedShape"/>'s remarks) rather than snapping.
         /// </summary>
         public double SustainTimeConstantSeconds { get; set; } = 0.15;
 
         /// <summary>
-        /// An additional smoothing pass applied to the raw transient residual (raw ratio minus the
-        /// sustained low-pass), in seconds - shorter than <see cref="SustainTimeConstantSeconds"/> so
-        /// the transient itself still feels snappy/immediate rather than doubly-lagged, while
-        /// rejecting frame-to-frame telemetry jitter that would otherwise make the transient feel
-        /// twitchy. 0.08s (roughly half of the sustain constant, and - like that constant - verified
-        /// numerically against the S2 scenario's 0.5s hold) keeps the transient itself decaying
-        /// comfortably faster than the sustained path settles.
+        /// REPURPOSED from the previous pass's "transient smoothing time constant" (same property name
+        /// and default, kept to avoid a settings-schema/persistence break) - now the DECAY time constant
+        /// of the LATCHED stage-travel rate (see <see cref="AdvanceStageProgress"/>): a single fast
+        /// onset (e.g. a hard stamp on the brake) latches a high travel rate that then decays over this
+        /// many seconds, so the sweep continues for a few frames after the initiating delta itself has
+        /// already settled, instead of producing a one-frame flicker.
         /// </summary>
         public double TransientTimeConstantSeconds { get; set; } = 0.08;
 
         /// <summary>
-        /// Scales the (already filtered) transient residual before it is applied, headroom-scaled, to
-        /// every pad - see <see cref="Compute"/>'s remarks. 1.5 was chosen, together with the two time
-        /// constants above, so that a fast, large step (S3/S5) produces a clearly visible, obviously
-        /// larger transient than a gentle multi-second onset (S1) at the same underlying magnitude
-        /// change - verified numerically (see docs\wiring-ui-report.md): a 1g-to-2g step gives roughly
-        /// double the peak transient of the same 1g change spread gently over 3 seconds.
+        /// REPURPOSED from the previous pass's "transient gain" (same property name and default) - now
+        /// the gain converting the observed/latched delta-driven rate into stage-progress advancement
+        /// per second, capped at <see cref="MaxStageProgressPerSecond"/> - see
+        /// <see cref="AdvanceStageProgress"/>'s own remarks for the full derivation and the mutation
+        /// this constant is specifically evidenced against (driving the animation from magnitude instead
+        /// of delta must fail the large-vs-small-delta test).
         /// </summary>
         public double TransientGain { get; set; } = 1.5;
 
-        /// <summary>
-        /// RE-DERIVED (this fraction and the three siblings below - read this once, it applies to all
-        /// four; SUPERSEDES an earlier, flawed derivation that produced a flat 50% for every zone
-        /// regardless of chain position - see "why the old derivation was wrong" at the end of this
-        /// remark).
-        /// <para/>
-        /// THE MODEL'S ACTUAL TERMINAL WEIGHTS: at full saturation (the sustained ratio at or beyond
-        /// 1.0), the terminal (leading) zone's own hat is exactly 1.0 by construction - it needs no
-        /// floor at all. Each TRAILING zone's sustain floor is derived from the chain's own topology by
-        /// halving per hop of "distance" from that terminal zone - the natural, simplest decay
-        /// consistent with a 3-zone chain that has exactly one terminal and two trailing zones:
-        /// <list type="bullet">
-        /// <item>distance 0 (the terminal zone itself, e.g. Bottom Front for braking): 100% - not a
-        /// setting, just the hat's own value.</item>
-        /// <item>distance 1 (the MIDDLE zone, e.g. Bottom Rear for braking): 50% of the terminal's
-        /// weight.</item>
-        /// <item>distance 2 (the FAR zone, e.g. Back Low for braking): 50% of the middle zone's weight
-        /// = 25% of the terminal's.</item>
-        /// </list>
-        /// This produces a genuine SPATIAL GRADIENT the driver can feel WHERE the sensation is
-        /// (leading pad near full, middle pad noticeably lower, far pad lower still - the owner's own
-        /// suggested 25%/50% shape) - and, for a middle-zone floor of 50%, still leaves 50% headroom
-        /// for the transient/washout path to express change, exactly as before.
-        /// <para/>
-        /// WHY THE OLD DERIVATION WAS WRONG: it computed "the value of a trailing zone's OWN hat at
-        /// the midpoint of its own decay ramp", which is a SELF-referential calculation that returns
-        /// exactly 0.5 for EVERY zone in this symmetric triangular family regardless of which zone it
-        /// is or how far from the terminal it sits - it was never actually a function of chain
-        /// position at all, which is why every one of the four sustain floors ended up identical (the
-        /// flat-50%-everywhere symptom the owner flagged from the screenshots). The corrected
-        /// derivation above is instead a function of DISTANCE FROM THE TERMINAL ZONE, which is what
-        /// "derive from the model's own terminal weights" actually requires.
-        /// <para/>
-        /// Braking chain: Back Low (distance 2, far) -&gt; Bottom Rear (distance 1, middle) -&gt;
-        /// Bottom Front (distance 0, terminal). This property is Bottom Rear's (the MIDDLE zone) -
-        /// default 0.5 (unchanged from before, since it was already the correct distance-1 value).
-        /// </summary>
+        /// <summary>See <see cref="GForceEngine"/>'s class remarks (braking's MIDDLE pad, Bottom Rear) -
+        /// UNCHANGED meaning/default from the previous pass, now doubling as the staged model's own MID
+        /// level.</summary>
         public double BrakeBottomRearSustainFraction { get; set; } = 0.5;
 
-        /// <summary>Braking's Back Low sustain - the FAR zone (distance 2 from the terminal Bottom
-        /// Front) - default 0.25 (corrected from the old, flawed 0.5 - see
-        /// <see cref="BrakeBottomRearSustainFraction"/>'s remarks for the full derivation).</summary>
+        /// <summary>Braking's FAR pad (Back Low) - UNCHANGED meaning/default, now the staged model's LOW
+        /// level for the braking chain.</summary>
         public double BrakeBackLowSustainFraction { get; set; } = 0.25;
 
-        /// <summary>Acceleration chain: Bottom Rear (distance 2, far) -&gt; Back Low (distance 1,
-        /// middle) -&gt; Back Top (distance 0, terminal). This property is Bottom Rear's (the FAR
-        /// zone) - default 0.25 (corrected from the old, flawed 0.5 - see
-        /// <see cref="BrakeBottomRearSustainFraction"/>'s remarks for the full derivation).</summary>
+        /// <summary>Acceleration's FAR pad (Bottom Rear) - UNCHANGED meaning/default, now the staged
+        /// model's LOW level for the acceleration chain.</summary>
         public double AccelBottomRearSustainFraction { get; set; } = 0.25;
 
-        /// <summary>Acceleration's Back Low sustain - the MIDDLE zone (distance 1 from the terminal
-        /// Back Top), per the brief's explicit "Back Low should keep vibrating (just less strongly)"
-        /// requirement - default 0.5 (unchanged from before, since it was already the correct
-        /// distance-1 value - see <see cref="BrakeBottomRearSustainFraction"/>'s remarks).</summary>
+        /// <summary>Acceleration's MIDDLE pad (Back Low) - UNCHANGED meaning/default, now the staged
+        /// model's MID level for the acceleration chain.</summary>
         public double AccelBackLowSustainFraction { get; set; } = 0.5;
 
         /// <summary>The lateral-G magnitude treated as "full scale" for the left/right bias. 1.6g is a
@@ -163,177 +126,196 @@ namespace QAdvanceFeedback.Core.GForce
         public double LateralReferenceG { get; set; } = 1.6;
 
         /// <summary>
-        /// LIVE-PATH-ONLY plausibility clamp on LongitudinalG's own magnitude, applied BEFORE the
-        /// direction-based brake/accel split (docs\gforce-direction-fix-report.md - REJECT and CLAMP
-        /// are different needs, per the owner's own explicit ask): the LEARNING path (see
-        /// <see cref="GForceMaxLearner.LearnCapG"/>/<see cref="Settings.GForceSettings.AccelLearnMaxPlausibleG"/>/
-        /// <see cref="Settings.GForceSettings.DecelLearnMaxPlausibleG"/>) REJECTS an impact-magnitude
-        /// reading outright, since one bad sample would otherwise become the persistent normalisation
-        /// reference for every subsequent frame. This LIVE path must NOT do the same thing - dropping
-        /// the frame (or freezing the output) during a crash would feel exactly like the plugin
-        /// hanging; instead the magnitude is CLAMPED here to a large-but-finite value, producing a
-        /// real, saturated, in-range cue for the impact frame that recovers immediately once ordinary
-        /// readings resume. 15g is deliberately HIGHER than either learning cap (6g/8g - see those
-        /// constants' own remarks for the real-world peak data this is derived from) so it never
-        /// clips a genuinely extreme but real event, while remaining far below a genuine wall-impact
-        /// spike (this plugin's own captured session showed a ~19.8g-equivalent collision reading) -
-        /// high enough to be a true "this is not real driving" backstop, not a everyday ceiling.
+        /// LIVE-PATH-ONLY plausibility clamp on LongitudinalG's own magnitude (UNCHANGED from the
+        /// previous pass - docs\gforce-direction-fix-report.md): the LEARNING path REJECTS an
+        /// impact-magnitude reading outright; this LIVE path CLAMPS instead, so an impact frame still
+        /// produces a real, finite, saturated cue rather than freezing or dropping.
         /// </summary>
         public const double LiveMagnitudeClampG = 15.0;
 
-        /// <summary>How far a fully-saturated lateral bias pushes the left/right split apart. 0.5
-        /// means the "loaded" side gets up to 1.5x its unbiased value and the "unloaded" side down to
-        /// 0.5x.</summary>
+        /// <summary>How far a fully-saturated lateral bias pushes the left/right split apart.</summary>
         public double LateralBiasGain { get; set; } = 0.5;
 
-        /// <summary>
-        /// The owner's driver-facing lateral direction toggle. <see cref="LateralDirectionMode.Normal"/>
-        /// (the default, unchanged pre-existing behaviour) corresponds to: turning LEFT produces a
-        /// positive <see cref="ITelemetryFrame.LateralG"/> reading (the car's own reaction to cornering
-        /// loads the RIGHT side), so the vibration travels to, and settles on, the RIGHT pads while
-        /// turning left. <see cref="LateralDirectionMode.Reversed"/> mirrors BOTH the travelling
-        /// transition and the settled steady-state bias (there is only ONE bias computation, applied
-        /// uniformly every frame, so negating it mirrors both by construction).
-        /// </summary>
+        /// <summary>The owner's driver-facing lateral direction toggle - unchanged from the previous
+        /// pass, unaffected by this restructure (lateral bias is independent of the longitudinal
+        /// chain-selection/travel logic).</summary>
         public LateralDirectionMode LateralDirection { get; set; } = LateralDirectionMode.Normal;
 
-        // ---- Owner-requested "Integrate Wheel Lock and Slip" shake (see GForceShake) - OFF by
-        // default (see GForceSettings.IntegrateWheelLockAndSlip's own remarks on why).
+        // ---- Owner-requested "Integrate Wheel Lock and Slip" shake (see GForceShake) - unaffected by
+        // this restructure.
+        //
+        // Bare-constructor default stays OFF deliberately (docs\integrate-default-report.md) - this is a
+        // library-level "inert unless configured" baseline for anyone constructing GForceEngine directly
+        // (every GForceEngineShakeTests "disabled"/"baseline" fixture relies on exactly this), NOT the
+        // same thing as what a real, fully-wired install experiences. The SETTINGS-layer default
+        // (Settings.GForceSettings.IntegrateWheelLockAndSlip) is now ON, and Settings.GForceSettings.ApplyTo
+        // pushes that value onto this property at Init and on every settings Apply - so the two defaults
+        // disagreeing here is intentional, not a drift bug: this property alone is only ever the
+        // pre-settings-applied value.
         public bool IntegrateWheelLockAndSlip { get; set; } = false;
 
-        private double _shakeFrequencyHz = GForceShake.MinFrequencyHz;
+        private double _shakeFrequencyHz = 3.0;
 
-        /// <summary>Hz, clamped to [<see cref="GForceShake.MinFrequencyHz"/>, <see cref="GForceShake.MaxFrequencyHz"/>]
-        /// in the setter itself (not only a UI spinner range) - a hand-edited config file cannot smuggle
-        /// in a frequency outside the owner's stated 5-20 Hz band.</summary>
+        /// <summary>Hz, clamped to [<see cref="GForceShake.MinFrequencyHz"/> (1),
+        /// <see cref="GForceShake.MaxFrequencyHz"/> (20)]. Default 3 Hz - see
+        /// <see cref="Settings.GForceSettings.ShakeFrequencyHz"/>'s remarks for the full rationale.
+        /// NOT the Layer 5 pulse's own separate, UNCHANGED 200 ms (5 Hz) floor
+        /// (<see cref="Projection.PulseSettings.MinGapMs"/>).</summary>
         public double ShakeFrequencyHz
         {
             get => _shakeFrequencyHz;
             set => _shakeFrequencyHz = ClampMath.Clamp(value, GForceShake.MinFrequencyHz, GForceShake.MaxFrequencyHz);
         }
 
-        private double _wheelLockShakeScale = 1.0;
+        private double _wheelLockShakeScale = 1.5;
 
-        /// <summary>Non-negative, clamped in the setter.</summary>
+        /// <summary>Default 1.5 (150%) - see <see cref="Settings.GForceSettings.WheelLockShakeScale"/>'s
+        /// remarks for the full rationale.</summary>
         public double WheelLockShakeScale
         {
             get => _wheelLockShakeScale;
             set => _wheelLockShakeScale = value >= 0.0 ? value : 0.0;
         }
 
-        private double _wheelSlipShakeScale = 1.0;
+        private double _wheelSlipShakeScale = 1.5;
 
-        /// <summary>Non-negative, clamped in the setter.</summary>
+        /// <summary>Default 1.5 (150%) - see <see cref="Settings.GForceSettings.WheelLockShakeScale"/>'s
+        /// remarks for the full rationale (mirrored for Slip).</summary>
         public double WheelSlipShakeScale
         {
             get => _wheelSlipShakeScale;
             set => _wheelSlipShakeScale = value >= 0.0 ? value : 0.0;
         }
 
-        // The shake's own "clock" - advanced from frame dt (never wall-clock, see GForceShake's own
-        // remarks), so it is unit-testable with synthetic dt and survives no faster/slower than the
-        // rest of this engine's per-frame maths. Mirrors PulseGenerator's own "freshly active starts at
-        // t=0, THEN advances by dt on every subsequent frame" convention exactly (see Compute's own
-        // remarks) - this is what guarantees the very first frame after (re)activation always has
-        // sin(0)==0, i.e. output==centre, so the transition into shaking is continuous.
         private bool _shakeActive;
         private double _shakePhaseSeconds;
 
-        // ---- Washout filter state - see this class's own remarks on why it is now stateful.
-        private double _brakeSustainRatio;
-        private double _brakeTransient;
-        private double _accelSustainRatio;
-        private double _accelTransient;
+        // ------------------------------------------------------------------------------------
+        // STAGED TRAVEL - new state (docs\lock-and-animation-report.md). Two independent tracks per
+        // chain: the sustain LEVEL (low-pass, unchanged mechanism) and the STAGE PROGRESS (0-1, new).
+        // ------------------------------------------------------------------------------------
 
-        // ---- DIRECTION FIX - see this class's own remarks. Owns its own resolver instance, exactly
-        // like NormalizedWheelLockSlipEngine does, so it needs no shared/singleton state with that
-        // engine - both resolvers, fed the same per-frame sample sequence, converge on identical
-        // answers by construction (the same deterministic maths over the same inputs).
+        private double _brakeSustainLevel;
+        private double _brakeStageProgress;
+        private double _brakeTravelRate;
+
+        /// <summary>The previous frame's ratio for delta purposes - deliberately ALWAYS starts at 0.0
+        /// (not "no previous value yet"), so a telemetry stream that starts already at a sustained,
+        /// nonzero ratio (a cold start mid-event, with no observed ramp-up at all) still gets a
+        /// legitimate initial "delta from zero" kick and plays the sweep, rather than getting
+        /// permanently stuck at stage 0 forever for lack of any observed change.</summary>
+        private double _brakePreviousRatio;
+
+        /// <summary>COASTING GATE state (docs\lock-and-animation-report.md) - a SEPARATE, always-running
+        /// (never gated by chain activity) latched+decaying delta-rate tracker, used ONLY to decide
+        /// whether a coasting frame counts as "a large delta" (see <see cref="AdvanceCoastingDeltaRate"/>).
+        /// Deliberately independent of <see cref="_brakeTravelRate"/> (which only updates while the
+        /// chain is already active - a chicken-and-egg problem, since deciding activity is what THIS
+        /// tracker is for) and of <see cref="_brakePreviousRatio"/> (which resets to 0 whenever the
+        /// chain is inactive): without its own always-on memory, a sudden coasting-deceleration kick
+        /// would only ever be detected for the single frame the value actually changed, then
+        /// immediately flip back to "small delta" the instant the new (elevated) value holds steady for
+        /// even one more frame - producing a one-frame flicker instead of a felt, sustained cue for the
+        /// engine-braking event's own duration.</summary>
+        private double _brakeCoastingPreviousRatio;
+
+        /// <summary>See <see cref="_brakeCoastingPreviousRatio"/>'s remarks.</summary>
+        private double _brakeCoastingDeltaRate;
+
+        private double _accelSustainLevel;
+        private double _accelStageProgress;
+        private double _accelTravelRate;
+
+        /// <summary>See <see cref="_brakePreviousRatio"/>'s remarks.</summary>
+        private double _accelPreviousRatio;
+
+        /// <summary>
+        /// The absolute FASTEST the stage progress is ever allowed to advance, in "sweeps per second" -
+        /// e.g. 5.0 means a full 0-&gt;1 sweep can never complete in under 0.2s, regardless of how large
+        /// or sudden the driving delta is. Without this cap, an instantaneous step (a single-frame
+        /// onset, the extreme case of "stamping the throttle from rest") would complete the ENTIRE
+        /// three-stage sweep within one or two frames - not felt as travel at all, defeating the whole
+        /// point of this restructure. JUDGMENT CALL (no rig to time this against): 5.0 was chosen as a
+        /// duration (~0.2s) fast enough to still read as "quick, strong" relative to a multi-second
+        /// gentle onset, while remaining long enough (a handful of frames at any realistic sim frame
+        /// rate) to be felt as genuine, directional travel rather than a snap.
+        /// </summary>
+        private const double MaxStageProgressPerSecond = 5.0;
+
+        /// <summary>
+        /// A GUARANTEED MINIMUM sweep speed, applied whenever the chain is active, regardless of how
+        /// small the observed delta is - see <see cref="AdvanceStageProgress"/>'s own remarks for why
+        /// this is necessary: the delta-driven rate decays geometrically once the input stops changing,
+        /// and for a small enough initial delta the resulting infinite geometric series sums to LESS
+        /// than a full sweep - i.e. without this floor, a genuinely gentle onset could asymptotically
+        /// approach, but mathematically never reach, the stage-3/sustain shape, no matter how long the
+        /// chain stayed active. "Sustain the final distribution while acceleration/braking continues"
+        /// (the owner's own wording) requires the sweep to eventually, reliably complete for EVERY
+        /// sustained event, not just large ones - only the SPEED of getting there should vary with delta
+        /// size, per this constant's own name. JUDGMENT CALL: 1.0 (a 1-second guaranteed-worst-case
+        /// completion) is comfortably slower than any delta-driven rate a real onset - even a gentle,
+        /// multi-second ramp - already produces well before its own delta decays away, so it only ever
+        /// matters as a true floor for a near-instant, tiny-delta cold start, not as the dominant driver
+        /// of ordinary sweeps.
+        /// </summary>
+        private const double MinStageProgressPerSecond = 1.0;
+
+        /// <summary>
+        /// Named, justified dead band for the COASTING case (owner's own requirement - "a small, steady
+        /// deceleration is just rolling resistance -&gt; NO vibration at all"): the deceleration-ratio's
+        /// own rate of change (per second) must exceed this before a coasting-only (no pedal) event is
+        /// treated as "engine braking / a forced downshift" rather than ordinary drag. JUDGMENT CALL:
+        /// ordinary rolling/aero resistance decelerates a coasting car smoothly over several seconds
+        /// (a small, steady fraction of the deceleration reference per second); a forced downshift or
+        /// engine-braking transition is a comparatively abrupt kick reaching a meaningful fraction of the
+        /// deceleration reference within a fraction of a second. 0.5 (ratio-units per second, i.e. half
+        /// of the configured deceleration maximum per second) sits well above typical steady drag decay
+        /// rates while still well below the near-instant rate a genuine kick produces - not
+        /// independently rig-tuned, flagged as such like this codebase's other similar constants (e.g.
+        /// <see cref="Normalized.NormalizedWheelLockSlipEngine"/>'s own <c>RawActiveThreshold</c>).
+        /// </summary>
+        private const double CoastingDeltaDeadBandPerSecond = 0.5;
+
+        /// <summary>"Is the pedal meaningfully pressed at all" - deliberately a tiny epsilon (not a
+        /// driver-configurable threshold like Wheel Lock/Slip's own Trigger Threshold, which is a
+        /// different, independently-configured concept for a different channel) so ordinary sensor
+        /// noise on an unpressed pedal cannot be read as "applied".</summary>
+        private const double PedalAppliedThresholdPercent = 1.0;
+
         private readonly LongitudinalDirectionResolver _direction;
 
         public GForceEngine() : this(null) { }
 
-        /// <param name="directionResolver">Constructor-injectable for tests that need to observe/
-        /// control the resolver directly; defaults to a fresh instance, mirroring
-        /// <see cref="NormalizedWheelLockSlipEngine"/>'s own DI pattern.</param>
         public GForceEngine(LongitudinalDirectionResolver directionResolver)
         {
             _direction = directionResolver ?? new LongitudinalDirectionResolver();
         }
 
         /// <summary>The most recently resolved direction - exposed for diagnostics and so the plugin
-        /// composition root can attribute an AUTO-mode learner observation to the SAME axis this
-        /// frame's chain selection used, rather than re-deriving (or mis-deriving) it separately - see
-        /// <c>QAdvanceFeedback.cs</c>'s own remarks. Mirrors
-        /// <see cref="NormalizedWheelLockSlipEngine.CurrentDirection"/>.</summary>
+        /// composition root can attribute an AUTO-mode learner observation to the SAME axis this frame's
+        /// chain selection used.</summary>
         public LongitudinalMotionState CurrentDirection => _direction.State;
 
-        /// <summary>Clears all washout filter state back to zero - call on a session/game/car switch
-        /// so a fresh session does not inherit a stale sustained level or an in-flight transient from
-        /// whatever the car was doing a moment before the switch. Also clears the direction resolver's
-        /// own filter (see this class's own remarks) so a fresh session's first frame is not compared
-        /// against stale speed history from whatever the previous game/car was doing.</summary>
+        /// <summary>Clears all staged-travel state back to zero - call on a session/game/car switch.</summary>
         public void Reset()
         {
-            _brakeSustainRatio = 0.0;
-            _brakeTransient = 0.0;
-            _accelSustainRatio = 0.0;
-            _accelTransient = 0.0;
+            _brakeSustainLevel = 0.0;
+            _brakeStageProgress = 0.0;
+            _brakeTravelRate = 0.0;
+            _brakePreviousRatio = 0.0;
+            _brakeCoastingPreviousRatio = 0.0;
+            _brakeCoastingDeltaRate = 0.0;
+
+            _accelSustainLevel = 0.0;
+            _accelStageProgress = 0.0;
+            _accelTravelRate = 0.0;
+            _accelPreviousRatio = 0.0;
+
             _shakeActive = false;
             _shakePhaseSeconds = 0.0;
             _direction.Reset();
         }
 
-        /// <summary>
-        /// Computes this frame's 8 pad values.
-        /// <para/>
-        /// PER-FRAME SEQUENCE (per chain - braking and accelerating are independent, non-negative
-        /// signals, since a single frame's LongitudinalG can only be braking OR accelerating, never
-        /// both):
-        /// <list type="number">
-        /// <item>Compute the raw, UNCLAMPED ratio r = magnitude / maxG (can exceed 1 when over the
-        /// configured maximum - deliberately not clamped yet, so the transient below still sees the
-        /// true excursion even while already saturated - see the S5 acceptance scenario).</item>
-        /// <item>Update the SUSTAINED low-pass filter toward r, with time constant
-        /// <see cref="SustainTimeConstantSeconds"/>. The published "level" for this chain is
-        /// clamp01(this filter's value).</item>
-        /// <item>The raw transient residual = r - (the just-updated, UNCLAMPED sustain filter value) -
-        /// the classical washout high-pass, which is exactly zero once the sustain filter has caught
-        /// up to a steady r (see the S2 acceptance scenario), and large immediately after a sudden
-        /// change since the low-pass necessarily lags a step (S3/S5).</item>
-        /// <item>That residual is itself smoothed by a second low-pass,
-        /// <see cref="TransientTimeConstantSeconds"/>, then scaled by <see cref="TransientGain"/> - the
-        /// signed "transient drive" for this chain this frame. Positive = onset (G increasing toward
-        /// this chain's own maximum); negative = easing off.</item>
-        /// <item>The SUSTAINED spatial distribution is computed with the existing hat+sustain-floor
-        /// logic (unchanged mechanism from before - see the sustain-fraction properties' own remarks),
-        /// using the clamped sustain ratio as the position parameter directly (no separate rate-boosted
-        /// "travel" any more - that concept is retired; motion is now the transient path's job
-        /// entirely).</item>
-        /// <item>The transient drive is applied to EVERY pad in the chain (leading AND trailing alike -
-        /// deliberately uniform, not a leading-vs-trailing redistribution, per the S5 acceptance
-        /// scenario's own worked numbers) via <see cref="ApplyTransient"/>: HEADROOM-scaled so it can
-        /// never push a pad outside [0,1], and so it still has somewhere to go even when the sustained
-        /// path is already fully saturated (S4/S5) - "spending the headroom above the sustain floors".</item>
-        /// </list>
-        /// Bottom Rear and Back Low are shared between the two chains; their final value is the SUM of
-        /// both chains' (already headroom-applied) contributions, safe because brake and accel energy
-        /// can never both be non-zero for the same frame. Lateral G is applied last, as before.
-        /// </summary>
-        /// <param name="sample">The two-frame telemetry sample - <see cref="ITelemetrySample.Dt"/>
-        /// drives the washout filters' time-correct exponential smoothing; if it is unavailable or
-        /// non-positive (e.g. the very first sample of a session), the filters simply hold their
-        /// current state for that one frame rather than advancing incorrectly.</param>
-        /// <param name="accelMaxG">The max-G reference used to normalise acceleration - the caller
-        /// (GForceSettings.EffectiveAccelMaxG) resolves FIXED vs AUTO before calling in.</param>
-        /// <param name="decelMaxG">The max-G reference used to normalise braking/deceleration.</param>
-        /// <param name="wheelLockAll0100">This frame's published <c>WheelLock.Projected.All</c> value
-        /// (0-100) - defaults to 0 (no contribution) so every pre-existing call site (and all 19
-        /// pre-existing tests) compiles and behaves identically without passing it. See
-        /// <see cref="IntegrateWheelLockAndSlip"/>'s own remarks for how this and
-        /// <paramref name="wheelSlipAll0100"/> combine into the shake's single "contribution" value.</param>
-        /// <param name="wheelSlipAll0100">This frame's published <c>WheelSlip.Projected.All</c> value
-        /// (0-100). See <paramref name="wheelLockAll0100"/>'s remarks.</param>
         public GForceOutput Compute(
             ITelemetrySample sample, double accelMaxG, double decelMaxG,
             double wheelLockAll0100 = 0.0, double wheelSlipAll0100 = 0.0)
@@ -342,30 +324,12 @@ namespace QAdvanceFeedback.Core.GForce
 
             double dtSeconds = sample.Dt.HasValue && sample.Dt.Value.TotalSeconds > 0.0 ? sample.Dt.Value.TotalSeconds : 0.0;
 
-            // DIRECTION FIX (see this class's own remarks) - resolved UNCONDITIONALLY, every frame,
-            // exactly like NormalizedWheelLockSlipEngine.Compute's own unconditional call, so the
-            // resolver's internal smoothing filter stays continuously up to date regardless of whether
-            // LongitudinalG itself happens to be available this particular frame.
             LongitudinalMotionState direction = _direction.Resolve(sample);
 
-            // The shake's own clock only advances while the feature is actually enabled - re-entering
-            // it always starts THIS frame at t=0 (sin(0)=0, output==centre) and only advances by dt
-            // from the SECOND active frame onward - the same "freshly active starts at t=0, then
-            // advances" convention PulseGenerator already uses (see PulseGenerator.Advance). This is
-            // what guarantees switching the checkbox on mid-session begins smoothly from the current
-            // G-force value (no jump into the middle of an already-running wave) rather than merely
-            // "eventually" being continuous because band happens to be 0.
             if (IntegrateWheelLockAndSlip)
             {
-                if (!_shakeActive)
-                {
-                    _shakeActive = true;
-                    _shakePhaseSeconds = 0.0;
-                }
-                else if (ClampMath.IsFinite(dtSeconds) && dtSeconds > 0.0)
-                {
-                    _shakePhaseSeconds += dtSeconds;
-                }
+                if (!_shakeActive) { _shakeActive = true; _shakePhaseSeconds = 0.0; }
+                else if (ClampMath.IsFinite(dtSeconds) && dtSeconds > 0.0) { _shakePhaseSeconds += dtSeconds; }
             }
             else
             {
@@ -373,11 +337,6 @@ namespace QAdvanceFeedback.Core.GForce
                 _shakePhaseSeconds = 0.0;
             }
 
-            // Lock/Slip combine into ONE non-negative "contribution" per the owner's explicit choice -
-            // the LARGER of the two scaled contributions, not their sum, so a brief overlap (both
-            // channels non-zero for a frame or two) cannot double the shake amplitude. This is a
-            // judgment call on an otherwise-unspecified interaction - flagged in
-            // docs\shake-and-toggle-report.md for the owner to revisit if summing is actually wanted.
             double lockContribution = WheelLockShakeScale * (ClampMath.To0100(wheelLockAll0100) / 100.0);
             double slipContribution = WheelSlipShakeScale * (ClampMath.To0100(wheelSlipAll0100) / 100.0);
             double shakeContribution = IntegrateWheelLockAndSlip ? Math.Max(lockContribution, slipContribution) : 0.0;
@@ -391,83 +350,83 @@ namespace QAdvanceFeedback.Core.GForce
                     : GForceOutput.Empty;
             }
 
-            // DIRECTION FIX (see this class's own remarks): magnitude comes from LongitudinalG
-            // (Math.Abs - sign-agnostic), direction comes ONLY from the resolver above, NEVER from
-            // LongitudinalG's own sign. Unknown (standstill / within the dead band / no derivative
-            // yet) -> both zero - "the standstill gate" (see MUTATION (b) below).
-            //
-            // MUTATION (a) in the report: replace `direction`-based attribution with the OLD
-            // `Math.Max(0.0, -longG.Value)` / `Math.Max(0.0, longG.Value)` sign-based split - a
-            // dedicated test using the INVERTED longitudinal convention (ground speed says one thing,
-            // LongitudinalG's sign says the opposite) must fail, since the sign-based split would then
-            // drive the wrong chain.
-            // CLAMP, not reject (see LiveMagnitudeClampG's own remarks) - MUTATION (a) in the report:
-            // reject/hold the previous output instead of clamping and proceeding - a dedicated test
-            // (an impact-magnitude frame must still produce a real, saturated, in-range, DIFFERENT
-            // reading from whatever preceded it, and recover the following frame) must fail.
+            // Direction and magnitude are two independent signals (established fix, unchanged): the
+            // resolver above supplies direction; LongitudinalG supplies only its Math.Abs magnitude,
+            // never its sign.
             double magnitude = Math.Min(Math.Abs(longG.Value), LiveMagnitudeClampG);
-
-            // MUTATION (b) in the report: change the Unknown branch below from 0.0 to a raw-sign
-            // fallback (e.g. `Math.Max(0.0, -longG.Value)` for brake) - a dedicated genuine-standstill
-            // test (direction Unknown, small sensor-noise-scale LongitudinalG) must then fail, since
-            // the mutated code would let a nonzero reading leak through instead of gating to zero.
-            double brakeG = direction == LongitudinalMotionState.Slowing ? magnitude : 0.0;
-            double accelG = direction == LongitudinalMotionState.SpeedingUp ? magnitude : 0.0;
 
             double safeDecelMax = decelMaxG > 1e-6 ? decelMaxG : 1e-6;
             double safeAccelMax = accelMaxG > 1e-6 ? accelMaxG : 1e-6;
 
-            double rBrake = brakeG / safeDecelMax;   // unclamped - see this method's remarks
+            double brakeG = direction == LongitudinalMotionState.Slowing ? magnitude : 0.0;
+            double accelG = direction == LongitudinalMotionState.SpeedingUp ? magnitude : 0.0;
+
+            double rBrake = brakeG / safeDecelMax;
             double rAccel = accelG / safeAccelMax;
 
-            double brakeTransientDrive = AdvanceWashout(dtSeconds, rBrake, ref _brakeSustainRatio, ref _brakeTransient);
-            double accelTransientDrive = AdvanceWashout(dtSeconds, rAccel, ref _accelSustainRatio, ref _accelTransient);
+            // ---- ANIMATION DIRECTION SELECTION (owner's own rules - see class remarks). Layered ON
+            // TOP of the direction-gated magnitude split above, not a replacement for it.
+            double? brakePercent = sample.New?.BrakePercent;
+            double? throttlePercent = sample.New?.ThrottlePercent;
+            bool brakeApplied = brakePercent > PedalAppliedThresholdPercent;
+            bool throttleApplied = throttlePercent > PedalAppliedThresholdPercent;
+            bool coasting = !brakeApplied && !throttleApplied;
 
-            double brakeSustained = ClampMath.To01(_brakeSustainRatio);
-            double accelSustained = ClampMath.To01(_accelSustainRatio);
+            bool accelChainActive = direction == LongitudinalMotionState.SpeedingUp && throttleApplied;
 
-            // ---- Sustained spatial distribution: partition-of-unity "hat" weights (continuous by
-            // construction) plus each non-terminal zone's configurable sustain floor (Max of two
-            // continuous functions is itself always continuous).
-            // Braking axis: Back Low (r=0) -> Bottom Rear (r=0.5) -> Bottom Front (r=1).
-            double brakeBackLowHat = ClampMath.To01(1.0 - 2.0 * brakeSustained);
-            double brakeBottomRearHat = 1.0 - Math.Abs(2.0 * brakeSustained - 1.0);
-            double brakeBottomFrontHat = ClampMath.To01(2.0 * brakeSustained - 1.0);
+            // The coasting gate's own latched delta-rate runs UNCONDITIONALLY, every frame, regardless
+            // of whether the chain ends up active - see _brakeCoastingPreviousRatio's own remarks for
+            // why (a one-off instantaneous delta must not decide activity for only a single frame).
+            double coastingDeltaRatePerSecond = AdvanceCoastingDeltaRate(
+                dtSeconds, rBrake, ref _brakeCoastingPreviousRatio, ref _brakeCoastingDeltaRate);
 
-            // Weight (position, 0-1) combined with the sustain floor FIRST, then scaled by energy
-            // (brakeSustained itself) - energy is what keeps a near-zero G reading published near-zero
-            // regardless of which zone's hat happens to be large there (e.g. Back Low's hat is ~1.0
-            // near r=0, but the actual felt magnitude at r=0.05 must still read as barely-there, not
-            // nearly full strength).
-            double brakeBackLowWeight = Math.Max(brakeBackLowHat, ClampMath.To01(BrakeBackLowSustainFraction) * brakeBottomFrontHat);
-            double brakeBottomRearWeight = Math.Max(brakeBottomRearHat, ClampMath.To01(BrakeBottomRearSustainFraction) * brakeBottomFrontHat);
+            bool decelChainActive;
+            if (brakeApplied)
+            {
+                decelChainActive = true;
+            }
+            else if (coasting)
+            {
+                // MUTATION (c) target (see class remarks): removing this dead-band check (always
+                // treating a coasting frame as "large delta") must fail the "no cue while rolling" test.
+                decelChainActive = coastingDeltaRatePerSecond > CoastingDeltaDeadBandPerSecond;
+            }
+            else
+            {
+                decelChainActive = false;
+            }
 
-            double brakeBackLowSustained = brakeSustained * brakeBackLowWeight;
-            double brakeBottomRearSustained = brakeSustained * brakeBottomRearWeight;
-            double brakeBottomFrontSustained = brakeSustained * brakeBottomFrontHat;
+            double brakeSustained = AdvanceSustainLevel(dtSeconds, rBrake, decelChainActive, ref _brakeSustainLevel);
+            double accelSustained = AdvanceSustainLevel(dtSeconds, rAccel, accelChainActive, ref _accelSustainLevel);
 
-            // Acceleration axis: Bottom Rear (r=0) -> Back Low (r=0.5) -> Back Top (r=1).
-            double accelBottomRearHat = ClampMath.To01(1.0 - 2.0 * accelSustained);
-            double accelBackTopHat = ClampMath.To01(2.0 * accelSustained - 1.0);
-            double accelBackLowHat = 1.0 - Math.Abs(2.0 * accelSustained - 1.0);
+            double brakeProgress = AdvanceStageProgress(
+                dtSeconds, rBrake, decelChainActive, ref _brakePreviousRatio, ref _brakeTravelRate, ref _brakeStageProgress);
+            double accelProgress = AdvanceStageProgress(
+                dtSeconds, rAccel, accelChainActive, ref _accelPreviousRatio, ref _accelTravelRate, ref _accelStageProgress);
 
-            double accelBottomRearWeight = Math.Max(accelBottomRearHat, ClampMath.To01(AccelBottomRearSustainFraction) * accelBackTopHat);
-            double accelBackLowWeight = Math.Max(accelBackLowHat, ClampMath.To01(AccelBackLowSustainFraction) * accelBackTopHat);
+            // ---- Braking chain: far=BackLow, mid=BottomRear, terminal=BottomFront.
+            StagedShape(brakeProgress, ClampMath.To01(BrakeBottomRearSustainFraction), ClampMath.To01(BrakeBackLowSustainFraction),
+                out double brakeFarShape, out double brakeMidShape, out double brakeTerminalShape);
+            double brakeBackLowSustained = brakeSustained * brakeFarShape;
+            double brakeBottomRearSustained = brakeSustained * brakeMidShape;
+            double brakeBottomFrontSustained = brakeSustained * brakeTerminalShape;
 
-            double accelBottomRearSustained = accelSustained * accelBottomRearWeight;
-            double accelBackLowSustained = accelSustained * accelBackLowWeight;
-            double accelBackTopSustained = accelSustained * accelBackTopHat;
+            // ---- Acceleration chain: far=BottomRear, mid=BackLow, terminal=BackTop.
+            StagedShape(accelProgress, ClampMath.To01(AccelBackLowSustainFraction), ClampMath.To01(AccelBottomRearSustainFraction),
+                out double accelFarShape, out double accelMidShape, out double accelTerminalShape);
+            double accelBottomRearSustained = accelSustained * accelFarShape;
+            double accelBackLowSustained = accelSustained * accelMidShape;
+            double accelBackTopSustained = accelSustained * accelTerminalShape;
 
-            // ---- Transient: applied UNIFORMLY (leading and trailing pads alike) via headroom scaling
-            // - see this method's own remarks and the S5 acceptance scenario.
-            double bottomFrontLevel = ApplyTransient(brakeBottomFrontSustained, brakeTransientDrive);
-            double bottomRearLevel = ApplyTransient(brakeBottomRearSustained, brakeTransientDrive)
-                                    + ApplyTransient(accelBottomRearSustained, accelTransientDrive);
-            double backLowLevel = ApplyTransient(brakeBackLowSustained, brakeTransientDrive)
-                                 + ApplyTransient(accelBackLowSustained, accelTransientDrive);
-            double backTopLevel = ApplyTransient(accelBackTopSustained, accelTransientDrive);
+            // Bottom Rear and Back Low are shared between the two chains; brake and accel energy can
+            // never both be non-zero for the same frame (mutually exclusive by direction), so a plain
+            // sum is safe.
+            double bottomFrontLevel = ClampMath.To01(brakeBottomFrontSustained);
+            double bottomRearLevel = ClampMath.To01(brakeBottomRearSustained + accelBottomRearSustained);
+            double backLowLevel = ClampMath.To01(brakeBackLowSustained + accelBackLowSustained);
+            double backTopLevel = ClampMath.To01(accelBackTopSustained);
 
-            // ---- Lateral left/right bias - independent of the longitudinal logic above.
+            // ---- Lateral left/right bias - unchanged, independent of the longitudinal logic above.
             double? lateralG = sample.New?.LateralG;
             double lateralBias = 0.0;
             if (lateralG.HasValue)
@@ -496,18 +455,148 @@ namespace QAdvanceFeedback.Core.GForce
         }
 
         /// <summary>
-        /// One pad PAIR's final left/right output: when <paramref name="shakeContribution"/> is 0 (the
-        /// checkbox is off, either scale is 0, or the wheel value itself is 0 this frame) this reduces
-        /// to EXACTLY <c>ClampMath.To0100(baseLevel0100 * leftFactor/rightFactor)</c> - the same
-        /// expression, in the same order, this method replaced - so output is byte-identical to before
-        /// this feature existed whenever it is inactive. Otherwise <see cref="GForceShake.Apply"/>
-        /// computes the shaken left/right centres (already continuous with, and starting from,
-        /// <paramref name="baseLevel0100"/> - see that method's own remarks) BEFORE the existing lateral
-        /// bias factor is applied, so the lateral bias and the shake compose exactly as they did
-        /// separately before, and the final <see cref="ClampMath.To0100"/> still guarantees the
-        /// published 0-100 bound even if the lateral factor (up to 1.5x) pushes an already-shaken value
-        /// back toward the edge.
+        /// The SUSTAIN level - a plain, dt-correct low-pass filter of the current ratio toward the
+        /// configured max, UNCHANGED mechanism from the previous pass. When the chain is not active this
+        /// frame (<paramref name="active"/> false), the target is 0 (not <paramref name="rawRatio"/>,
+        /// which the caller already zeroes in that case) so the level decays away rather than holding a
+        /// stale value forever.
         /// </summary>
+        private double AdvanceSustainLevel(double dtSeconds, double rawRatio, bool active, ref double sustainLevel)
+        {
+            double target = active ? rawRatio : 0.0;
+            sustainLevel = ExponentialSmooth(sustainLevel, target, dtSeconds, SustainTimeConstantSeconds);
+            return ClampMath.To01(sustainLevel);
+        }
+
+        /// <summary>
+        /// THE TRAVEL (docs\lock-and-animation-report.md): advances <paramref name="stageProgress"/>
+        /// (0-&gt;1, three keyframes at 0/0.5/1.0 - see <see cref="StagedShape"/>) at a rate driven by
+        /// the OBSERVED DELTA in <paramref name="rawRatio"/> since the previous frame, NOT its absolute
+        /// value - "stamping the throttle from rest is a large delta -&gt; a quick, strong sweep; a
+        /// gentle change -&gt; a small, slow sweep" (the owner's own wording, verbatim).
+        /// <para/>
+        /// MUTATION (a) in the report: replace <c>deltaRatio</c> below with <c>rawRatio</c> itself
+        /// (driving the sweep from the G MAGNITUDE instead of its delta) - the large-vs-small-delta test
+        /// must fail, since a SUSTAINED large magnitude (no further change) would then keep advancing
+        /// indefinitely instead of a genuinely small, slow delta producing a genuinely slower sweep.
+        /// <para/>
+        /// A single large one-frame delta LATCHES a high travel rate that then decays over
+        /// <see cref="TransientTimeConstantSeconds"/> (repurposed - see that property's own remarks),
+        /// so the sweep continues across several subsequent frames rather than a one-frame flicker - the
+        /// classical "peak-follow then decay" shape this plugin family already uses elsewhere (e.g.
+        /// <see cref="Normalized.NormalizedWheelLockSlipEngine"/>'s own release envelope). The rate is
+        /// capped at <see cref="MaxStageProgressPerSecond"/> so even an instantaneous, unbounded delta
+        /// cannot complete the sweep in a single frame (see that constant's own remarks for why a
+        /// felt-but-quick minimum duration matters).
+        /// <para/>
+        /// When the chain is not active this frame, progress (and the latched rate/previous-ratio
+        /// bookkeeping) resets to zero - the NEXT genuine onset for this chain always starts a fresh
+        /// three-stage sweep rather than resuming from a stale mid-sweep position.
+        /// </summary>
+        private double AdvanceStageProgress(
+            double dtSeconds, double rawRatio, bool active,
+            ref double previousRatio, ref double travelRate, ref double stageProgress)
+        {
+            // "Hold rather than guess" (this plugin family's own standing convention for a missing/
+            // invalid dt - e.g. the very first sample of a session): a frame with no usable dt cannot
+            // be timed, so EVERYTHING here (including whether to reset an inactive chain) is held
+            // exactly as-is, regardless of <paramref name="active"/> - only once dt is valid again does
+            // this method decide to reset or advance.
+            bool dtValid = ClampMath.IsFinite(dtSeconds) && dtSeconds > 0.0;
+            if (!dtValid) return ClampMath.To01(stageProgress);
+
+            if (!active)
+            {
+                stageProgress = 0.0;
+                travelRate = 0.0;
+                previousRatio = 0.0;
+                return 0.0;
+            }
+
+            // previousRatio always starts at 0.0 (see its own field remarks) - a cold start already at
+            // a sustained, nonzero ratio still gets a legitimate initial delta-from-zero kick.
+            double clampedRatio = ClampMath.To01(rawRatio);
+            double deltaRatio = Math.Abs(clampedRatio - previousRatio);
+            previousRatio = clampedRatio;
+
+            double observedRatePerSecond = deltaRatio / dtSeconds;
+            double decayedRate = ExponentialDecayToZero(travelRate, dtSeconds, TransientTimeConstantSeconds);
+            travelRate = Math.Max(observedRatePerSecond, decayedRate);
+
+            double advancePerSecond = Math.Min(Math.Max(travelRate * TransientGain, MinStageProgressPerSecond), MaxStageProgressPerSecond);
+            stageProgress = ClampMath.To01(stageProgress + advancePerSecond * dtSeconds);
+            return stageProgress;
+        }
+
+        /// <summary>
+        /// THE COASTING GATE'S OWN DELTA RATE (docs\lock-and-animation-report.md) - runs
+        /// UNCONDITIONALLY every frame (never gated by chain activity, unlike
+        /// <see cref="AdvanceStageProgress"/>'s own rate), so a sudden coasting-deceleration kick (a
+        /// forced downshift, engine braking) is remembered (latched, then decaying over
+        /// <see cref="TransientTimeConstantSeconds"/>) for a few frames after the initiating delta
+        /// itself, rather than being detected for only the single frame the value actually changed and
+        /// then immediately reading as "small" again the instant a held sample repeats it.
+        /// </summary>
+        private double AdvanceCoastingDeltaRate(double dtSeconds, double rawRatio, ref double previousRatio, ref double deltaRate)
+        {
+            if (!ClampMath.IsFinite(dtSeconds) || dtSeconds <= 0.0) return deltaRate;
+
+            double clampedRatio = ClampMath.To01(rawRatio);
+            double delta = Math.Abs(clampedRatio - previousRatio);
+            previousRatio = clampedRatio;
+
+            double observedRatePerSecond = delta / dtSeconds;
+            double decayedRate = ExponentialDecayToZero(deltaRate, dtSeconds, TransientTimeConstantSeconds);
+            deltaRate = Math.Max(observedRatePerSecond, decayedRate);
+            return deltaRate;
+        }
+
+        /// <summary>
+        /// THE THREE KEYFRAMES (owner's own specification, verbatim - see class remarks), piecewise
+        /// linear between them at <paramref name="progress"/>=0/0.5/1.0 (continuous by construction - no
+        /// discontinuous jump anywhere, satisfying the owner's own "a jump is felt as a click"
+        /// requirement).
+        /// <para/>
+        /// MUTATION (b) in the report: collapse this to a single stage (e.g. return the stage-2/sustain
+        /// shape unconditionally regardless of <paramref name="progress"/>) - an ordering test (checking
+        /// that <paramref name="farValue"/> leads at low progress, <paramref name="midValue"/> leads at
+        /// mid progress, <paramref name="terminalValue"/> leads at high progress) must fail.
+        /// <para/>
+        /// WHY THE OWNER'S WORKED EXAMPLE FALLS OUT AUTOMATICALLY: at progress=1.0 (fully staged, the
+        /// "sustain" keyframe), this returns exactly (LOW, MID, HIGH=1.0) for (far, mid, terminal) - the
+        /// caller then multiplies by the SAME <c>sustainLevel</c> for all three, so a falling
+        /// sustainLevel (G decreasing, same direction) scales all three proportionally, preserving
+        /// exactly the MID/LOW ratios relative to the terminal's own 1.0 - e.g. sustainLevel 0.9-&gt;0.6
+        /// with MID=0.5/LOW=0.25 gives terminal 90-&gt;60 (100% of the change), mid 45-&gt;30 (50%), far
+        /// 22.5-&gt;15 (25%), the owner's own example, verbatim.
+        /// </summary>
+        private static void StagedShape(double progress, double midFraction, double lowFraction, out double farValue, out double midValue, out double terminalValue)
+        {
+            const double high = 1.0;
+            double mid = midFraction;
+            double low = lowFraction;
+
+            // Keyframe 0 (stage 1): far=HIGH, mid=LOW, terminal=LOW.
+            // Keyframe 1 (stage 2): far=MID,  mid=HIGH, terminal=LOW.
+            // Keyframe 2 (stage 3 = sustain): far=LOW, mid=MID, terminal=HIGH.
+            double p = ClampMath.To01(progress);
+
+            if (p <= 0.5)
+            {
+                double t = p / 0.5;
+                farValue = high + (mid - high) * t;
+                midValue = low + (high - low) * t;
+                terminalValue = low; // unchanged across stage 0->1 (LOW at both keyframes)
+            }
+            else
+            {
+                double t = (p - 0.5) / 0.5;
+                farValue = mid + (low - mid) * t;
+                midValue = high + (mid - high) * t;
+                terminalValue = low + (high - low) * t;
+            }
+        }
+
         private void ShakePadPair(
             double baseLevel0100, double leftFactor, double rightFactor, double shakeContribution,
             out double left, out double right)
@@ -527,66 +616,8 @@ namespace QAdvanceFeedback.Core.GForce
             right = ClampMath.To0100(centreR * rightFactor);
         }
 
-        /// <summary>
-        /// One chain's washout step: advances the sustained low-pass filter toward <paramref name="rawRatio"/>,
-        /// derives the raw transient residual, smooths THAT through its own low-pass, and returns the
-        /// final signed transient drive (already scaled by <see cref="TransientGain"/>). Both filters
-        /// are simple, dt-correct exponential smoothing (see <see cref="ExponentialSmooth"/>) - the
-        /// standard, frame-rate-independent way to implement a low-pass filter when frames do not
-        /// arrive at a fixed interval.
-        /// <para/>
-        /// MUTATION (a) in the report: skip updating <paramref name="sustainRatio"/> from
-        /// <paramref name="rawRatio"/> via a real low-pass and instead set it directly to
-        /// <paramref name="rawRatio"/> (i.e. no lag at all) - the residual (and therefore every
-        /// transient) becomes permanently ~0, collapsing this method to a magnitude-only model. A
-        /// dedicated test catches this (S1/S3/S6 all depend on a non-trivial transient).
-        /// </summary>
-        private double AdvanceWashout(double dtSeconds, double rawRatio, ref double sustainRatio, ref double transient)
-        {
-            sustainRatio = ExponentialSmooth(sustainRatio, rawRatio, dtSeconds, SustainTimeConstantSeconds);
-
-            double rawTransient = rawRatio - sustainRatio;
-
-            // MUTATION (c) in the report: this is the washout itself - if the transient were instead
-            // simply set to rawTransient every frame (or, worse, latched at its own running maximum and
-            // never allowed to decay), holding steady input (S2) would never let it settle back toward
-            // 0. Smoothing it through its own low-pass IS what makes it decay ("wash out") once the raw
-            // residual itself shrinks.
-            transient = ExponentialSmooth(transient, rawTransient, dtSeconds, TransientTimeConstantSeconds);
-
-            return TransientGain * transient;
-        }
-
-        /// <summary>
-        /// Applies <paramref name="transientDrive"/> to one pad's already-computed sustained level,
-        /// HEADROOM-scaled so the result can never leave [0,1] and so a pad already at (or near) its
-        /// sustained ceiling/floor still has somewhere to go: for a positive (onset) drive, headroom is
-        /// how far the pad is BELOW 1 (room to rise); for a negative (easing-off) drive, headroom is
-        /// the pad's own current level (room to fall, never below 0). Applied identically to every pad
-        /// in a chain - deliberately NOT a leading-vs-trailing redistribution - see the S5 acceptance
-        /// scenario's own worked numbers (Back Low at 10% sustained has ~90% headroom to ALSO jump
-        /// during a big onset even while the leading pad is already fully saturated and has none left).
-        /// <para/>
-        /// MUTATION (b) in the report: apply <paramref name="transientDrive"/> directly, unscaled by
-        /// headroom - a dedicated test (S5: a large transient while already saturated) catches the
-        /// resulting out-of-range/incorrectly-sized contribution.
-        /// </summary>
-        private static double ApplyTransient(double sustainedLevel01, double transientDrive)
-        {
-            double headroom = transientDrive >= 0.0 ? (1.0 - sustainedLevel01) : sustainedLevel01;
-            return ClampMath.To01(sustainedLevel01 + transientDrive * headroom);
-        }
-
-        /// <summary>
-        /// Standard, frame-rate-independent exponential smoothing: after <paramref name="dtSeconds"/>
-        /// elapsed, the filter has closed <c>1 - exp(-dt/tau)</c> of the remaining gap toward
-        /// <paramref name="target"/> - equivalent to a continuous-time first-order low-pass filter with
-        /// time constant <paramref name="tauSeconds"/>, evaluated exactly (not a fixed-per-frame-alpha
-        /// approximation that would behave differently at 60 FPS vs 20 FPS). A non-positive or
-        /// non-finite dt (missing Dt, or a non-positive tau) holds <paramref name="previous"/> unchanged
-        /// rather than advancing incorrectly - the same "hold rather than guess" philosophy every other
-        /// per-frame filter in this plugin follows.
-        /// </summary>
+        /// <summary>Standard, frame-rate-independent exponential smoothing (unchanged from the previous
+        /// pass).</summary>
         private static double ExponentialSmooth(double previous, double target, double dtSeconds, double tauSeconds)
         {
             if (!ClampMath.IsFinite(dtSeconds) || dtSeconds <= 0.0 || !ClampMath.IsFinite(target)) return previous;
@@ -596,14 +627,19 @@ namespace QAdvanceFeedback.Core.GForce
             return previous + alpha * (target - previous);
         }
 
+        /// <summary>Standard dt-correct exponential decay of <paramref name="previous"/> toward zero -
+        /// mirrors <see cref="Normalized.NormalizedWheelLockSlipEngine"/>'s own identically-named
+        /// helper.</summary>
+        private static double ExponentialDecayToZero(double previous, double dtSeconds, double tauSeconds)
+        {
+            if (!ClampMath.IsFinite(dtSeconds) || dtSeconds <= 0.0) return previous;
+            double alpha = 1.0 - Math.Exp(-dtSeconds / tauSeconds);
+            return previous - alpha * previous;
+        }
+
         /// <summary>
         /// Degraded fallback for when <see cref="ITelemetryFrame.LongitudinalG"/> is unavailable but
-        /// <see cref="ITelemetryFrame.LateralG"/> is not - the owner's explicit decision: a left-to-right
-        /// transitioning vibration driven by lateral G alone is still useful feedback. There is no
-        /// fore/aft signal to build a level from, so this deliberately does NOT invent one; instead it
-        /// publishes the SAME, undiminished, lateral-driven intensity on all four zone-pairs - a
-        /// "neutral" fore/aft distribution favouring neither chain. Continuous and bounded exactly like
-        /// the main path.
+        /// <see cref="ITelemetryFrame.LateralG"/> is not - unchanged from the previous pass.
         /// </summary>
         private GForceOutput ComputeLateralOnlyFallback(double lateralG, double shakeContribution = 0.0)
         {
@@ -615,10 +651,6 @@ namespace QAdvanceFeedback.Core.GForce
             double leftFactor = 1.0 - LateralBiasGain * lateralBias;
             double rightFactor = 1.0 + LateralBiasGain * lateralBias;
 
-            // All four pairs share the SAME base level here (this fallback has no fore/aft
-            // distribution - see this method's own remarks), so they also share the same shaken
-            // left/right centres - the four pairs stay identical to each other exactly as before this
-            // feature existed.
             ShakePadPair(magnitudeRatio * 100.0, leftFactor, rightFactor, shakeContribution, out double left, out double right);
 
             return new GForceOutput(
@@ -628,8 +660,6 @@ namespace QAdvanceFeedback.Core.GForce
                 backTopLeft: left, backTopRight: right);
         }
 
-        /// <summary>The ONE place <see cref="LateralDirection"/> is applied - both <see cref="Compute"/>
-        /// and <see cref="ComputeLateralOnlyFallback"/> route their raw, signed bias through this.</summary>
         private double ApplyLateralDirection(double signedBias)
             => LateralDirection == LateralDirectionMode.Reversed ? -signedBias : signedBias;
     }

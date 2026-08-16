@@ -191,14 +191,42 @@ namespace QAdvanceFeedback.Settings
             RefreshSourceModeUi(isLock: true);
             RefreshSourceModeUi(isLock: false);
 
-            // ---- Pedal-pressed thresholds (owner-requested, both modes) ----
+            // ---- TRIGGER THRESHOLD - its own section, above Sources (owner-requested restructure,
+            // both modes, gates the WHOLE channel - see docs\lock-and-animation-report.md and the
+            // note text itself for the exact semantics, including the ShakeIt-source caveat). ----
+            LockTriggerThresholdGroup.Header = SlipTriggerThresholdGroup.Header = Strings.Get("Group.TriggerThreshold");
             LockLblBrakeThreshold.Text = Strings.Get("Sources.Threshold.LockBrake");
             LockLblBrakeThreshold.ToolTip = Strings.Get("Sources.Threshold.Lock.Note");
             LockBrakeThreshold.ToolTip = Strings.Get("Sources.Threshold.Lock.Note");
+            LockThresholdNote.Text = Strings.Get("Sources.Threshold.Lock.Note");
             SlipLblBrakeThreshold.Text = Strings.Get("Sources.Threshold.SlipBrake");
             SlipLblThrottleThreshold.Text = Strings.Get("Sources.Threshold.SlipThrottle");
             SlipLblBrakeThreshold.ToolTip = SlipLblThrottleThreshold.ToolTip = Strings.Get("Sources.Threshold.Slip.Note");
             SlipBrakeThreshold.ToolTip = SlipThrottleThreshold.ToolTip = Strings.Get("Sources.Threshold.Slip.Note");
+            SlipThresholdNote.Text = Strings.Get("Sources.Threshold.Slip.Note");
+
+            // LockSensibility (docs\lock-and-animation-report.md) - matches SimHub's own
+            // WheelsLockContainer.LockSensibility exactly; Lock-only (Slip has no equivalent).
+            LockLblSensibility.Text = Strings.Get("Sources.Threshold.LockSensibility");
+            LockSensibilityNote.Text = Strings.Get("Sources.Threshold.LockSensibility.Note");
+            LockLblSensibility.ToolTip = LockSensibility.ToolTip = Strings.Get("Sources.Threshold.LockSensibility.Note");
+
+            // ---- AGGREGATION (docs\aggregation-report.md) - how the four wheels combine into
+            // Front/Rear/Left/Right/All; the owner's own physically-motivated scheme. Only Wheel Slip
+            // has a floor-factor control (see SlipLblFloorFactor/SlipFloorFactorNote below). ----
+            LockAggregationGroup.Header = SlipAggregationGroup.Header = Strings.Get("Group.Aggregation");
+            LockAggregationNote.Text = Strings.Get("Aggregation.Lock.Note");
+            SlipAggregationNote.Text = Strings.Get("Aggregation.Slip.Note");
+            LockLblWMax.Text = SlipLblWMax.Text = Strings.Get("Aggregation.WMax.Label");
+            LockLblWMin.Text = SlipLblWMin.Text = Strings.Get("Aggregation.WMin.Label");
+            LockLblWFront.Text = SlipLblWFront.Text = Strings.Get("Aggregation.WFront.Label");
+            LockLblWRear.Text = SlipLblWRear.Text = Strings.Get("Aggregation.WRear.Label");
+            LockAggregationAxleHelp.Text = SlipAggregationAxleHelp.Text = Strings.Get("Aggregation.AxleHelp");
+            LockAggregationSideHelp.Text = Strings.Get("Aggregation.SideHelp.Lock");
+            SlipAggregationSideHelp.Text = Strings.Get("Aggregation.SideHelp.Slip");
+            SlipLblFloorFactor.Text = Strings.Get("Aggregation.FloorFactor.Label");
+            SlipFloorFactorNote.Text = Strings.Get("Aggregation.FloorFactor.Note");
+            SlipLblFloorFactor.ToolTip = SlipFloorFactor.ToolTip = Strings.Get("Aggregation.FloorFactor.Note");
 
             LockCurveGroup.Header = SlipCurveGroup.Header = Strings.Get("Group.Curve");
             LockLblPreset.Text = SlipLblPreset.Text = Strings.Get("Curve.Preset.Label");
@@ -729,6 +757,12 @@ namespace QAdvanceFeedback.Settings
             SetSourceModeCombo(isLock: true, s.Lock.SourceMode);
             RefreshSourceModeUi(isLock: true);
             LockBrakeThreshold.Value = s.Lock.BrakeThresholdPercent;
+            LockSensibility.Value = s.Lock.LockSensibility;
+
+            LockWMax.Value = s.Lock.AggregationWMax;
+            LockWMin.Value = s.Lock.AggregationWMin;
+            LockWFront.Value = s.Lock.AggregationWFront;
+            LockWRear.Value = s.Lock.AggregationWRear;
 
             _workingLockProjector.Preset = s.Lock.Projector.Preset;
             _workingLockProjector.StartInput = s.Lock.Projector.StartInput;
@@ -748,6 +782,12 @@ namespace QAdvanceFeedback.Settings
             RefreshSourceModeUi(isLock: false);
             SlipBrakeThreshold.Value = s.Slip.BrakeThresholdPercent;
             SlipThrottleThreshold.Value = s.Slip.ThrottleThresholdPercent;
+
+            SlipWMax.Value = s.Slip.AggregationWMax;
+            SlipWMin.Value = s.Slip.AggregationWMin;
+            SlipWFront.Value = s.Slip.AggregationWFront;
+            SlipWRear.Value = s.Slip.AggregationWRear;
+            SlipFloorFactor.Value = s.Slip.SlipFloorFactor;
 
             _workingSlipProjector.Preset = s.Slip.Projector.Preset;
             _workingSlipProjector.StartInput = s.Slip.Projector.StartInput;
@@ -818,12 +858,22 @@ namespace QAdvanceFeedback.Settings
             SaveChannel(s.Lock, _lockRows, LockPulseEnabled, LockPulseGapMs, LockPulseMinValue);
             s.Lock.SourceMode = ParseEnum(GetSelectedTag(LockSourceModeCombo, s.Lock.SourceMode.ToString()), s.Lock.SourceMode);
             s.Lock.BrakeThresholdPercent = LockBrakeThreshold.Value ?? s.Lock.BrakeThresholdPercent;
+            s.Lock.LockSensibility = LockSensibility.Value ?? s.Lock.LockSensibility;
+            s.Lock.AggregationWMax = LockWMax.Value ?? s.Lock.AggregationWMax;
+            s.Lock.AggregationWMin = LockWMin.Value ?? s.Lock.AggregationWMin;
+            s.Lock.AggregationWFront = LockWFront.Value ?? s.Lock.AggregationWFront;
+            s.Lock.AggregationWRear = LockWRear.Value ?? s.Lock.AggregationWRear;
             CopyProjector(_workingLockProjector, s.Lock.Projector);
 
             SaveChannel(s.Slip, _slipRows, SlipPulseEnabled, SlipPulseGapMs, SlipPulseMinValue);
             s.Slip.SourceMode = ParseEnum(GetSelectedTag(SlipSourceModeCombo, s.Slip.SourceMode.ToString()), s.Slip.SourceMode);
             s.Slip.BrakeThresholdPercent = SlipBrakeThreshold.Value ?? s.Slip.BrakeThresholdPercent;
             s.Slip.ThrottleThresholdPercent = SlipThrottleThreshold.Value ?? s.Slip.ThrottleThresholdPercent;
+            s.Slip.AggregationWMax = SlipWMax.Value ?? s.Slip.AggregationWMax;
+            s.Slip.AggregationWMin = SlipWMin.Value ?? s.Slip.AggregationWMin;
+            s.Slip.AggregationWFront = SlipWFront.Value ?? s.Slip.AggregationWFront;
+            s.Slip.AggregationWRear = SlipWRear.Value ?? s.Slip.AggregationWRear;
+            s.Slip.SlipFloorFactor = SlipFloorFactor.Value ?? s.Slip.SlipFloorFactor;
             CopyProjector(_workingSlipProjector, s.Slip.Projector);
 
             s.GForce.AccelMaxMode = ParseEnum(GetSelectedTag(GForceAccelModeCombo, s.GForce.AccelMaxMode.ToString()), s.GForce.AccelMaxMode);

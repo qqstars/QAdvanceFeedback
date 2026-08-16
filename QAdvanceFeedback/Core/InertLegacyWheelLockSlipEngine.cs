@@ -16,7 +16,9 @@ namespace QAdvanceFeedback.Core
     /// </summary>
     public sealed class InertLegacyWheelLockSlipEngine : ILegacyWheelLockSlipEngine
     {
-        public LegacyWheelLockSlipResult Compute(ITelemetrySample sample, LegacyThresholds? thresholds = null)
+        public LegacyWheelLockSlipResult Compute(
+            ITelemetrySample sample, LegacyThresholds? thresholds = null,
+            AggregationWeights? lockAggregation = null, AggregationWeights? slipAggregation = null)
         {
             return new LegacyWheelLockSlipResult(
                 Corners.Zero, 0.0, 0.0, 0.0, 0.0, 0.0,

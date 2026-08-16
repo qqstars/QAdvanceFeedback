@@ -51,13 +51,32 @@ namespace QAdvanceFeedback.Core
         /// (matches SimHub's own hard-coded constant).</summary>
         public double SlipThrottleThresholdPercent;
 
+        /// <summary>
+        /// Wheel Lock's own sensitivity, 0-100, matching SimHub's own <c>WheelsLockContainer.LockSensibility</c>
+        /// exactly (name, range, default) - consumed by the withheld Layer 3 Lock algorithm (see
+        /// <c>Private\README.md</c>) and docs\lock-and-animation-report.md for why Lock's own algorithm
+        /// was changed to need it. Higher values make Lock more sensitive (reads a nonzero value sooner);
+        /// default 50 matches SimHub's own shipped default AND the exact value the owner's own driver
+        /// reported using, unchanged.
+        /// <para/>
+        /// NOTE: the default below (50.0) is a plain literal, NOT a reference to the withheld Layer 3
+        /// algorithm's own constant - this struct is public and always compiled (clean-clone included),
+        /// so it must not depend on a type that only exists when <c>Private\QAdvanceFeedback\</c> is
+        /// present (see <see cref="Defaults"/>'s own remarks).
+        /// </summary>
+        public double LockSensibility;
+
         /// <summary>The shipped defaults - equal to SimHub's own hard-coded gates for Lock's brake and
-        /// Slip's throttle, plus the new Slip brake threshold defaulted to 100 (effectively off).</summary>
+        /// Slip's throttle, plus the new Slip brake threshold defaulted to 100 (effectively off), plus
+        /// Lock's sensitivity at SimHub's own default (50, duplicated as a literal here rather than
+        /// referencing the withheld algorithm's own constant - see <see cref="LockSensibility"/>'s
+        /// remarks on why).</summary>
         public static LegacyThresholds Defaults => new LegacyThresholds
         {
             LockBrakeThresholdPercent = 20.0,
             SlipBrakeThresholdPercent = 100.0,
-            SlipThrottleThresholdPercent = 40.0
+            SlipThrottleThresholdPercent = 40.0,
+            LockSensibility = 50.0
         };
     }
 }

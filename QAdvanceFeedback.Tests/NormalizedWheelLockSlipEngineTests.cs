@@ -37,6 +37,7 @@ namespace QAdvanceFeedback.Tests
             return new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromMilliseconds(16));
         }
 
+
         // ------------------------------------------------------------------------------------
         // The acceptance test the brief calls for by name: an arcade-magnitude trace (4g routine)
         // and a sim-magnitude trace (1.2g routine) must BOTH span a useful range - light braking
@@ -100,7 +101,13 @@ namespace QAdvanceFeedback.Tests
             // No LongitudinalG, no speed at all, no Dt - the "nothing but Raw" floor. Direction is
             // therefore also Unknown, but the Unavailable-motion floor bypasses the direction gate
             // entirely (see NormalizedWheelLockSlipEngine.ComputeChannel) - Raw must still pass through.
-            var sample = new TelemetrySample(TelemetryFrame.Empty, TelemetryFrame.Empty, DateTime.UtcNow, null);
+            // TRIGGER THRESHOLD (docs\lock-and-animation-report.md, owner's own clarification): the new
+            // gate is checked BEFORE this fallback and has no carve-out, so the brake pedal must clear
+            // the (default) Lock threshold for this scenario to still demonstrate the fallback itself
+            // rather than the trigger gate - everything else about the frame (no G, no speed, no dt)
+            // is unchanged.
+            var frame = new TelemetryFrame(brakePercent: 80.0);
+            var sample = new TelemetrySample(frame, frame, DateTime.UtcNow, null);
 
             NormalizedWheelLockSlipResult result = engine.Compute(sample, raw, raw);
 
@@ -108,6 +115,134 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(34.0, result.LockWheels.FrontRight, 6);
             Assert.Equal(56.0, result.LockWheels.RearLeft, 6);
             Assert.Equal(78.0, result.LockWheels.RearRight, 6);
+        }
+
+        // ------------------------------------------------------------------------------------
+        // TRIGGER THRESHOLD (owner-requested restructure, promoted out of "Sources" into its own
+        // section - docs\lock-and-animation-report.md). Semantics: below the channel's own pedal
+        // threshold, BOTH Raw (Layer 3 - see LegacyWheelLockSlipEngineTests, Private\) AND Normalized
+        // (here) read exactly 0 - applied at the SOURCE BOUNDARY (this engine's own rawLockWheels/
+        // rawSlipWheels parameters), unconditionally, regardless of what those values actually are or
+        // where they came from (our own Raw, a ShakeIt export, or a Manual property/expression) - the
+        // owner's own explicit correction that a source-mode-dependent gate would be wrong. Simulated
+        // here by varying ONLY the raw Corners passed in (standing in for "whatever the configured
+        // source reports") while holding pedal state fixed - proving the gate does not care what the
+        // source's own numbers are.
+        // ------------------------------------------------------------------------------------
+
+        [Fact]
+        public void Lock_channel_reads_zero_below_the_trigger_threshold_even_though_direction_is_slowing()
+        {
+            var engine = new NormalizedWheelLockSlipEngine();
+            var raw = Corners.Uniform(90.0); // Raw itself claims a strong reading...
+
+            // ...but the brake pedal has not reached the (default 20%) Lock threshold, even though the
+            // car is genuinely, measurably slowing.
+            var sample = BrakingSample(3.0, brakePercent: 15.0);
+
+            NormalizedWheelLockSlipResult result = engine.Compute(sample, raw, Corners.Zero);
+
+            Assert.Equal(0.0, result.LockAll, 6);
+            Assert.Equal(Corners.Zero, result.LockWheels);
+        }
+
+        [Fact]
+        public void Lock_channel_is_live_exactly_at_the_trigger_threshold()
+        {
+            var engine = new NormalizedWheelLockSlipEngine();
+            var raw = Corners.Uniform(50.0);
+
+            var sample = BrakingSample(2.0, brakePercent: LegacyThresholds.Defaults.LockBrakeThresholdPercent);
+
+            NormalizedWheelLockSlipResult result = engine.Compute(sample, raw, Corners.Zero);
+
+            Assert.True(result.LockAll > 0.0, "at/above the threshold, normal behaviour must apply");
+        }
+
+        [Fact]
+        public void Slip_channel_reads_zero_when_neither_the_brake_nor_the_throttle_threshold_is_met()
+        {
+            var engine = new NormalizedWheelLockSlipEngine();
+            var raw = Corners.Uniform(90.0);
+
+            // ThrottleSample's own throttle default (80%) is well above the default 40% threshold -
+            // override it below threshold; brake is not set at all (null - also not satisfied, see
+            // BrakingSample/ThrottleSample's own remarks on brake defaulting to null there).
+            var sample = ThrottleSample(3.0, throttlePercent: 10.0);
+
+            NormalizedWheelLockSlipResult result = engine.Compute(sample, Corners.Zero, raw);
+
+            Assert.Equal(0.0, result.SlipAll, 6);
+        }
+
+        [Fact]
+        public void Slip_channel_gate_is_source_agnostic_the_configured_source_reporting_a_nonzero_value_does_not_bypass_it()
+        {
+            // Stands in for "the configured source is ShakeIt's own export, or a Manual property,
+            // reporting a genuine nonzero value" (docs\lock-and-animation-report.md, owner's own
+            // clarification) - the gate is checked purely from pedal state, never from whatever the
+            // raw source values happen to be, so an arbitrarily large raw reading must not slip through
+            // below threshold.
+            var engine = new NormalizedWheelLockSlipEngine();
+            var raw = Corners.Uniform(100.0);
+
+            var sample = ThrottleSample(4.0, throttlePercent: 5.0);
+
+            NormalizedWheelLockSlipResult result = engine.Compute(sample, Corners.Zero, raw);
+
+            Assert.Equal(0.0, result.SlipAll, 6);
+            Assert.Equal(Corners.Zero, result.SlipWheels);
+        }
+
+        [Fact]
+        public void Slip_channel_still_honors_brake_priority_over_throttle_at_the_new_gate()
+        {
+            // Custom thresholds: Slip's own brake threshold lowered to 30 (still checked FIRST, per the
+            // established priority ordering - see LegacyThresholds' own remarks, unchanged by this
+            // task) - a brake reading that clears IT must trigger Slip even with throttle held below
+            // its own threshold.
+            var engine = new NormalizedWheelLockSlipEngine();
+            var raw = Corners.Uniform(70.0);
+            var thresholds = new LegacyThresholds
+            {
+                LockBrakeThresholdPercent = 20.0,
+                SlipBrakeThresholdPercent = 30.0,
+                SlipThrottleThresholdPercent = 40.0
+            };
+
+            var oldFrame = new TelemetryFrame(groundSpeedKmh: 100.0);
+            var newFrame = new TelemetryFrame(
+                groundSpeedKmh: 101.0, longitudinalG: 2.0, brakePercent: 35.0, throttlePercent: 0.0);
+            var sample = new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromMilliseconds(16));
+
+            NormalizedWheelLockSlipResult result = engine.Compute(sample, Corners.Zero, raw, thresholds: thresholds);
+
+            Assert.True(result.SlipAll > 0.0, "brake clearing Slip's own (custom, lowered) threshold must trigger the channel");
+        }
+
+        [Fact]
+        public void A_single_configured_threshold_change_drives_both_the_live_gate_and_is_not_a_second_independent_number()
+        {
+            // The owner's own explicit worry: "there must be ONE number the driver sets, not two that
+            // can disagree." Lowering LockBrakeThresholdPercent in the SAME LegacyThresholds passed to
+            // Compute must move the gate for both a below-old-threshold and an above-old-threshold
+            // brake reading, using nothing but that one struct - there is no separate, independently
+            // configurable "source gate" threshold anywhere in this engine's signature.
+            var engine = new NormalizedWheelLockSlipEngine();
+            var raw = Corners.Uniform(60.0);
+            var loweredThreshold = new LegacyThresholds
+            {
+                LockBrakeThresholdPercent = 5.0,
+                SlipBrakeThresholdPercent = 100.0,
+                SlipThrottleThresholdPercent = 40.0
+            };
+
+            // 8% brake: below the DEFAULT (20) but above the LOWERED (5) threshold.
+            var withDefault = engine.Compute(BrakingSample(2.0, brakePercent: 8.0), raw, Corners.Zero);
+            var withLowered = engine.Compute(BrakingSample(2.0, brakePercent: 8.0), raw, Corners.Zero, thresholds: loweredThreshold);
+
+            Assert.Equal(0.0, withDefault.LockAll, 6);
+            Assert.True(withLowered.LockAll > 0.0, "the SAME threshold value passed to Compute must be what moves the gate");
         }
 
         // ------------------------------------------------------------------------------------
@@ -151,37 +286,47 @@ namespace QAdvanceFeedback.Tests
         }
 
         [Fact]
-        public void Lock_channel_is_live_while_slowing_even_with_the_brake_pedal_fully_up()
+        public void Lock_channel_is_live_while_slowing_with_only_a_moderate_brake_above_threshold()
         {
+            // ADAPTED (docs\lock-and-animation-report.md, TRIGGER THRESHOLD): this test used to hold
+            // BrakePercent at 0.0 (fully up) to prove direction alone gates the channel - the owner's
+            // new, explicit trigger-threshold requirement means that premise is no longer true (brake
+            // BELOW the threshold now correctly zeroes the channel - see
+            // Lock_channel_reads_zero_below_the_trigger_threshold_even_though_direction_is_slowing,
+            // which replaces the OLD point this test made). What remains true, and is what this test
+            // now demonstrates: a brake reading that clears the threshold WITHOUT being fully committed
+            // (25%, not 100%) is enough - engagement does not require full pedal travel, only crossing
+            // the configured threshold, with direction (not pedal state) still deciding attribution.
             var engine = new NormalizedWheelLockSlipEngine();
             var raw = Corners.Uniform(50.0);
 
-            // Brake pedal reads exactly 0 (fully up) - under the OLD pedal-gated behaviour this would
-            // have zeroed the channel. Ground speed says Slowing, so the new, direction-only gate
-            // must still produce a live reading.
-            var sample = BrakingSample(2.0, brakePercent: 0.0);
+            var sample = BrakingSample(2.0, brakePercent: 25.0);
 
             NormalizedWheelLockSlipResult result = engine.Compute(sample, raw, Corners.Zero);
 
-            Assert.True(result.LockAll > 0.0, "measured direction (Slowing) must drive the channel regardless of pedal state");
+            Assert.True(result.LockAll > 0.0, "measured direction (Slowing) plus a brake reading above threshold must drive the channel");
         }
 
         [Fact]
-        public void Missing_pedal_telemetry_does_not_prevent_a_live_reading_when_direction_is_known()
+        public void Missing_throttle_telemetry_does_not_prevent_a_live_lock_reading_when_direction_is_known()
         {
+            // ADAPTED (docs\lock-and-animation-report.md, TRIGGER THRESHOLD): this test used to leave
+            // BrakePercent itself null to prove pedal state is irrelevant to ENGAGEMENT - that premise
+            // no longer holds for Lock's OWN pedal (a missing brake reading now fails the trigger
+            // threshold closed, per ITelemetryFrame's own "missing must degrade as not satisfied"
+            // convention - see NormalizedWheelLockSlipEngine.Compute's own remarks). Refocused on what
+            // is still true: Lock never reads ThrottlePercent at all, so a genuinely missing throttle
+            // reading cannot affect it - brake is supplied (above threshold) here instead.
             var engine = new NormalizedWheelLockSlipEngine();
             var raw = Corners.Uniform(50.0);
 
-            // BrakePercent genuinely absent (null), not zero - the game does not report it at all.
-            // Pedal state is irrelevant to this engine now, so this must behave identically to any
-            // other Slowing frame.
             var oldFrame = new TelemetryFrame(groundSpeedKmh: 101.0);
-            var newFrame = new TelemetryFrame(groundSpeedKmh: 100.0, longitudinalG: -2.0);
+            var newFrame = new TelemetryFrame(groundSpeedKmh: 100.0, longitudinalG: -2.0, brakePercent: 80.0);
             var sample = new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromMilliseconds(16));
 
             NormalizedWheelLockSlipResult result = engine.Compute(sample, raw, Corners.Zero);
 
-            Assert.True(result.LockAll > 0.0, "an unknown (null) pedal reading must not gate the channel to zero");
+            Assert.True(result.LockAll > 0.0, "Lock never reads ThrottlePercent, so a missing throttle reading must not affect it");
         }
 
         [Fact]
@@ -217,8 +362,11 @@ namespace QAdvanceFeedback.Tests
 
             // Ground speed falling (genuinely slowing) but LongitudinalG reported POSITIVE - exactly
             // the inverted convention the brief cites (95.8% of qualifying Forza Horizon 6 frames).
+            // brakePercent supplied above the (default) Lock trigger threshold - this test is about the
+            // sign-convention fix, not the trigger threshold, so the brake pedal must clear it for the
+            // channel to be live at all (see docs\lock-and-animation-report.md).
             var oldFrame = new TelemetryFrame(groundSpeedKmh: 150.0);
-            var newFrame = new TelemetryFrame(groundSpeedKmh: 148.0, longitudinalG: +3.0, throttlePercent: 60.0);
+            var newFrame = new TelemetryFrame(groundSpeedKmh: 148.0, longitudinalG: +3.0, throttlePercent: 60.0, brakePercent: 80.0);
             var sample = new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromMilliseconds(16));
 
             NormalizedWheelLockSlipResult result = engine.Compute(sample, raw, raw);
@@ -392,18 +540,49 @@ namespace QAdvanceFeedback.Tests
                 $"a lower magnitude while Raw stays active must be reflected on the very next frame, not lagged, got {immediate}");
         }
 
+        // NOTE: an earlier revision of this file had a "low-speed lock compensation" test block here,
+        // at THIS layer (Normalized). SUPERSEDED (docs\lock-and-animation-report.md): the owner
+        // confirmed switching the Wheel Lock SOURCE to SimHub's own ShakeIt export resolves the
+        // driver's complaint entirely - proving this layer was never the defect. The real fix (and its
+        // tests) now live in Private\QAdvanceFeedback.Tests\ against SimpleBrakingLockAlgorithm/
+        // LegacyWheelLockSlipEngine, where the actual Layer 3 branch mismatch was found.
+
         [Fact]
-        public void Aggregates_are_produced_by_the_same_p_norm_aggregator_layer_3_uses()
+        public void Aggregates_are_produced_by_the_same_owner_configured_scheme_layer_3_uses()
         {
+            // Layer 4 aggregates its OWN per-wheel output with the SAME formula/weights Layer 3 uses -
+            // "inheriting" the scheme, not literally reusing Layer 3's own aggregate numbers (see
+            // NormalizedWheelLockSlipEngine.Compute's own remarks). Defaults (no aggregation params
+            // passed) must resolve to AggregationWeights.LockDefaults.
             var engine = new NormalizedWheelLockSlipEngine();
             var raw = new Corners(80.0, 20.0, 20.0, 20.0);
-            var expectedAggregator = new Aggregator(GroupMode.PNorm, 2.0, Corners.Uniform(1.0));
 
             for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(2.0), Corners.Uniform(50.0), Corners.Zero);
             NormalizedWheelLockSlipResult result = engine.Compute(BrakingSample(2.0), raw, Corners.Zero);
 
-            double expectedAll = expectedAggregator.Quad(result.LockWheels);
-            Assert.Equal(expectedAll, result.LockAll, 6);
+            WheelAggregate expected = Aggregator.Compute(result.LockWheels, AggregationWeights.LockDefaults);
+            Assert.Equal(expected.All, result.LockAll, 6);
+        }
+
+        [Fact]
+        public void Aggregation_weights_are_reread_every_call_with_no_engine_rebuild_needed()
+        {
+            // The owner's explicit "tune without a rebuild" requirement - passing DIFFERENT weights on
+            // two calls to the SAME already-constructed engine instance must change the result.
+            var engine = new NormalizedWheelLockSlipEngine();
+            var raw = new Corners(90.0, 10.0, 10.0, 10.0);
+
+            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(2.0), Corners.Uniform(50.0), Corners.Zero);
+
+            var extremeFront = new AggregationWeights(1.0, 0.0, 1.0, 0.0, 0.0);
+            var extremeRear = new AggregationWeights(1.0, 0.0, 0.0, 1.0, 0.0);
+
+            NormalizedWheelLockSlipResult withFrontBias = engine.Compute(
+                BrakingSample(2.0), raw, Corners.Zero, thresholds: null, lockAggregation: extremeFront);
+            NormalizedWheelLockSlipResult withRearBias = engine.Compute(
+                BrakingSample(2.0), raw, Corners.Zero, thresholds: null, lockAggregation: extremeRear);
+
+            Assert.NotEqual(withFrontBias.LockAll, withRearBias.LockAll);
         }
 
         [Fact]
@@ -514,25 +693,34 @@ namespace QAdvanceFeedback.Tests
         }
 
         [Fact]
-        public void A_low_brake_pedal_frame_is_excluded_from_lock_learning_even_while_measurably_slowing()
+        public void A_low_brake_pedal_frame_is_now_subsumed_by_the_trigger_threshold_excluded_from_learning_and_zero_live()
         {
+            // ADAPTED (docs\lock-and-animation-report.md, TRIGGER THRESHOLD): this test used to prove
+            // "excluded from learning, but the LIVE output stays on" at brake=2.0 - with
+            // TelemetryLearningGate.LearnMinBrakePercent (10) now strictly BELOW
+            // LegacyThresholds.Defaults.LockBrakeThresholdPercent (20), any brake reading too low for
+            // the learning-minimum is now ALSO below the (larger) trigger threshold, so the live output
+            // is 0 too - there is no longer a brake level that excludes from learning while leaving the
+            // live channel on (a genuinely separate scenario for that combination, e.g. pit/replay/
+            // teleport, is covered by the dedicated tests above/below - this one is now specifically
+            // about the SUBSUMPTION itself).
             var engine = new NormalizedWheelLockSlipEngine();
             var raw = Corners.Uniform(60.0);
 
-            // Slowing (engine braking/drag) but the brake pedal itself is barely touched - real
-            // physics (see docs\field-fixes-report.md defect D), but not representative evidence of
-            // this car's own braking peak.
             var sample = BrakingSample(3.0, brakePercent: 2.0);
 
             NormalizedWheelLockSlipResult result = engine.Compute(sample, raw, Corners.Zero);
 
             Assert.Equal(0, engine.LockLearners.Samples(string.Empty, string.Empty));
-            Assert.True(result.LockAll > 0.0);
+            Assert.Equal(0.0, result.LockAll, 6);
         }
 
         [Fact]
-        public void A_low_throttle_pedal_frame_is_excluded_from_slip_learning_even_while_measurably_speeding_up()
+        public void A_low_throttle_pedal_frame_is_now_subsumed_by_the_trigger_threshold_excluded_from_learning_and_zero_live()
         {
+            // See A_low_brake_pedal_frame_is_now_subsumed_by_the_trigger_threshold... immediately above
+            // - the same subsumption, mirrored for Slip's throttle (LearnMinThrottlePercent=10 <
+            // SlipThrottleThresholdPercent default=40).
             var engine = new NormalizedWheelLockSlipEngine();
             var raw = Corners.Uniform(60.0);
 
@@ -541,7 +729,7 @@ namespace QAdvanceFeedback.Tests
             NormalizedWheelLockSlipResult result = engine.Compute(sample, Corners.Zero, raw);
 
             Assert.Equal(0, engine.SlipLearners.Samples(string.Empty, string.Empty));
-            Assert.True(result.SlipAll > 0.0);
+            Assert.Equal(0.0, result.SlipAll, 6);
         }
 
         [Fact]

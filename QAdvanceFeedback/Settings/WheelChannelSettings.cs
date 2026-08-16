@@ -83,9 +83,119 @@ namespace QAdvanceFeedback.Settings
             set => _throttleThresholdPercent = ClampMath.To0100(value);
         }
 
+        private double _lockSensibility = 50.0;
+
+        /// <summary>
+        /// Wheel Lock's own sensitivity (0-100), ONLY meaningful for the Lock channel (Slip never reads
+        /// it) - matches SimHub's own <c>WheelsLockContainer.LockSensibility</c> exactly (name, range,
+        /// default 50) since it now drives the withheld Layer 3 Lock algorithm directly (see
+        /// <c>Core.LegacyThresholds.LockSensibility</c> and docs\lock-and-animation-report.md for why
+        /// Lock's own algorithm needed this). Higher values respond sooner (more sensitive) but - a
+        /// faithful, if counter-intuitive, characteristic of SimHub's own formula - also cap the
+        /// achievable ceiling further below full scale; only 50 (the default) reaches a genuine 100.
+        /// </summary>
+        public double LockSensibility
+        {
+            get => _lockSensibility;
+            set => _lockSensibility = ClampMath.To0100(value);
+        }
+
         public ProjectorSettings Projector { get; set; } = new ProjectorSettings();
 
         public PulseSettings Pulse { get; set; } = new PulseSettings();
+
+        // ---- Aggregation (docs\aggregation-report.md) - the owner's physically-motivated, per-channel
+        // Max/Min axle blend + Front/Rear weight-transfer scheme, REPLACING the previous generic
+        // p-norm/GroupMode aggregation (retired - see Core.Aggregator's own remarks). Every one of the
+        // five numbers below is independently driver-configurable, per the owner's explicit
+        // instruction ("drivetrain layout varies by car... they want to tune without a rebuild") -
+        // exposed in its own labelled section on both the Wheel Lock and Wheel Slip tabs (the slip
+        // floor factor spinner only appears on the Slip tab - see SettingsControl's own remarks).
+        //
+        // BOUNDS: every setter below clamps to >= 0 only (SlipFloorFactor additionally caps at 1) via
+        // Core.AggregationWeights' own constructor - see that struct's remarks on why WMax/WMin and
+        // WFront/WRear are NOT forced to sum to 1: a driver who types weights that do not sum to 1 is
+        // never silently rescaled to "fix" what they typed. The bare field initialisers below are the
+        // NEUTRAL 0.5/0.5/0.5/0.5/0.0 fallback (Core.AggregationWeights.Neutral), NOT either channel's
+        // real shipped numbers - a single shared class cannot give two different field-initialiser
+        // defaults for the same property, so CreateLockDefaults/CreateSlipDefaults (like
+        // BrakeThresholdPercent/ThrottleThresholdPercent before them) are what actually stamp the
+        // correct per-channel numbers for a FRESH install.
+        //
+        // A settings file saved BEFORE this feature existed (missing these five JSON keys entirely)
+        // does NOT read this neutral fallback for either channel, despite that: QAdvanceFeedbackSettings.
+        // Lock/Slip are themselves field-initialised to CreateLockDefaults()/CreateSlipDefaults() (see
+        // that class), and Newtonsoft's default object-population behaviour (ObjectCreationHandling.
+        // Auto) REUSES an existing non-null property value rather than replacing it with a bare
+        // WheelChannelSettings() - so deserialising a Lock/Slip object with these keys absent only
+        // overwrites the JSON-present properties, leaving every absent one (these five included) at
+        // whatever CreateLockDefaults()/CreateSlipDefaults() already set. The neutral fallback below is
+        // therefore only ever actually observed from a genuinely BARE `new WheelChannelSettings()` -
+        // e.g. a driver's own code, or the settings UI's per-source-mode scratch objects - never from
+        // ConfigStore.Load (verified in ConfigStoreTests).
+        private double _aggregationWMax = AggregationWeights.Neutral.WMax;
+        private double _aggregationWMin = AggregationWeights.Neutral.WMin;
+        private double _aggregationWFront = AggregationWeights.Neutral.WFront;
+        private double _aggregationWRear = AggregationWeights.Neutral.WRear;
+        private double _slipFloorFactor = AggregationWeights.Neutral.SlipFloorFactor;
+
+        /// <summary>Axle blend (Front/Rear): weight given to the STRONGER of the two wheels on that
+        /// axle. Clamped to &gt;= 0 (see this class's own remarks on why it is not forced to sum to 1
+        /// with <see cref="AggregationWMin"/>).</summary>
+        public double AggregationWMax
+        {
+            get => _aggregationWMax;
+            set => _aggregationWMax = ClampNonNegative(value);
+        }
+
+        /// <summary>Axle blend (Front/Rear): weight given to the WEAKER of the two wheels on that axle.
+        /// Clamped to &gt;= 0.</summary>
+        public double AggregationWMin
+        {
+            get => _aggregationWMin;
+            set => _aggregationWMin = ClampNonNegative(value);
+        }
+
+        /// <summary>Side (Left/Right) and car (All) blend: weight given to the FRONT-position value -
+        /// under braking the front wheels carry the load, so a high value here makes them dominate the
+        /// combined reading. Clamped to &gt;= 0.</summary>
+        public double AggregationWFront
+        {
+            get => _aggregationWFront;
+            set => _aggregationWFront = ClampNonNegative(value);
+        }
+
+        /// <summary>Side (Left/Right) and car (All) blend: weight given to the REAR-position value -
+        /// under power the driven wheels (commonly the rear ones) are what spin, so a higher value here
+        /// makes them matter more. Clamped to &gt;= 0.</summary>
+        public double AggregationWRear
+        {
+            get => _aggregationWRear;
+            set => _aggregationWRear = ClampNonNegative(value);
+        }
+
+        /// <summary>
+        /// The floor that stops a single strongly-spinning wheel being diluted away: the combined
+        /// reading (All/Front/Rear/Left/Right) can never fall below this fraction of the strongest
+        /// wheel that fed it - see <see cref="Core.Aggregator"/>'s own remarks for the exact mechanism
+        /// and why it ships enabled (0.4) for Wheel Slip but disabled (0.0) for Wheel Lock. Clamped to
+        /// [0,1] - see <see cref="AggregationWeights"/>'s own remarks on why a factor above 1 is not
+        /// meaningful for this mechanism.
+        /// </summary>
+        public double SlipFloorFactor
+        {
+            get => _slipFloorFactor;
+            set => _slipFloorFactor = ClampMath.Clamp(value, 0.0, 1.0);
+        }
+
+        private static double ClampNonNegative(double value) => ClampMath.IsFinite(value) && value > 0.0 ? value : 0.0;
+
+        /// <summary>Bundles this channel's five aggregation numbers into the plain
+        /// <see cref="Core.AggregationWeights"/> struct <see cref="Core.Aggregator"/> actually consumes -
+        /// the single conversion point every caller (Layer 3/4/Diag.Source) uses, so Core never needs a
+        /// reference back to this Settings-layer POCO.</summary>
+        public AggregationWeights ToAggregationWeights()
+            => new AggregationWeights(AggregationWMax, AggregationWMin, AggregationWFront, AggregationWRear, SlipFloorFactor);
 
         /// <summary>
         /// The Wheel Lock channel's shipped defaults: sources point at Layer 3's own
@@ -129,6 +239,17 @@ namespace QAdvanceFeedback.Settings
                 settings.BrakeThresholdPercent = 100.0;   // effectively off - throttle-only by default
                 settings.ThrottleThresholdPercent = 40.0;
             }
+
+            // Owner-tested aggregation defaults (docs\aggregation-report.md) - the two channels'
+            // numbers are genuinely different (see AggregationWeights.LockDefaults/SlipDefaults' own
+            // remarks), which is exactly why this shared class's own field initialisers above are only
+            // the NEUTRAL fallback and this method is what stamps the real, channel-specific numbers.
+            AggregationWeights aggregationDefaults = isLockChannel ? AggregationWeights.LockDefaults : AggregationWeights.SlipDefaults;
+            settings.AggregationWMax = aggregationDefaults.WMax;
+            settings.AggregationWMin = aggregationDefaults.WMin;
+            settings.AggregationWFront = aggregationDefaults.WFront;
+            settings.AggregationWRear = aggregationDefaults.WRear;
+            settings.SlipFloorFactor = aggregationDefaults.SlipFloorFactor;
 
             return settings;
         }

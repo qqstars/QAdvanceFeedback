@@ -111,8 +111,8 @@ namespace QAdvanceFeedback.Tests
         {
             var settings = new GForceSettings();
 
-            Assert.Equal(300.0, settings.RecommendedFromHz, 6);
-            Assert.Equal(20.0, settings.RecommendedToHz, 6);
+            Assert.Equal(100.0, settings.RecommendedFromHz, 6);
+            Assert.Equal(50.0, settings.RecommendedToHz, 6);
             Assert.InRange(settings.RecommendedFromHz, GForceSettings.DeviceMinHz, GForceSettings.DeviceMaxHz);
             Assert.InRange(settings.RecommendedToHz, GForceSettings.DeviceMinHz, GForceSettings.DeviceMaxHz);
             Assert.True(settings.RecommendedFromHz > settings.RecommendedToHz);
@@ -238,27 +238,54 @@ namespace QAdvanceFeedback.Tests
         // ---------------------------------------------------------------------------------------
 
         [Fact]
-        public void Shake_settings_default_to_off_5Hz_and_scale_1()
+        public void Shake_settings_now_default_to_on_3Hz_and_scale_1_5()
         {
+            // Floor 5->1 Hz, default 5->3 Hz, and both scale defaults 1.0->1.5 (docs\shake-tuning-report.md)
+            // are legitimate default/floor CHANGES per driver feedback, not weakened assertions.
+            // IntegrateWheelLockAndSlip itself later flipped OFF->ON (docs\integrate-default-report.md) -
+            // also a legitimate, deliberate default change: the owner wants a fresh install to feel this
+            // without hunting for the toggle. It stays behaviourally inert with no lock/slip signal wired
+            // up (amplitude is gForceValue * (wheelValue/100) * scale, so wheelValue=0 gives a zero-width
+            // band) - see GForceEngineShakeTests' "Wheel_value_of_zero..." coverage for that guarantee.
             var settings = new GForceSettings();
 
-            Assert.False(settings.IntegrateWheelLockAndSlip);
-            Assert.Equal(5.0, settings.ShakeFrequencyHz, 6);
-            Assert.Equal(1.0, settings.WheelLockShakeScale, 6);
-            Assert.Equal(1.0, settings.WheelSlipShakeScale, 6);
+            Assert.True(settings.IntegrateWheelLockAndSlip);
+            Assert.Equal(3.0, settings.ShakeFrequencyHz, 6);
+            Assert.Equal(1.5, settings.WheelLockShakeScale, 6);
+            Assert.Equal(1.5, settings.WheelSlipShakeScale, 6);
         }
 
         [Fact]
-        public void ShakeFrequencyHz_is_clamped_to_5_20_in_the_setter_itself()
+        public void ShakeFrequencyHz_is_clamped_to_1_20_in_the_setter_itself()
         {
-            var settings = new GForceSettings { ShakeFrequencyHz = 1.0 };
-            Assert.Equal(5.0, settings.ShakeFrequencyHz, 6);
+            var settings = new GForceSettings { ShakeFrequencyHz = 0.1 };
+            Assert.Equal(1.0, settings.ShakeFrequencyHz, 6);
 
             settings.ShakeFrequencyHz = 999.0;
             Assert.Equal(20.0, settings.ShakeFrequencyHz, 6);
 
             settings.ShakeFrequencyHz = 15.0;
             Assert.Equal(15.0, settings.ShakeFrequencyHz, 6);
+        }
+
+        /// <summary>MUTATION (a) evidence: a hand-edited config file (or any caller) must never be
+        /// able to smuggle in a shake frequency below the new 1 Hz floor.</summary>
+        [Fact]
+        public void MUTATION_a_a_shake_frequency_below_1Hz_must_never_be_readable_back()
+        {
+            var settings = new GForceSettings { ShakeFrequencyHz = 0.0001 };
+            Assert.Equal(1.0, settings.ShakeFrequencyHz, 6);
+        }
+
+        /// <summary>MUTATION (b) evidence: the G-Force shake's own frequency floor is a DIFFERENT
+        /// setting from the Layer 5 pulse's own 200 ms (5 Hz) gap floor on the Wheel Lock/Slip tabs -
+        /// this pins the pulse floor's own value so a change that accidentally touched the pulse
+        /// instead of the shake would be caught here (see <c>PulseSettingsTests</c> for the pulse's own
+        /// dedicated, more thorough coverage of that floor).</summary>
+        [Fact]
+        public void MUTATION_b_the_pulse_gap_floor_is_a_different_200ms_setting_unaffected_by_this_change()
+        {
+            Assert.Equal(200.0, QAdvanceFeedback.Core.Projection.PulseSettings.MinGapMs, 6);
         }
 
         [Fact]

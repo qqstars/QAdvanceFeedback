@@ -18,7 +18,9 @@ namespace QAdvanceFeedback.Core.Localization
             ["Common.RestoreAllDefaults"] = "Restore all default settings",
             ["Common.RestoreAllConfirm"] = "This resets every setting on the Wheel Lock, Wheel Slip, G-Force and General tabs back to its shipped default - including any of your own tuning - and cannot be undone. Continue?",
 
+            ["Group.TriggerThreshold"] = "Trigger threshold",
             ["Group.Sources"] = "Sources",
+            ["Group.Aggregation"] = "Wheel combination",
             ["Group.Curve"] = "Output shaping",
             ["Group.Pulse"] = "Pulse at maximum",
             ["Group.GForceMaxima"] = "Maximum G",
@@ -55,12 +57,35 @@ namespace QAdvanceFeedback.Core.Localization
             ["Sources.Mode.ManualNote.Lock"] = "Manual mode: point each wheel's Source field at any SimHub property that reports a 0-100 value for that wheel - 0 means the wheel isn't locking at all, 100 means it's fully locked.",
             ["Sources.Mode.ManualNote.Slip"] = "Manual mode: point each wheel's Source field at any SimHub property that reports a 0-100 value for that wheel - 0 means the wheel isn't slipping at all, 100 means it's fully spinning.",
 
-            // ---- Pedal-pressed thresholds (owner-requested, deliberately deviates from SimHub's own hard-coded Brake>20/Throttle>40 - applies in BOTH Manual and ShakeIt mode) ----
+            // ---- TRIGGER THRESHOLD (its own section, above Sources - owner-requested restructure;
+            // was previously inside "Sources". Deliberately deviates from SimHub's own hard-coded
+            // Brake>20/Throttle>40. Gates the WHOLE channel - Raw AND Normalized both read 0 below
+            // threshold - not just the pedal-driven part of the underlying algorithm, and applies no
+            // matter which Source (below) is selected: our own Raw, a ShakeIt export, or a Manual
+            // property/expression - see the notes below for the ShakeIt-specific composition caveat.) ----
             ["Sources.Threshold.LockBrake"] = "Brake pedal threshold (%)",
             ["Sources.Threshold.SlipBrake"] = "Brake pedal threshold (%)",
             ["Sources.Threshold.SlipThrottle"] = "Throttle pedal threshold (%)",
-            ["Sources.Threshold.Lock.Note"] = "The wheel is only considered to be locking once the brake pedal is pressed past this percentage. Default 20% (matches SimHub's own built-in value).",
-            ["Sources.Threshold.Slip.Note"] = "Slip checks the brake threshold FIRST: if the brake pedal is pressed past its own threshold, that takes priority and slip reads the same braking value Lock does. Only if brake is below its threshold is throttle checked against its own threshold (and only while the clutch is under 5%, SimHub's own fixed rule). Defaults: brake 100% (so brake practically never wins and slip is throttle-only, as intended) and throttle 40% (matches SimHub's own built-in value).",
+            ["Sources.Threshold.Lock.Note"] = "Below this brake percentage, Wheel Lock is not active at all - both the Raw and Normalized values read 0, whichever Source below is selected. Default 20% (matches SimHub's own built-in value). If Source is set to ShakeIt Plugin Output Properties, note that ShakeIt already applies its OWN internal gate before publishing its value - this threshold can only make the channel MORE restrictive than ShakeIt's own, never less; lowering it below ShakeIt's own gate will not make ShakeIt's values appear any earlier.",
+            ["Sources.Threshold.Slip.Note"] = "Slip checks the brake threshold FIRST: if the brake pedal is pressed past its own threshold, that takes priority and slip reads the same braking value Lock does. Only if brake is below its threshold is throttle checked against its own threshold (and only while the clutch is under 5%, SimHub's own fixed rule). Below whichever threshold applies, Wheel Slip is not active at all - both Raw and Normalized read 0, whichever Source below is selected (see Wheel Lock's own note above on the ShakeIt composition caveat). Defaults: brake 100% (so brake practically never wins and slip is throttle-only, as intended) and throttle 40% (matches SimHub's own built-in value).",
+            ["Sources.Threshold.LockSensibility"] = "Lock sensitivity",
+            ["Sources.Threshold.LockSensibility.Note"] = "Matches SimHub's own \"Lock sensitivity\" setting exactly (0-100, default 50). Higher values respond sooner to a firm brake, but also cap how strong the reading can ever get - only the default (50) can reach a genuine full-strength reading; values above 50 trade top-end strength for an earlier response.",
+
+            // ---- AGGREGATION (docs\aggregation-report.md) - how the four wheels above combine into
+            // Front/Rear/Left/Right/All. The owner's own physically-motivated Max/Min axle blend +
+            // Front/Rear weight-transfer scheme, replacing the previous generic aggregation - every
+            // weight is independently configurable per channel; only Wheel Slip has a floor control. ----
+            ["Aggregation.Lock.Note"] = "How the four wheels above combine into Front/Rear/Left/Right/All. Under braking, load shifts forward, so the front wheels carry the grip and matter most - that weight transfer is what these numbers encode.",
+            ["Aggregation.Slip.Note"] = "How the four wheels above combine into Front/Rear/Left/Right/All. Under power, the driven wheels are the ones that spin - which axle that is depends on your car's drivetrain, so these numbers are tunable rather than fixed.",
+            ["Aggregation.WMax.Label"] = "Max wheel weight (per axle)",
+            ["Aggregation.WMin.Label"] = "Min wheel weight (per axle)",
+            ["Aggregation.WFront.Label"] = "Front axle weight (car level)",
+            ["Aggregation.WRear.Label"] = "Rear axle weight (car level)",
+            ["Aggregation.AxleHelp"] = "Max/Min blend the two wheels on the SAME axle (e.g. front-left and front-right) into one Front or Rear value - continuously, not with a hard cutoff, so one wheel taking over from the other is never felt as a click.",
+            ["Aggregation.SideHelp.Lock"] = "Front/Rear weight decides how much the front axle counts against the rear at the Left/Right/All level - under braking the front wheels carry the load, so they dominate the combined value by default (0.90 vs 0.10).",
+            ["Aggregation.SideHelp.Slip"] = "Front/Rear weight decides how much the front axle counts against the rear at the Left/Right/All level - under power the driven wheels are the ones that spin, so raise the rear weight (or swap the two entirely) if your car is rear- or four-wheel drive.",
+            ["Aggregation.FloorFactor.Label"] = "Slip floor (fraction of the strongest wheel)",
+            ["Aggregation.FloorFactor.Note"] = "Keeps a single strongly-spinning wheel from being averaged away: the combined value can never read below this fraction of whichever wheel feeding it is spinning hardest. Wheel Lock has no equivalent control - a locked wheel already carries through strongly via the front weight above, without needing a floor.",
 
             // ---- Curve editor (shared layout, per-channel defaults/wording) ----
             ["Curve.Preset.Label"] = "Preset:",
@@ -116,10 +141,10 @@ namespace QAdvanceFeedback.Core.Localization
             ["GForce.RecommendedHz.Note"] = "Recommended pad frequency for configuring your ShakeIt channels: {0:0} Hz at value 0, down to {1:0} Hz at value 100.",
 
             ["GForce.Sustain.Note"] = "Under sustained hard braking or acceleration, the trailing pads keep a weaker vibration instead of fading to nothing, so the feel stays continuous. Defaults are derived from this engine's own model, not arbitrary numbers - 0% reproduces the old fade-to-nothing behaviour.",
-            ["GForce.Motion.Note"] = "Braking/acceleration feedback separates the STEADY level you're holding from the MOTION of getting there: a quick stab feels like an obvious kick, holding steady settles into a gentle background hum. These three numbers control that feel - higher time constants feel slower/smoother, a higher gain makes sudden changes hit harder.",
+            ["GForce.Motion.Note"] = "Braking/acceleration feedback travels through three stages (far pad, then middle pad, then the pad closest to the direction of force) before settling - a hard stamp on the pedal sweeps through quickly and strongly, a gentle change sweeps slowly and gently. The STEADY level you're holding (how far each pad settles) is separate from this travel. These three numbers control the feel - a higher level response time feels slower/smoother once settled, a higher sweep speed makes a sudden change travel faster. To make the sweep feel slower, lower Sweep speed (it travels more gradually across the pads) and raise Sweep smoothing time (it eases in rather than snaps). Sweep speed is capped internally, so past a point turning it up further won't make the sweep any faster.",
             ["GForce.SustainTau.Label"] = "Level response time (s)",
-            ["GForce.TransientTau.Label"] = "Kick smoothing time (s)",
-            ["GForce.TransientGain.Label"] = "Kick strength",
+            ["GForce.TransientTau.Label"] = "Sweep smoothing time (s)",
+            ["GForce.TransientGain.Label"] = "Sweep speed",
             ["GForce.Sustain.BrakeBottomRear"] = "Braking - Bottom Rear sustain (%)",
             ["GForce.Sustain.BrakeBackLow"] = "Braking - Back Low sustain (%)",
             ["GForce.Sustain.AccelBottomRear"] = "Acceleration - Bottom Rear sustain (%)",
@@ -134,10 +159,10 @@ namespace QAdvanceFeedback.Core.Localization
             ["GForce.Shake.Enable"] = "Integrate Wheel Lock and Slip",
             ["GForce.Shake.On"] = "On",
             ["GForce.Shake.Off"] = "Off",
-            ["GForce.Shake.Note"] = "When on, wheel lock/slip modulates every left/right pad pair as an alternating shake superimposed on the current G-force level (the pair's width, not its centre, grows with how hard the wheel is locking/slipping) - off by default, since it changes the existing G-force feel. The settings below are disabled while this is off.",
-            ["GForce.Shake.Frequency.Label"] = "Shake frequency (Hz, 5-20)",
-            ["GForce.Shake.LockScale.Label"] = "Wheel Lock scale",
-            ["GForce.Shake.SlipScale.Label"] = "Wheel Slip scale",
+            ["GForce.Shake.Note"] = "When on, wheel lock/slip modulates every left/right pad pair as an alternating shake superimposed on the current G-force level (the pair's width, not its centre, grows with how hard the wheel is locking/slipping) - on by default so a fresh install feels this without hunting for the toggle; it stays inert with no lock/slip signal wired up. Uncheck to fall back to the plain G-force feel. The settings below are disabled while this is off.",
+            ["GForce.Shake.Frequency.Label"] = "Shake frequency (Hz, 1-20)",
+            ["GForce.Shake.LockScale.Label"] = "Wheel Lock scale (1.0 = 100%)",
+            ["GForce.Shake.SlipScale.Label"] = "Wheel Slip scale (1.0 = 100%)",
 
             // ---- General tab ----
             ["General.EnableDiagnostics"] = "Enable diagnostics",

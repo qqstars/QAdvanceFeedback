@@ -73,19 +73,28 @@ namespace QAdvanceFeedback.Tests
         /// see <see cref="Inverted_convention_title_still_drives_braking_on_bottom_front_when_the_car_is_measurably_slowing"/>
         /// for the dedicated proof that the engine is correct even when a title's sign is the OPPOSITE
         /// of what is used here.</summary>
-        private static TelemetrySample BrakingSample(double longitudinalGMagnitude, double dtSeconds, double? latG = null)
+        /// <summary>ANIMATION DIRECTION SELECTION (docs\lock-and-animation-report.md): the owner's own
+        /// rules require the brake pedal actually applied for the deceleration animation, and
+        /// SpeedingUp direction PLUS the throttle pedal applied for the acceleration one - a bare
+        /// ground-speed ramp with no pedal reading is now "coasting", not "braking"/"accelerating".
+        /// <paramref name="brakePercent"/> defaults to a firmly-committed 80%, mirroring
+        /// <c>NormalizedWheelLockSlipEngineTests</c>' own identically-named helper's own default, so
+        /// every pre-existing call site represents genuine, sustained braking (not coasting) unless a
+        /// test explicitly overrides it.</summary>
+        private static TelemetrySample BrakingSample(double longitudinalGMagnitude, double dtSeconds, double? latG = null, double brakePercent = 80.0)
         {
             var oldFrame = new TelemetryFrame(groundSpeedKmh: 101.0);
-            var newFrame = new TelemetryFrame(groundSpeedKmh: 100.0, longitudinalG: -longitudinalGMagnitude, lateralG: latG);
+            var newFrame = new TelemetryFrame(groundSpeedKmh: 100.0, longitudinalG: -longitudinalGMagnitude, lateralG: latG, brakePercent: brakePercent);
             return new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromSeconds(dtSeconds));
         }
 
         /// <summary>The mirror of <see cref="BrakingSample"/>: ground speed RISING (old 100 -&gt; new
-        /// 101 km/h) - resolves <c>LongitudinalMotionState.SpeedingUp</c> from the first frame.</summary>
-        private static TelemetrySample ThrottleSample(double longitudinalGMagnitude, double dtSeconds, double? latG = null)
+        /// 101 km/h) - resolves <c>LongitudinalMotionState.SpeedingUp</c> from the first frame. Throttle
+        /// defaults to a firmly-committed 80% - see <see cref="BrakingSample"/>'s own remarks.</summary>
+        private static TelemetrySample ThrottleSample(double longitudinalGMagnitude, double dtSeconds, double? latG = null, double throttlePercent = 80.0)
         {
             var oldFrame = new TelemetryFrame(groundSpeedKmh: 100.0);
-            var newFrame = new TelemetryFrame(groundSpeedKmh: 101.0, longitudinalG: longitudinalGMagnitude, lateralG: latG);
+            var newFrame = new TelemetryFrame(groundSpeedKmh: 101.0, longitudinalG: longitudinalGMagnitude, lateralG: latG, throttlePercent: throttlePercent);
             return new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromSeconds(dtSeconds));
         }
 
@@ -221,17 +230,26 @@ namespace QAdvanceFeedback.Tests
         }
 
         // ---------------------------------------------------------------------------------------
-        // Steady-state sustained distribution reproduces the pre-washout model's own arithmetic
-        // (sustainedRatio == raw ratio once fully converged, exactly the old "no rate boost" case).
+        // Steady-state sustained distribution (docs\lock-and-animation-report.md - STAGED TRAVEL
+        // MODEL). SUPERSEDES the previous pass's "continuous hat position" test below: the owner's own
+        // specification is that the SUSTAIN state is always the FULL three-pad stage-3 shape
+        // (terminal=100%/mid=configured MID%/far=configured LOW%) once the sweep has settled, with ONLY
+        // the overall magnitude (never the shape) scaled by how hard the car is braking/accelerating -
+        // "sustain the final distribution while acceleration continues", not "the wave stops partway
+        // through the chain at partial G". A mid-level, steady brake therefore settles on ALL THREE
+        // pads (scaled by 50%), not a single pad in isolation - the old assertion (BottomRear alone at
+        // its peak, the other two at exactly 0) was a direct consequence of the now-retired continuous
+        // hat-position mechanism and no longer holds.
         // ---------------------------------------------------------------------------------------
 
         [Fact]
-        public void Steady_mid_level_braking_settles_on_Bottom_Rear()
+        public void Steady_mid_level_braking_settles_on_the_full_stage3_shape_scaled_by_the_sustain_level()
         {
-            var r = RunToSteadyState(new GForceEngine(), -1.0); // r = 1.0/2.0 = 0.5
-            Assert.Equal(0.0, r.BackLowLeft.Value, 3);
-            Assert.Equal(50.0, r.BottomRearLeft.Value, 1);
-            Assert.Equal(0.0, r.BottomFrontLeft.Value, 3);
+            var r = RunToSteadyState(new GForceEngine(), -1.0); // r = 1.0/2.0 = 0.5 (sustain level)
+            // Stage-3 shape (LOW=25%, MID=50%, HIGH=100%) scaled by the 0.5 sustain level.
+            Assert.Equal(12.5, r.BackLowLeft.Value, 1);
+            Assert.Equal(25.0, r.BottomRearLeft.Value, 1);
+            Assert.Equal(50.0, r.BottomFrontLeft.Value, 1);
         }
 
         [Fact]
@@ -431,124 +449,90 @@ namespace QAdvanceFeedback.Tests
         }
 
         // ---------------------------------------------------------------------------------------
-        // THE SIX ACCEPTANCE SCENARIOS (the owner's own, verbatim from the wiring brief).
+        // THE STAGED TRAVEL MODEL (docs\lock-and-animation-report.md) - the driver's own explicit
+        // restructure ("the chains are now correct but the driver does not FEEL the travel"). S2 and S4
+        // (below) are RE-VERIFIED, still valid, under the new model. S1/S3/S6 are RE-WRITTEN using
+        // direct sweep-speed/shape measurements instead of the old "gap against a TransientGain=0 twin"
+        // technique (the twin isolated an ADDITIVE transient bump that no longer exists - the entire
+        // output IS the staged sweep now). S5 ("a transient while already saturated spends the headroom
+        // above the sustain floors") is EXPLICITLY SUPERSEDED and removed: once the stage progress has
+        // fully swept AND the sustain level is itself already at 1.0, there is nothing further to show -
+        // the owner's own specification calls only for DELTA-driven travel and G-driven sustain scaling,
+        // neither of which describes a residual bump while both are already at their own ceiling.
         // ---------------------------------------------------------------------------------------
 
-        /// <summary>S1: Gentle onset to 1g - transient travels Back Low -> Bottom Rear -> Bottom
-        /// Front, amplitude appropriate to the modest rate. Verified via the TransientGain=0 twin
-        /// technique (see class remarks): the gap between the real engine and its zero-gain twin,
-        /// fed an identical GENTLE ramp, stays small throughout.</summary>
+        /// <summary>Feeds a constant longG (a "cold start already at this level") for enough frames to
+        /// fully converge, returning the number of frames it took the terminal pad (Bottom Front) to
+        /// first reach within 1% of its own final value - a direct measurement of sweep SPEED.</summary>
+        /// <summary>Measures how many frames it takes the braking chain's own SHAPE (the terminal
+        /// pad's share of the three-pad total, <c>BottomFront / (BottomFront+BottomRear+BackLow)</c>) to
+        /// settle within 1% of its final value - deliberately a RATIO, not a raw pad magnitude, since
+        /// the ratio cancels out the (SAME-tau-regardless-of-delta-size) sustain LEVEL entirely and
+        /// isolates the STAGE PROGRESS's own convergence speed, which is what this test is actually
+        /// about (see <see cref="A_large_delta_produces_a_faster_sweep_than_a_small_delta"/>'s own
+        /// remarks - a raw-magnitude measurement would be dominated by the sustain level's own
+        /// convergence, which is identical for both cases and would swamp the very difference being
+        /// measured).</summary>
+        private static int MeasureFramesToSettle(GForceEngine engine, double longG, double dtSeconds = 0.02, int maxSteps = 2000)
+        {
+            // Stage-3/sustain shares: terminal=HIGH(1.0), mid=MID(0.5), far=LOW(0.25) -> terminal's own
+            // share of the three-pad total = 1.0/(1.0+0.5+0.25) = 0.5714.
+            double finalShare = 1.0 / 1.75;
+
+            double sustainSum(GForceOutput r) => r.BottomFrontLeft.Value + r.BottomRearLeft.Value + r.BackLowLeft.Value;
+            double shareOf(GForceOutput r) => sustainSum(r) > 1e-9 ? r.BottomFrontLeft.Value / sustainSum(r) : 0.0;
+
+            for (int i = 0; i < maxSteps; i++)
+            {
+                var r = engine.Compute(SampleForLongG(longG, dtSeconds), AccelMax, DecelMax);
+                if (Math.Abs(shareOf(r) - finalShare) < 0.01) return i + 1;
+            }
+            return maxSteps;
+        }
+
+        /// <summary>S1/S3 (rewritten): a large, sudden delta (a fast step onset) must sweep through the
+        /// three stages FASTER (fewer frames to settle) than a small, gentle delta (the same magnitude
+        /// change, but arriving one small step at a time). Both are "cold start" (constant longG fed
+        /// from frame 1, so BOTH represent an instantaneous onset in TERMS OF DELTA SIZE per frame - a
+        /// large one-frame delta vs. a small one-frame delta - matching the owner's own wording
+        /// ("stamping the throttle from rest is a large delta... a gentle change is a small delta").
+        /// <para/>
+        /// MUTATION (a) target (see GForceEngine.AdvanceStageProgress's own remarks): driving the sweep
+        /// from magnitude instead of delta collapses this distinction entirely (both would settle at
+        /// the same, magnitude-only-driven speed) - this test is what catches that.</summary>
         [Fact]
-        public void S1_gentle_onset_produces_a_small_transient_appropriate_to_the_modest_rate()
+        public void A_large_delta_produces_a_faster_sweep_than_a_small_delta()
         {
-            double maxGap = MeasureGentleRampPeakGap(rampSeconds: 3.0);
+            int framesForLargeDelta = MeasureFramesToSettle(new GForceEngine(), -2.0); // 0->1.0 ratio in one frame
+            int framesForSmallDelta = MeasureFramesToSettle(new GForceEngine(), -0.2); // 0->0.1 ratio in one frame
 
-            Assert.True(maxGap > 0.0, "a gentle onset should still produce SOME measurable transient");
-            Assert.True(maxGap < 10.0, $"a gentle onset's transient should stay modest, got a peak gap of {maxGap}");
+            Assert.True(framesForLargeDelta < framesForSmallDelta,
+                $"a large delta should sweep faster than a small one: large took {framesForLargeDelta} frames, small took {framesForSmallDelta}");
         }
 
-        /// <summary>Ramps longG from 0 to -1.0 (0g to 1g braking) over <paramref name="rampSeconds"/>,
-        /// returning the peak gap between the real engine and its TransientGain=0 twin (see class
-        /// remarks) - the transient's own peak contribution during the ramp.</summary>
-        private static double MeasureGentleRampPeakGap(double rampSeconds)
-        {
-            var real = new GForceEngine();
-            var twin = new GForceEngine { TransientGain = 0.0 };
-
-            const double dt = 0.02;
-            int steps = (int)(rampSeconds / dt);
-            double maxGap = 0.0;
-            for (int i = 1; i <= steps; i++)
-            {
-                double longG = -1.0 * i / steps;
-                var rReal = real.Compute(SampleForLongG(longG, dt), AccelMax, DecelMax);
-                var rTwin = twin.Compute(SampleForLongG(longG, dt), AccelMax, DecelMax);
-                maxGap = Math.Max(maxGap, Math.Abs(rReal.BottomFrontLeft.Value - rTwin.BottomFrontLeft.Value));
-            }
-            return maxGap;
-        }
-
-        /// <summary>S2: Hold ~1g for 0.5s - the transient decays toward zero and the output settles to
-        /// the sustained distribution.</summary>
+        /// <summary>S2 (re-verified, still valid under the new model): holding steady G settles the
+        /// output onto the sustained (stage-3) distribution and stays there.</summary>
         [Fact]
-        public void S2_holding_steady_G_washes_the_transient_out_to_the_sustained_distribution()
+        public void S2_holding_steady_G_settles_onto_the_sustained_distribution_and_holds()
         {
-            var real = new GForceEngine();
-            var twin = new GForceEngine { TransientGain = 0.0 };
+            var engine = new GForceEngine();
+            GForceOutput settled = null;
+            for (int i = 0; i < 300; i++) settled = engine.Compute(SampleForLongG(-1.0, 0.02), AccelMax, DecelMax);
 
-            // A quick-ish rise to 1g (to create an initial transient)...
-            for (int i = 1; i <= 20; i++)
+            // Hold for another 0.5s (25 steps @ dt=0.02) - output must stay essentially unchanged.
+            for (int i = 0; i < 25; i++)
             {
-                double longG = -1.0 * i / 20.0;
-                real.Compute(SampleForLongG(longG, 0.01), AccelMax, DecelMax);
-                twin.Compute(SampleForLongG(longG, 0.01), AccelMax, DecelMax);
+                var r = engine.Compute(SampleForLongG(-1.0, 0.02), AccelMax, DecelMax);
+                Assert.True(Math.Abs(r.BottomFrontLeft.Value - settled.BottomFrontLeft.Value) < 1.0,
+                    $"output should stay settled while holding steady G, drifted to {r.BottomFrontLeft.Value} from {settled.BottomFrontLeft.Value}");
             }
-
-            // ...then hold flat at -1.0 for 0.5s (50 steps @ dt=0.01).
-            GForceOutput rReal = null, rTwin = null;
-            for (int i = 0; i < 50; i++)
-            {
-                rReal = real.Compute(SampleForLongG(-1.0, 0.01), AccelMax, DecelMax);
-                rTwin = twin.Compute(SampleForLongG(-1.0, 0.01), AccelMax, DecelMax);
-            }
-
-            double gapAfterHold = Math.Abs(rReal.BottomFrontLeft.Value - rTwin.BottomFrontLeft.Value);
-            // Per the scenario's own wording ("small residual changes still produce small, gentle
-            // transitions - we can feel it, but not that obvious") a fully-settled hold is not required
-            // to reach a mathematically perfect zero - only small. 5.0 (out of 100) is comfortably
-            // "not obvious" while still meaningfully tighter than the transient's own peak during the
-            // preceding onset (verified elsewhere - see S1/S3's much larger peak gaps).
-            Assert.True(gapAfterHold < 5.0, $"the transient should have washed out to something small after a 0.5s hold, gap was {gapAfterHold}");
         }
 
-        /// <summary>S3: Step 1g -> 2g quickly - a large, obvious front-ward transition even though the
-        /// system had already settled, then it settles into the NEW, higher sustained distribution.</summary>
-        [Fact]
-        public void S3_a_fast_step_produces_a_large_transient_that_then_settles_into_the_new_level()
-        {
-            var real = new GForceEngine();
-            var twin = new GForceEngine { TransientGain = 0.0 };
-
-            // Settle at 1g first.
-            for (int i = 0; i < 300; i++)
-            {
-                real.Compute(SampleForLongG(-1.0, 0.02), AccelMax, DecelMax);
-                twin.Compute(SampleForLongG(-1.0, 0.02), AccelMax, DecelMax);
-            }
-
-            // Fast step to 2g (a single large step, one frame).
-            var rRealStep = real.Compute(SampleForLongG(-2.0, 0.02), AccelMax, DecelMax);
-            var rTwinStep = twin.Compute(SampleForLongG(-2.0, 0.02), AccelMax, DecelMax);
-            double gapAtStep = Math.Abs(rRealStep.BottomFrontLeft.Value - rTwinStep.BottomFrontLeft.Value);
-
-            Assert.True(gapAtStep > 10.0, $"a fast 1g step should produce an obvious transient, got a gap of {gapAtStep}");
-
-            // Compare directly against the SAME 1g change delivered gently over 3 seconds (S1) - the
-            // step's gap must be clearly larger, proving "large, obvious" vs "modest" for the identical
-            // underlying magnitude change.
-            double gentleGap = MeasureGentleRampPeakGap(rampSeconds: 3.0);
-            Assert.True(gapAtStep > gentleGap,
-                $"a fast step (gap {gapAtStep}) should produce a clearly larger transient than the same " +
-                $"change spread gently over 3s (gap {gentleGap})");
-
-            // Then let it settle at the new level for a long time - the gap should collapse again.
-            GForceOutput rRealSettled = null, rTwinSettled = null;
-            for (int i = 0; i < 400; i++)
-            {
-                rRealSettled = real.Compute(SampleForLongG(-2.0, 0.02), AccelMax, DecelMax);
-                rTwinSettled = twin.Compute(SampleForLongG(-2.0, 0.02), AccelMax, DecelMax);
-            }
-            double gapSettled = Math.Abs(rRealSettled.BottomFrontLeft.Value - rTwinSettled.BottomFrontLeft.Value);
-            Assert.True(gapSettled < 1.0, $"should have settled into the new sustained level, gap was {gapSettled}");
-            Assert.Equal(100.0, rTwinSettled.BottomFrontLeft.Value, 1); // the new (saturated) sustained level
-        }
-
-        /// <summary>S4: Max G configured 1.5g, actual 2g - all three pads sit at their configured
-        /// maxima (sustained path saturated).</summary>
+        /// <summary>S4 (unchanged, still valid): Max G configured 1.5g, actual 2g - all three pads sit
+        /// at their configured (stage-3, fully saturated) maxima.</summary>
         [Fact]
         public void S4_exceeding_the_configured_maximum_saturates_all_three_pads_at_their_maxima()
         {
-            // Configured max 1.5g, actual (steady) 2g -> r = 2/1.5 = 1.333, clamped to fully saturated.
             var engine = new GForceEngine();
             GForceOutput result = null;
             for (int i = 0; i < 400; i++) result = engine.Compute(SampleForLongG(-2.0, 0.05), AccelMax, decelMaxG: 1.5);
@@ -558,87 +542,197 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(25.0, result.BackLowLeft.Value, 1);
         }
 
-        /// <summary>S5: Already saturated, 2g -> 3g - a clearly visible transient STILL occurs,
-        /// spending the headroom above the sustain floors (Back Low/Bottom Rear, both well below
-        /// 100%, briefly rise well above their sustained floor; Bottom Front, already at 100%, has no
-        /// headroom left and cannot rise further).</summary>
+        /// <summary>S6 (rewritten): a slow, continuous bleed-off produces a smooth, continuous,
+        /// proportional reduction of all three pads (never jumping) - the driver's own "G falling while
+        /// still in the same direction scales the whole distribution proportionally" rule, exercised
+        /// continuously rather than at a single instant (see the dedicated verbatim-example test below
+        /// for the exact numeric proof of the proportional scaling itself).</summary>
         [Fact]
-        public void S5_a_transient_while_already_saturated_spends_the_headroom_above_the_sustain_floors()
+        public void S6_a_slow_continuous_bleed_off_produces_a_smooth_continuous_reduction_with_no_jumps()
         {
-            const double decelMaxG = 1.5;
             var engine = new GForceEngine();
+            for (int i = 0; i < 300; i++) engine.Compute(SampleForLongG(-2.0, 0.02), AccelMax, DecelMax);
 
-            // Settle fully saturated at 2g (r = 2/1.5 = 1.333, clamped to 1.0 sustained).
-            for (int i = 0; i < 400; i++) engine.Compute(SampleForLongG(-2.0, 0.02), AccelMax, decelMaxG);
-            var beforeStep = engine.Compute(SampleForLongG(-2.0, 0.02), AccelMax, decelMaxG);
-            Assert.Equal(50.0, beforeStep.BottomRearLeft.Value, 1);
-            Assert.Equal(25.0, beforeStep.BackLowLeft.Value, 1);
-            Assert.Equal(100.0, beforeStep.BottomFrontLeft.Value, 1);
-
-            // Fast step to 3g (r = 3/1.5 = 2.0) - well beyond saturation, but the UNCLAMPED gap still
-            // drives a real transient.
-            var afterStep = engine.Compute(SampleForLongG(-3.0, 0.02), AccelMax, decelMaxG);
-
-            Assert.True(afterStep.BottomRearLeft.Value > beforeStep.BottomRearLeft.Value + 5.0,
-                $"Bottom Rear should rise above its saturated sustain floor using its headroom, was {beforeStep.BottomRearLeft.Value} now {afterStep.BottomRearLeft.Value}");
-            Assert.True(afterStep.BackLowLeft.Value > beforeStep.BackLowLeft.Value + 5.0,
-                $"Back Low should rise above its saturated sustain floor using its headroom, was {beforeStep.BackLowLeft.Value} now {afterStep.BackLowLeft.Value}");
-            // Bottom Front has (almost) no headroom left - it cannot meaningfully rise above 100 (clamped).
-            Assert.True(afterStep.BottomFrontLeft.Value <= 100.0);
-            Assert.True(afterStep.BottomFrontLeft.Value >= beforeStep.BottomFrontLeft.Value - 0.5);
-
-            // TIGHT, headroom-specific check - this is what actually catches mutation (b) (headroom
-            // scaling removed): independently computed (see docs\wiring-ui-report.md's simulation),
-            // Bottom Rear's headroom-scaled value after this exact step is ~59.7 (50% sustain + 50%
-            // headroom * ~19.4% drive). Without headroom scaling the SAME drive would be added
-            // unscaled, landing around ~69.4 instead - well outside this tight range.
-            Assert.InRange(afterStep.BottomRearLeft.Value, 57.0, 62.0);
-        }
-
-        /// <summary>S6: F1 aerodynamic bleed-off - braking G decreasing slowly and continuously - only
-        /// a SMALL transition, but a CONTINUOUS one (not a single discrete event): the gap between the
-        /// real engine and its zero-gain twin stays small but consistently NONZERO across the whole
-        /// slow decrease, not just at one moment.</summary>
-        [Fact]
-        public void S6_a_slow_continuous_bleed_off_produces_a_small_but_sustained_continuous_transient()
-        {
-            var real = new GForceEngine();
-            var twin = new GForceEngine { TransientGain = 0.0 };
-
-            // Settle at 2g first.
-            for (int i = 0; i < 300; i++)
-            {
-                real.Compute(SampleForLongG(-2.0, 0.02), AccelMax, DecelMax);
-                twin.Compute(SampleForLongG(-2.0, 0.02), AccelMax, DecelMax);
-            }
-
-            // Slowly, continuously bleed off from 2g toward 1g over 5 seconds (250 steps @ dt=0.02).
-            int nonTrivialGapCount = 0;
+            double? prev = null;
             const int bleedSteps = 250;
             for (int i = 1; i <= bleedSteps; i++)
             {
-                double longG = -2.0 + (1.0 * i / bleedSteps); // -2.0 -> -1.0
-                var rReal = real.Compute(SampleForLongG(longG, 0.02), AccelMax, DecelMax);
-                var rTwin = twin.Compute(SampleForLongG(longG, 0.02), AccelMax, DecelMax);
-                double gap = Math.Abs(rReal.BottomFrontLeft.Value - rTwin.BottomFrontLeft.Value);
-
-                Assert.True(gap < 15.0, $"a slow bleed-off must stay a SMALL transient, got {gap} at step {i}");
-                // Sampled well after start (filters need a moment to reflect the new, slower rate).
-                if (i > 20 && gap > 0.05) nonTrivialGapCount++;
+                double longG = -2.0 + (1.0 * i / bleedSteps); // -2.0 -> -1.0, gently
+                var r = engine.Compute(SampleForLongG(longG, 0.02), AccelMax, DecelMax);
+                if (prev.HasValue) AssertSmallStep(prev.Value, r.BottomFrontLeft.Value);
+                prev = r.BottomFrontLeft.Value;
             }
 
-            Assert.True(nonTrivialGapCount > bleedSteps / 2,
-                "the transient should be present continuously through most of the slow bleed-off, " +
-                $"not just briefly - only {nonTrivialGapCount}/{bleedSteps} steps showed a non-trivial gap");
+            Assert.True(prev.Value < 100.0, "the bleed-off should have reduced the terminal pad below full saturation");
         }
 
         // ---------------------------------------------------------------------------------------
-        // MUTATION EVIDENCE (see docs\wiring-ui-report.md for the actual mutation runs) - these three
-        // tests are the ones that must fail under mutations (a)/(b)/(c) respectively.
-        // (a) removing the high-pass/transient path (magnitude-only) -> S1, S3 and S6 fail.
-        // (b) removing headroom scaling -> S5 fails.
-        // (c) removing washout (transient never decays) -> S2 fails.
+        // THE THREE STAGES - explicit ordering, both directions (docs\lock-and-animation-report.md).
+        // MUTATION (b) target: collapsing StagedShape to a single stage (always returning the stage-3
+        // shape) would fail these ordering checks.
         // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void Braking_chain_sweeps_far_to_mid_to_terminal_in_order()
+        {
+            // Very gentle onset (small delta every frame) so the sweep advances slowly enough to
+            // sample distinct stages.
+            var engine = new GForceEngine();
+            const double dt = 0.02;
+            double? farAtStage0 = null, midAtStage0 = null, terminalAtStage0 = null;
+            bool sawMidLeading = false;
+
+            for (int i = 1; i <= 300; i++)
+            {
+                double longG = -2.0 * Math.Min(1.0, i / 250.0);
+                var r = engine.Compute(SampleForLongG(longG, dt), AccelMax, DecelMax);
+
+                if (i == 2)
+                {
+                    farAtStage0 = r.BackLowLeft.Value;
+                    midAtStage0 = r.BottomRearLeft.Value;
+                    terminalAtStage0 = r.BottomFrontLeft.Value;
+                }
+                if (r.BottomRearLeft.Value > r.BackLowLeft.Value && r.BottomRearLeft.Value > r.BottomFrontLeft.Value)
+                    sawMidLeading = true;
+            }
+
+            // Stage 1 (far leads): Back Low (far) reads highest of the three, early in the sweep.
+            Assert.True(farAtStage0.Value >= midAtStage0.Value && farAtStage0.Value >= terminalAtStage0.Value,
+                $"far pad should lead at the very start of the sweep: far={farAtStage0} mid={midAtStage0} terminal={terminalAtStage0}");
+            // Stage 2 (mid leads): Bottom Rear reads highest of the three at some point during the sweep.
+            Assert.True(sawMidLeading, "the middle pad should lead at some point during the sweep");
+        }
+
+        [Fact]
+        public void Acceleration_chain_sweeps_far_to_mid_to_terminal_in_order()
+        {
+            var engine = new GForceEngine();
+            const double dt = 0.02;
+            double? farAtStage0 = null, midAtStage0 = null, terminalAtStage0 = null;
+            bool sawMidLeading = false;
+
+            for (int i = 1; i <= 300; i++)
+            {
+                double longG = 0.9 * Math.Min(1.0, i / 250.0);
+                var r = engine.Compute(SampleForLongG(longG, dt), AccelMax, DecelMax);
+
+                if (i == 2)
+                {
+                    farAtStage0 = r.BottomRearLeft.Value;
+                    midAtStage0 = r.BackLowLeft.Value;
+                    terminalAtStage0 = r.BackTopLeft.Value;
+                }
+                if (r.BackLowLeft.Value > r.BottomRearLeft.Value && r.BackLowLeft.Value > r.BackTopLeft.Value)
+                    sawMidLeading = true;
+            }
+
+            Assert.True(farAtStage0.Value >= midAtStage0.Value && farAtStage0.Value >= terminalAtStage0.Value,
+                $"far pad (Bottom Rear) should lead at the very start of the sweep: far={farAtStage0} mid={midAtStage0} terminal={terminalAtStage0}");
+            Assert.True(sawMidLeading, "the middle pad (Back Low) should lead at some point during the sweep");
+        }
+
+        [Fact]
+        public void The_sweep_never_steps_discontinuously()
+        {
+            var engine = new GForceEngine();
+            const double dt = 0.02;
+            double? prevFar = null, prevMid = null, prevTerminal = null;
+
+            for (int i = 1; i <= 300; i++)
+            {
+                double longG = -2.0 * Math.Min(1.0, i / 200.0);
+                var r = engine.Compute(SampleForLongG(longG, dt), AccelMax, DecelMax);
+                if (prevFar.HasValue)
+                {
+                    AssertSmallStep(prevFar.Value, r.BackLowLeft.Value);
+                    AssertSmallStep(prevMid.Value, r.BottomRearLeft.Value);
+                    AssertSmallStep(prevTerminal.Value, r.BottomFrontLeft.Value);
+                }
+                prevFar = r.BackLowLeft.Value;
+                prevMid = r.BottomRearLeft.Value;
+                prevTerminal = r.BottomFrontLeft.Value;
+            }
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // FALLING G SCALES THE WHOLE DISTRIBUTION PROPORTIONALLY - the owner's own verbatim worked
+        // example (TopBack 90->60 = 100% of the change, LowBack 45->30 = 50%, BottomRear 22.5->15 =
+        // 25%), reproduced exactly using the default sustain fractions (MID=50%, LOW=25%).
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void A_falling_G_in_the_same_direction_scales_the_whole_distribution_by_the_sustain_ratios()
+        {
+            var engine = new GForceEngine();
+
+            // Settle fully staged and sustained at 0.9g (accelMaxG=0.9 -> ratio 1.0, terminal=100%=90%
+            // of... wait, use a max that makes the terminal read exactly 90 at full sustain: accelMax
+            // such that ratio=0.9 gives terminal=90.
+            const double accelMax = 1.0;
+            for (int i = 0; i < 400; i++) engine.Compute(ThrottleSample(0.9, 0.02), accelMax, DecelMax);
+            var before = engine.Compute(ThrottleSample(0.9, 0.02), accelMax, DecelMax);
+
+            Assert.Equal(90.0, before.BackTopLeft.Value, 0);
+            Assert.Equal(45.0, before.BackLowLeft.Value, 0);
+            Assert.Equal(22.5, before.BottomRearLeft.Value, 1);
+
+            // G falls to 0.6 (still SpeedingUp/accelerating, same direction) - hold long enough for the
+            // (low-pass) sustain level to fully settle at the new, lower value; the stage progress is
+            // already at 1.0 (fully swept) and stays there (still engaged).
+            GForceOutput after = null;
+            for (int i = 0; i < 400; i++) after = engine.Compute(ThrottleSample(0.6, 0.02), accelMax, DecelMax);
+
+            Assert.Equal(60.0, after.BackTopLeft.Value, 0);
+            Assert.Equal(30.0, after.BackLowLeft.Value, 0);
+            Assert.Equal(15.0, after.BottomRearLeft.Value, 1);
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // COASTING (docs\lock-and-animation-report.md) - neither pedal pressed: a large
+        // deceleration-direction delta (engine braking / a forced downshift) still runs the
+        // deceleration animation; a small, steady one (ordinary rolling resistance) produces NO cue.
+        // MUTATION (c) target: removing the coasting dead-band check must fail the "no cue" test.
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void Coasting_with_a_small_steady_deceleration_produces_no_cue_at_all()
+        {
+            var engine = new GForceEngine();
+            // Slowing, genuinely (ground speed falling), but NEITHER pedal pressed, and the magnitude
+            // itself is small and held CONSTANT (no meaningful delta at all after the first frame) -
+            // ordinary rolling/aero drag.
+            var oldFrame = new TelemetryFrame(groundSpeedKmh: 101.0);
+            var newFrame = new TelemetryFrame(groundSpeedKmh: 100.0, longitudinalG: -0.05);
+            var sample = new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromMilliseconds(20));
+
+            GForceOutput result = null;
+            for (int i = 0; i < 200; i++) result = engine.Compute(sample, AccelMax, DecelMax);
+
+            Assert.True(result.BottomFrontLeft.Value < 1.0, $"BottomFrontLeft={result.BottomFrontLeft.Value}");
+            Assert.True(result.BottomRearLeft.Value < 1.0, $"BottomRearLeft={result.BottomRearLeft.Value}");
+            Assert.True(result.BackLowLeft.Value < 1.0, $"BackLowLeft={result.BackLowLeft.Value}");
+        }
+
+        [Fact]
+        public void Coasting_with_a_large_deceleration_delta_runs_the_deceleration_animation()
+        {
+            var engine = new GForceEngine();
+            // Neither pedal pressed, but a SUDDEN, large jump in deceleration-direction G - a forced
+            // downshift / engine braking kicking in hard while coasting.
+            var oldFrame1 = new TelemetryFrame(groundSpeedKmh: 101.0);
+            var newFrame1 = new TelemetryFrame(groundSpeedKmh: 100.0, longitudinalG: -0.05);
+            engine.Compute(new TelemetrySample(newFrame1, oldFrame1, DateTime.UtcNow, TimeSpan.FromMilliseconds(20)), AccelMax, DecelMax);
+
+            var oldFrame2 = new TelemetryFrame(groundSpeedKmh: 100.0);
+            var newFrame2 = new TelemetryFrame(groundSpeedKmh: 96.0, longitudinalG: -1.8);
+            GForceOutput result = null;
+            for (int i = 0; i < 20; i++)
+                result = engine.Compute(new TelemetrySample(newFrame2, oldFrame2, DateTime.UtcNow, TimeSpan.FromMilliseconds(20)), AccelMax, DecelMax);
+
+            Assert.True(result.BottomFrontLeft.Value > 5.0,
+                $"a large coasting deceleration delta should run the deceleration animation, got {result.BottomFrontLeft.Value}");
+        }
 
         // ---------------------------------------------------------------------------------------
         // DIRECTION FIX (docs\gforce-direction-fix-report.md) - the driver's own complaint: braking
@@ -665,7 +759,10 @@ namespace QAdvanceFeedback.Tests
         {
             var engine = new GForceEngine();
             var oldFrame = new TelemetryFrame(groundSpeedKmh: 150.0);
-            var newFrame = new TelemetryFrame(groundSpeedKmh: 148.0, longitudinalG: +2.0); // inverted sign
+            // brakePercent supplied (80%) - ANIMATION direction selection now requires the brake pedal
+            // actually applied (docs\lock-and-animation-report.md); this test is about the sign
+            // convention, not that new gate, so the pedal must be committed for the chain to be live.
+            var newFrame = new TelemetryFrame(groundSpeedKmh: 148.0, longitudinalG: +2.0, brakePercent: 80.0); // inverted sign
             var sample = new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromMilliseconds(16));
 
             GForceOutput result = null;
@@ -684,7 +781,9 @@ namespace QAdvanceFeedback.Tests
         {
             var engine = new GForceEngine();
             var oldFrame = new TelemetryFrame(groundSpeedKmh: 100.0);
-            var newFrame = new TelemetryFrame(groundSpeedKmh: 102.0, longitudinalG: -0.8); // inverted sign
+            // throttlePercent supplied (80%) - see the braking mirror test's own remarks on the new
+            // pedal-applied gate.
+            var newFrame = new TelemetryFrame(groundSpeedKmh: 102.0, longitudinalG: -0.8, throttlePercent: 80.0); // inverted sign
             var sample = new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromMilliseconds(16));
 
             GForceOutput result = null;

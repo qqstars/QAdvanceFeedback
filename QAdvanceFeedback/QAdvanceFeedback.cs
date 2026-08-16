@@ -152,9 +152,16 @@ namespace QAdvanceFeedback
                 {
                     LockBrakeThresholdPercent = _settings.Lock.BrakeThresholdPercent,
                     SlipBrakeThresholdPercent = _settings.Slip.BrakeThresholdPercent,
-                    SlipThrottleThresholdPercent = _settings.Slip.ThrottleThresholdPercent
+                    SlipThrottleThresholdPercent = _settings.Slip.ThrottleThresholdPercent,
+                    LockSensibility = _settings.Lock.LockSensibility
                 };
-                LegacyWheelLockSlipResult legacy = _legacyEngine.Compute(sample, thresholds);
+                // Aggregation weights (docs\aggregation-report.md) - read fresh from settings every
+                // frame, exactly like thresholds above, so an Apply takes effect on the very next frame
+                // with no engine rebuild (the owner's explicit "tune without a rebuild" requirement).
+                AggregationWeights lockAggregation = _settings.Lock.ToAggregationWeights();
+                AggregationWeights slipAggregation = _settings.Slip.ToAggregationWeights();
+
+                LegacyWheelLockSlipResult legacy = _legacyEngine.Compute(sample, thresholds, lockAggregation, slipAggregation);
                 _publisher.UpdateRaw(legacy);
 
                 // ---- Layer 4 input selection: each of the four wheels, per channel, resolves either
@@ -173,7 +180,20 @@ namespace QAdvanceFeedback
                     _sourceResolver.Resolve(pluginManager, _settings.Slip.SourceRearLeft, _settings.Slip.ScriptTypeRearLeft, legacy.SlipWheels.RearLeft),
                     _sourceResolver.Resolve(pluginManager, _settings.Slip.SourceRearRight, _settings.Slip.ScriptTypeRearRight, legacy.SlipWheels.RearRight));
 
-                NormalizedWheelLockSlipResult normalized = _normalizedEngine.Compute(sample, lockSources, slipSources, gameId, carId);
+                // Diag.Source.* (docs\raw-gap-and-pad-balance-report.md): publish exactly what Layer 4
+                // is about to consume, BEFORE calling it - so a future "does our Raw match the
+                // configured source" investigation can read this straight off the CSV/SimHub property
+                // instead of inverting the Normalized transform to recover it (as this task's own
+                // report had to, for lack of this diagnostic).
+                _publisher.UpdateSource(lockSources, slipSources, lockAggregation, slipAggregation);
+
+                // TRIGGER THRESHOLD (owner-requested restructure - docs\lock-and-animation-report.md):
+                // the SAME thresholds gate Layer 3's Raw (above) AND Layer 4's Normalized (here) - the
+                // whole channel, not just the algorithm's own per-wheel term. The SAME aggregation
+                // weights apply too (docs\aggregation-report.md) - Layer 4 aggregates its OWN per-wheel
+                // output with the same formula/weights Layer 3 used, "inheriting" the scheme.
+                NormalizedWheelLockSlipResult normalized = _normalizedEngine.Compute(
+                    sample, lockSources, slipSources, gameId, carId, thresholds, lockAggregation, slipAggregation);
                 _publisher.UpdateNormalized(normalized);
 
                 double dtSeconds = sample.Dt.HasValue && sample.Dt.Value.TotalSeconds > 0 ? sample.Dt.Value.TotalSeconds : 0.0;
@@ -185,12 +205,17 @@ namespace QAdvanceFeedback
 
                 double accelMaxG = _settings.GForce.EffectiveAccelMaxG(gameId, carId);
                 double decelMaxG = _settings.GForce.EffectiveDecelMaxG(gameId, carId);
-                // The owner-requested "Integrate Wheel Lock and Slip" shake reads the same published
-                // Layer 5 WheelLock.Projected.All/WheelSlip.Projected.All values a driver would already
-                // see on a dashboard - the most user-relevant, already-curve-shaped signal available at
-                // this point in the pipeline, rather than reaching back to Layer 3's Raw or Layer 4's
-                // Normalized values.
-                GForceOutput gforce = _gforceEngine.Compute(sample, accelMaxG, decelMaxG, projected.LockAll, projected.SlipAll);
+                // The owner-requested "Integrate Wheel Lock and Slip" shake reads Layer 5's curve-shaped
+                // value WITHOUT the pulse stage (docs\raw-gap-and-pad-balance-report.md, the
+                // pulse-into-shake fix) - NOT the pulsed WheelLock.Projected.All/WheelSlip.Projected.All
+                // a dashboard displays. The pulse's own 100->min->100 waveform is a presentation effect
+                // for the shaker motor; feeding it into the shake's own amplitude produced one
+                // oscillation modulating another (an unstable "wiggle" with no relation to G) whenever
+                // a channel was both saturated and pulsing. LockAllWithoutPulse/SlipAllWithoutPulse are
+                // the SAME curve projection with that one stage skipped - identical to the pulsed value
+                // whenever the pulse is not actually engaged, differing only while a pulse cycle runs -
+                // see ProjectedWheelLockSlipResult's own remarks.
+                GForceOutput gforce = _gforceEngine.Compute(sample, accelMaxG, decelMaxG, projected.LockAllWithoutPulse, projected.SlipAllWithoutPulse);
                 _publisher.UpdateGForce(gforce);
 
                 // DIRECTION FIX (docs\gforce-direction-fix-report.md): feed the AUTO-mode learners the
