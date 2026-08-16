@@ -92,6 +92,19 @@ namespace QAdvanceFeedback
 
         public void LoadSlipLearners(out Dictionary<string, GripLearnerState> data) => _cache.LoadSlipLearners(out data);
 
+        /// <summary>Version 3 (items 2/3) - see <see cref="RuntimeCache"/>'s own remarks.</summary>
+        public void LoadLockScaleLearners(out Dictionary<string, ScaleLearnerState> data) => _cache.LoadLockScaleLearners(out data);
+
+        public void SaveLockScaleLearners(Dictionary<string, ScaleLearnerState> data) => _cache.SaveLockScaleLearners(data);
+
+        public void LoadSlipScaleLearners(out Dictionary<string, ScaleLearnerState> data) => _cache.LoadSlipScaleLearners(out data);
+
+        public void SaveSlipScaleLearners(Dictionary<string, ScaleLearnerState> data) => _cache.SaveSlipScaleLearners(data);
+
+        public void LoadSurfaceSupport(out Dictionary<string, bool> data) => _cache.LoadSurfaceSupport(out data);
+
+        public void SaveSurfaceSupport(Dictionary<string, bool> data) => _cache.SaveSurfaceSupport(data);
+
         public void SaveSlipLearners(Dictionary<string, GripLearnerState> data) => _cache.SaveSlipLearners(data);
 
         /// <summary>The pre-per-car global Lock peak/samples imported from a legacy-named runtime
@@ -244,6 +257,9 @@ namespace QAdvanceFeedback
             document.SlipLearners ??= new Dictionary<string, GripLearnerState>();
             document.GForceAccelLearnedMaxima ??= new Dictionary<string, double>();
             document.GForceDecelLearnedMaxima ??= new Dictionary<string, double>();
+            document.LockScaleLearners ??= new Dictionary<string, ScaleLearnerState>();
+            document.SlipScaleLearners ??= new Dictionary<string, ScaleLearnerState>();
+            document.SurfaceSupportByGame ??= new Dictionary<string, bool>();
             return document;
         }
 

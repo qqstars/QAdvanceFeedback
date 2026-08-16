@@ -1,29 +1,26 @@
-using QAdvanceFeedback.Core.ShakeIt;
+using QAdvanceFeedback.Core.MotorsExport;
 using SimHub.Plugins;
 
 namespace QAdvanceFeedback
 {
     /// <summary>
-    /// Adapts a live <see cref="PluginManager"/> to <see cref="ShakeItAvailabilityResolver"/> so the
-    /// settings UI can decide, ONCE per channel, whether to show the "Use ShakeIt Motors output"
-    /// toggle at all - "if ShakeIt cannot be FULLY resolved, hide the toggle entirely and behave as
-    /// Manual" (the brief's own words). Follows the same discipline as
-    /// <see cref="SimHubScriptEditor"/>/<see cref="PropertyPickerLauncher"/>/
+    /// Adapts a live <see cref="PluginManager"/> to <see cref="MotorsExportAvailabilityResolver"/> so
+    /// the settings UI can decide, per channel, whether to show the "not currently available yet"
+    /// inline note under the ShakeIt Motors source-mode toggle - the toggle itself is always visible
+    /// and switchable regardless (see <c>Settings.SettingsControl</c>'s own remarks). Follows the same
+    /// discipline as <see cref="SimHubScriptEditor"/>/<see cref="PropertyPickerLauncher"/>/
     /// <see cref="SimHubExpressionEvaluator"/>: never throws, degrades silently, logs at most once per
     /// channel. Unlike those three, no private-type reflection is needed here at all - SimHub's own
-    /// <c>PluginManager.GetPropertyValue</c> is a normal public API (already used by
-    /// <see cref="WheelSourceResolver"/>) - all of the actual "is this really usable" logic lives in
-    /// the pure, unit-tested <see cref="ShakeItAvailabilityResolver"/>; this class only supplies the
-    /// live property reader and the once-only logging.
+    /// <c>PluginManager.GetPropertyValue</c> is a normal public API - all of the actual "is this really
+    /// usable" logic lives in the pure, unit-tested <see cref="MotorsExportAvailabilityResolver"/>; this
+    /// class only supplies the live property reader and the once-only logging.
     /// <para/>
     /// Deliberately NOT cached as a sticky true/false forever: availability is re-checked every call
-    /// (each check is just four cheap <c>PluginManager.GetPropertyValue</c> lookups - the same cost
-    /// <see cref="WheelSourceResolver"/> already pays every frame for a Plain source), so a driver who
-    /// sets up the ShakeIt export mid-session sees the toggle appear without a SimHub restart. Only
-    /// the "not currently available" LOG line is throttled to once per channel, so a driver who simply
-    /// has not configured ShakeIt yet does not get a line spammed into the log.
+    /// (each check is just four cheap property lookups), so a driver who sets up the ShakeIt export
+    /// mid-session sees the note disappear without a SimHub restart. Only the "not currently available"
+    /// log line is throttled to once per channel.
     /// </summary>
-    public sealed class ShakeItSourceProvider
+    public sealed class MotorsExportAvailabilityProvider
     {
         private bool _loggedLockUnavailable;
         private bool _loggedSlipUnavailable;
@@ -34,7 +31,7 @@ namespace QAdvanceFeedback
 
         private bool Check(PluginManager pluginManager, bool isLockChannel)
         {
-            bool available = ShakeItAvailabilityResolver.IsAvailable(name => SafeGet(pluginManager, name), isLockChannel);
+            bool available = MotorsExportAvailabilityResolver.IsAvailable(name => SafeGet(pluginManager, name), isLockChannel);
             if (!available) LogOnceUnavailable(isLockChannel);
             return available;
         }

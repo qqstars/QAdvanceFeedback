@@ -4,7 +4,7 @@ namespace QAdvanceFeedback.Core
     /// Clamping used at the publish boundary. Every value this plugin actually publishes as a
     /// "Raw.*" property passes through <see cref="To0100"/> - this is what turns SimHub's own
     /// native-scale effect arithmetic (unbounded above in places, see
-    /// <see cref="LegacySlipAlgorithm"/>'s remarks on scaling) into the strictly 0-100 range the
+    /// <c>BrakeSpeedSlipModel</c>'s remarks on scaling) into the strictly 0-100 range the
     /// brief requires.
     /// </summary>
     public static class ClampMath

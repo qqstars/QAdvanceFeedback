@@ -86,7 +86,7 @@
 
   <DockPanel>
     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="8,8,8,0">
-      <Button x:Name="ApplyButton" Padding="16,4"/>
+      <Button x:Name="ApplyButton" Padding="16,4" IsEnabled="False"/>
       <Button x:Name="RestoreAllDefaultsButton" Padding="16,4"/>
     </StackPanel>
 

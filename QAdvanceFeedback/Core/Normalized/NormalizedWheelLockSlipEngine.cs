@@ -46,7 +46,7 @@ namespace QAdvanceFeedback.Core.Normalized
     /// project's own Task 32 fix applies.
     /// <para/>
     /// NOTE: Layer 3's OWN internal <c>Brake &gt; 20</c> / <c>Throttle &gt; 40</c> gates (inside
-    /// <see cref="LegacySlipAlgorithm"/>) are SimHub's own decompiled design and are UNCHANGED by this
+    /// <c>BrakeSpeedSlipModel</c>) are SimHub's own decompiled design and are UNCHANGED by this
     /// - this fix is about Layer 4's direction decision only.
     /// </summary>
     public sealed class NormalizedWheelLockSlipEngine
@@ -128,6 +128,56 @@ namespace QAdvanceFeedback.Core.Normalized
         /// </summary>
         public const double SlipLearnMaxPlausibleG = 6.0;
 
+        /// <summary>
+        /// PER-SOURCE INPUT CALIBRATION (docs\branch-dispatch-and-source-keyed-learning-report.md,
+        /// the owner's own follow-up on top of source-KEYED learning): the fraction of THIS car's own
+        /// learned physical grip-limit reference (<see cref="_lockPhysicalReference"/>/
+        /// <see cref="_slipPhysicalReference"/>'s own <see cref="GripLearner.Ratio"/>) at/above which a
+        /// frame is treated as "physically at the limit right now" - the moment
+        /// <see cref="KeyedScaleLearner"/>'s primary tier learns each source's own characteristic
+        /// near-limit reading from. 0.85, not 1.0: the physical reference's own learned peak is itself a
+        /// DECAYING maximum (see <see cref="GripLearner.Observe"/>'s own remarks), so requiring the
+        /// live ratio to reach the exact historical peak on every calibrating frame would make this
+        /// trigger condition needlessly rare; 85% of the car's own learned peak is still unambiguously
+        /// "close to the limit", not merely "committed".
+        /// </summary>
+        public const double PhysicalLimitRatioThreshold = 0.85;
+
+        /// <summary>
+        /// Minimum raw MEAN before a frame is even eligible to teach <see cref="KeyedScaleLearner"/>
+        /// anything (either tier) - guards against mistaking a merely "technically active" but
+        /// otherwise negligible raw reading (e.g. a value chosen only to clear
+        /// <see cref="RawActiveThreshold"/> so the release envelope does not decay, not to represent a
+        /// genuine near-limit reading - several of this engine's own calibration tests use exactly such
+        /// a placeholder) for "this is what the source reads at its own ceiling". A REAL source's own
+        /// near-limit reading (per the owner's own worked examples: 30 at minimum, for the smallest of
+        /// the three sample sources) sits comfortably above this bar; only a deliberately tiny
+        /// placeholder does not. Chosen well above <see cref="RawActiveThreshold"/> (1.0) precisely so
+        /// the two thresholds serve different purposes and do not have to agree.
+        /// </summary>
+        public const double MinRawForCalibrationObservation = 10.0;
+
+        /// <summary>
+        /// SURFACE-KEYED LEARNING (docs\branch-dispatch-and-source-keyed-learning-report.md - the
+        /// owner's own follow-up: a learned grip reference dominated by tarmac silently reads a genuine
+        /// loose-surface limit as low severity). Time constant for smoothing the raw, potentially noisy
+        /// per-frame <see cref="SurfaceLooseFraction"/> before it is used to blend between the "Sealed"
+        /// and "Loose" learned references - THE mechanism that keeps a tarmac/grass boundary crossing
+        /// from producing a step change in output (this task's own explicit continuity requirement).
+        /// 0.25s - fast enough that a genuine, sustained surface change (a corner exit onto full grass)
+        /// is reflected within a fraction of a second, slow enough that brief, single-frame noise in the
+        /// underlying per-wheel reading does not visibly wobble the blend.
+        /// </summary>
+        private const double SurfaceFractionSmoothingTauSeconds = 0.25;
+
+        /// <summary>How close the SMOOTHED loose fraction must be to 0 or 1 before a frame is trusted
+        /// enough to teach either the "Sealed" or "Loose" bucket anything - "excluding [ambiguous/mixed]
+        /// frames [from learning] is safest for learning integrity" (this task's own explicit
+        /// instruction). A frame whose smoothed fraction sits strictly between these two bounds (i.e.
+        /// wheels currently disagree, or a transition is still in progress) teaches NEITHER bucket -
+        /// only the LIVE blended read still uses it.</summary>
+        private const double SurfaceLearningPurityThreshold = 0.05;
+
         // NOTE: an earlier revision of this file added a "low-speed lock compensation" here, based on
         // the hypothesis that Layer 3's own RPM/speed brake term is proportional to ground speed.
         // SUPERSEDED (docs\lock-and-animation-report.md): the owner confirmed switching the Wheel Lock
@@ -135,13 +185,35 @@ namespace QAdvanceFeedback.Core.Normalized
         // layer (Normalized/Projected) was never the defect - it was Layer 3's own reproduction of
         // SimHub's algorithm using the WRONG branch. Applying a Layer-4 compensation here would have
         // incorrectly altered the ALREADY-CORRECT ShakeIt-sourced values too (this layer cannot know
-        // where rawLockWheels came from) - removed entirely; the real fix now lives in
-        // Private\QAdvanceFeedback\SimpleBrakingLockAlgorithm.cs / LegacyWheelLockSlipEngine.cs.
+        // where rawLockWheels came from) - removed entirely; the real fix now lives in Layer 3
+        // (QAdvanceFeedback.Core.RawCalculator.BrakingVsSpeedModel/RawCalculatorEngine).
 
         private readonly KeyedGripLearner _lockLearners;
         private readonly KeyedGripLearner _slipLearners;
         private readonly LongitudinalDirectionResolver _direction;
         private readonly TelemetryLearningGate _learningGate;
+
+        // ---- PER-SOURCE INPUT CALIBRATION state (docs\branch-dispatch-and-source-keyed-learning-report.md).
+        // _lockPhysicalReference/_slipPhysicalReference are DEDICATED, (game,car)-ONLY KeyedGripLearner
+        // instances (always queried with an empty sourceIdentity - see ComputeChannel) used SOLELY to
+        // detect "is this frame physically at this car's own learned grip limit", SHARED across every
+        // configured source for the SAME reason _lockLearners/_slipLearners above are source-keyed:
+        // the physics (grip limit, achieved deceleration) is identical regardless of which source is
+        // configured, so the detector must not need to re-warm-up every time the driver switches
+        // sources - only the RAW READING recorded at that shared physical moment (in
+        // _lockScaleLearner/_slipScaleLearner, which ARE keyed by source) differs per source.
+        private readonly KeyedGripLearner _lockPhysicalReference;
+        private readonly KeyedGripLearner _slipPhysicalReference;
+        private readonly KeyedScaleLearner _lockScaleLearner = new KeyedScaleLearner();
+        private readonly KeyedScaleLearner _slipScaleLearner = new KeyedScaleLearner();
+
+        // Last-computed per-source scale ceiling (native units) + which tier produced it - exposed for
+        // diagnostics (Diag.Lock.SourceScaleCeiling/Diag.Slip.SourceScaleCeiling), mirroring how
+        // CurrentDirection below exposes _direction's own last-resolved state.
+        private double? _lockScaleCeiling;
+        private bool _lockScaleCeilingIsPrimaryTier;
+        private double? _slipScaleCeiling;
+        private bool _slipScaleCeilingIsPrimaryTier;
 
         // ---- Per-channel release-envelope state (defect D) - see the remarks above. Reset alongside
         // the direction filter (ResetDirection) so a game/session switch does not inherit a stale
@@ -149,12 +221,28 @@ namespace QAdvanceFeedback.Core.Normalized
         private double _lockRawPresence;
         private double _slipRawPresence;
 
+        // ---- Surface-keyed learning smoothing state (see SurfaceFractionSmoothingTauSeconds' own
+        // remarks) - one smoothed loose-fraction per channel, reset alongside the release envelopes
+        // above (a fresh game/session should not inherit a stale "was on grass" blend).
+        private double _lockLooseFraction;
+        private double _slipLooseFraction;
+
+        // PER-GAME TELEMETRY SUPPORT DETECTION (telemetry-integrity pass, item 2) - see
+        // KeyedTelemetrySupport's own remarks. Deliberately NOT reset on a game switch (unlike the
+        // per-channel presence/loose-fraction state below) - support is a property of the TITLE, keyed
+        // and persisted per game, so it must survive exactly the game switch a plain session-scoped latch
+        // would have thrown away.
+        private readonly KeyedTelemetrySupport _surfaceSupport = new KeyedTelemetrySupport();
+        private string _lastGameId = string.Empty;
+
         public NormalizedWheelLockSlipEngine(
             KeyedGripLearner lockLearners = null, KeyedGripLearner slipLearners = null,
             LongitudinalDirectionResolver directionResolver = null, TelemetryLearningGate learningGate = null)
         {
             _lockLearners = lockLearners ?? new KeyedGripLearner(LockLearnMaxPlausibleG);
             _slipLearners = slipLearners ?? new KeyedGripLearner(SlipLearnMaxPlausibleG);
+            _lockPhysicalReference = new KeyedGripLearner(LockLearnMaxPlausibleG);
+            _slipPhysicalReference = new KeyedGripLearner(SlipLearnMaxPlausibleG);
             _direction = directionResolver ?? new LongitudinalDirectionResolver();
             _learningGate = learningGate ?? new TelemetryLearningGate();
         }
@@ -168,6 +256,50 @@ namespace QAdvanceFeedback.Core.Normalized
 
         /// <summary>The Slip channel's equivalent of <see cref="LockLearners"/>.</summary>
         public KeyedGripLearner SlipLearners => _slipLearners;
+
+        /// <summary>The Lock channel's own per-source calibration learner (COLD/WARM persisted, item 3)
+        /// - exposed so the composition root can Import/Export its cold ceilings through
+        /// <c>RuntimeStore</c> at Init/every frame, mirroring <see cref="LockLearners"/>'s own exposure.</summary>
+        public KeyedScaleLearner LockScaleLearner => _lockScaleLearner;
+
+        /// <summary>The Slip channel's equivalent of <see cref="LockScaleLearner"/>.</summary>
+        public KeyedScaleLearner SlipScaleLearner => _slipScaleLearner;
+
+        /// <summary>The Lock channel's currently-configured source's own learned near-the-limit ceiling
+        /// (native units, this source's own scale) - null while not yet calibrated (cold start). See
+        /// <see cref="KeyedScaleLearner"/>'s own remarks.</summary>
+        public double? LockScaleCeiling => _lockScaleCeiling;
+
+        /// <summary>Whether <see cref="LockScaleCeiling"/> came from the PRIMARY (physically-anchored)
+        /// tier (true) or the SECONDARY (percentile fallback) tier (false) - meaningless while
+        /// <see cref="LockScaleCeiling"/> itself is null.</summary>
+        public bool LockScaleCeilingIsPrimaryTier => _lockScaleCeilingIsPrimaryTier;
+
+        /// <summary>The Slip channel's equivalent of <see cref="LockScaleCeiling"/>.</summary>
+        public double? SlipScaleCeiling => _slipScaleCeiling;
+
+        /// <summary>The Slip channel's equivalent of <see cref="LockScaleCeilingIsPrimaryTier"/>.</summary>
+        public bool SlipScaleCeilingIsPrimaryTier => _slipScaleCeilingIsPrimaryTier;
+
+        /// <summary>Whether the CURRENT game (the last one <see cref="Compute"/> was called with) is
+        /// known to genuinely support loose-surface reporting - see
+        /// <see cref="KeyedTelemetrySupport"/>'s own remarks (sustained evidence required, promotion
+        /// instant, demotion never, persisted per game). False on a title that never populates the field
+        /// meaningfully at all (degrading, by construction, to the single-reference behaviour this plugin
+        /// had before surface-keying existed).</summary>
+        public bool SurfaceEverReportedLoose => _surfaceSupport.IsSupported(_lastGameId);
+
+        /// <summary>The full per-GAME support detector - exposed so the plugin composition root can
+        /// Import/Export it through <c>RuntimeStore</c> at Init/every frame, mirroring
+        /// <see cref="LockLearners"/>/<see cref="SlipLearners"/>'s own exposure pattern.</summary>
+        public KeyedTelemetrySupport SurfaceSupport => _surfaceSupport;
+
+        /// <summary>The Lock channel's current smoothed loose-surface fraction (0.0 = purely sealed,
+        /// 1.0 = purely loose) - exposed for diagnostics/troubleshooting.</summary>
+        public double LockLooseFraction => _lockLooseFraction;
+
+        /// <summary>The Slip channel's equivalent of <see cref="LockLooseFraction"/>.</summary>
+        public double SlipLooseFraction => _slipLooseFraction;
 
         /// <summary>The most recently resolved direction - exposed for diagnostics (e.g. a settings
         /// UI/dashboard readout of "why is the lock channel silent right now").</summary>
@@ -184,6 +316,9 @@ namespace QAdvanceFeedback.Core.Normalized
             _learningGate.Reset();
             _lockRawPresence = 0.0;
             _slipRawPresence = 0.0;
+            _lockLooseFraction = 0.0;
+            _slipLooseFraction = 0.0;
+            // _surfaceSupport is DELIBERATELY not touched here - see its own field remarks.
         }
 
         /// <param name="sample">This frame's telemetry.</param>
@@ -198,10 +333,10 @@ namespace QAdvanceFeedback.Core.Normalized
         /// TRIGGER THRESHOLD (owner-requested restructure - see <see cref="LegacyThresholds"/>'s own
         /// remarks and docs\lock-and-animation-report.md). Null (the default) uses
         /// <see cref="LegacyThresholds.Defaults"/>, mirroring every other threshold-consuming method in
-        /// this plugin family (<c>LegacySlipAlgorithm.Compute</c>, <c>LegacyWheelLockSlipEngine.Compute</c>)
+        /// this plugin family (<c>BrakeSpeedSlipModel.Compute</c>, <c>RawCalculatorEngine.Compute</c>)
         /// - every pre-existing caller/test keeps compiling and behaving exactly as before. Below the
         /// channel's own pedal threshold, THIS layer's own output (in addition to Layer 3's Raw - see
-        /// <c>LegacyWheelLockSlipEngine</c>) reads an unconditional zero for the whole channel - see
+        /// <c>RawCalculatorEngine</c>) reads an unconditional zero for the whole channel - see
         /// <see cref="ComputeChannel"/>'s own remarks for exactly where this is applied relative to the
         /// pre-existing "no signal at all" fallback and the direction-based "engaged" gate.
         /// </param>
@@ -215,10 +350,24 @@ namespace QAdvanceFeedback.Core.Normalized
         /// <param name="slipAggregation">Wheel Slip's own <see cref="Aggregator"/> weights - see
         /// <paramref name="lockAggregation"/>'s own remarks. Null (the default) means
         /// <see cref="AggregationWeights.SlipDefaults"/>.</param>
+        /// <param name="lockSourceIdentity">
+        /// SOURCE-KEYED LEARNING (docs\branch-dispatch-and-source-keyed-learning-report.md, "Part 2") -
+        /// the Lock channel's current <see cref="SourceIdentity"/> (all four of its per-wheel source
+        /// configurations, combined). Extends <see cref="KeyedGripLearner"/>'s key from (game,car) to
+        /// (game,car,source) so switching the configured Lock source (ShakeIt export, this plugin's own
+        /// Raw, a third-party property, a custom expression) gets its OWN isolated learned reference,
+        /// never silently reusing a DIFFERENT source's calibration. Defaults to empty - every
+        /// pre-existing caller/test that predates source-keying keeps compiling and behaving exactly as
+        /// before (still a real, stable, per-(game,car) key of its own; only a caller that ALSO varies
+        /// this parameter observes the new per-source isolation).</param>
+        /// <param name="slipSourceIdentity">The Slip channel's equivalent of
+        /// <paramref name="lockSourceIdentity"/> - independent (Slip's own four wheels may be configured
+        /// to a completely different source than Lock's).</param>
         public NormalizedWheelLockSlipResult Compute(
             ITelemetrySample sample, Corners rawLockWheels, Corners rawSlipWheels,
             string gameId = "", string carId = "", LegacyThresholds? thresholds = null,
-            AggregationWeights? lockAggregation = null, AggregationWeights? slipAggregation = null)
+            AggregationWeights? lockAggregation = null, AggregationWeights? slipAggregation = null,
+            string lockSourceIdentity = "", string slipSourceIdentity = "")
         {
             if (sample == null) throw new ArgumentNullException(nameof(sample));
 
@@ -250,12 +399,33 @@ namespace QAdvanceFeedback.Core.Normalized
 
             double dtSeconds = sample.Dt.HasValue && sample.Dt.Value.TotalSeconds > 0.0 ? sample.Dt.Value.TotalSeconds : 0.0;
 
-            Corners lockWheels = ComputeChannel(sample.New, rawLockWheels, motion, _lockLearners, gameId, carId,
+            // SURFACE-KEYED LEARNING (docs\branch-dispatch-and-source-keyed-learning-report.md) - the
+            // instantaneous per-frame loose fraction (0 when the title reports no surface data at all,
+            // by construction - see SurfaceLooseFraction's own remarks); smoothing happens per-channel
+            // inside ComputeChannel (each channel's own release-envelope-style state).
+            ITelemetryFrame frame = sample.New;
+            double instantLooseFraction = SurfaceLooseFraction.Compute(
+                frame?.WheelOnLooseSurfaceFrontLeft, frame?.WheelOnLooseSurfaceFrontRight,
+                frame?.WheelOnLooseSurfaceRearLeft, frame?.WheelOnLooseSurfaceRearRight);
+
+            // PER-GAME TELEMETRY SUPPORT DETECTION (item 2) - null when the field itself was not
+            // reachable this frame (no evidence either way); otherwise the real true/false reading -
+            // KeyedTelemetrySupport itself only ever promotes on SUSTAINED true evidence (see its own
+            // remarks), so a single frame's "true" is not enough on its own.
+            _lastGameId = gameId ?? string.Empty;
+            bool surfaceFieldReachable = SurfaceLooseFraction.AnyWheelReported(
+                frame?.WheelOnLooseSurfaceFrontLeft, frame?.WheelOnLooseSurfaceFrontRight,
+                frame?.WheelOnLooseSurfaceRearLeft, frame?.WheelOnLooseSurfaceRearRight);
+            _surfaceSupport.Observe(gameId, surfaceFieldReachable ? (bool?)(instantLooseFraction > 0.0) : null);
+
+            Corners lockWheels = ComputeChannel(sample.New, rawLockWheels, motion, _lockLearners, _lockPhysicalReference, _lockScaleLearner,
+                gameId, carId, lockSourceIdentity, instantLooseFraction,
                 direction == LongitudinalMotionState.Slowing, lockTriggered, lockObserveAllowed, dtSeconds,
-                ref _lockRawPresence);
-            Corners slipWheels = ComputeChannel(sample.New, rawSlipWheels, motion, _slipLearners, gameId, carId,
+                ref _lockRawPresence, ref _lockLooseFraction, out _lockScaleCeiling, out _lockScaleCeilingIsPrimaryTier);
+            Corners slipWheels = ComputeChannel(sample.New, rawSlipWheels, motion, _slipLearners, _slipPhysicalReference, _slipScaleLearner,
+                gameId, carId, slipSourceIdentity, instantLooseFraction,
                 direction == LongitudinalMotionState.SpeedingUp, slipTriggered, slipObserveAllowed, dtSeconds,
-                ref _slipRawPresence);
+                ref _slipRawPresence, ref _slipLooseFraction, out _slipScaleCeiling, out _slipScaleCeilingIsPrimaryTier);
 
             WheelAggregate lockAggregate = Aggregator.Compute(lockWheels, lockWeights);
             WheelAggregate slipAggregate = Aggregator.Compute(slipWheels, slipWeights);
@@ -267,15 +437,36 @@ namespace QAdvanceFeedback.Core.Normalized
                 slipAggregate.Front, slipAggregate.Rear, slipAggregate.Left, slipAggregate.Right, slipAggregate.All);
         }
 
+        /// <summary>See <see cref="KeyedScaleLearner"/>'s own physical-anchor sentinel - the fixed,
+        /// empty source identity <see cref="_lockPhysicalReference"/>/<see cref="_slipPhysicalReference"/>
+        /// are ALWAYS queried/observed with, regardless of the real, per-channel <paramref name="sourceIdentity"/>
+        /// the rest of this method uses - see this class's own remarks on why the physical detector is
+        /// deliberately NOT source-keyed.</summary>
+        private const string PhysicalReferenceSourceIdentity = "";
+
+        /// <summary>See <see cref="KeyedGripLearner.MakeKey"/>'s own <c>surfaceBucket</c> parameter -
+        /// the two REAL buckets this engine blends between. Public so a test (or a diagnostics readout)
+        /// can query <see cref="LockLearners"/>/<see cref="SlipLearners"/> for the EXACT bucket this
+        /// engine itself writes to (a frame with no surface data reported - the overwhelmingly common
+        /// case absent this feature - always resolves to <see cref="SealedSurfaceBucket"/>).</summary>
+        public const string SealedSurfaceBucket = "Sealed";
+
+        /// <summary>See <see cref="SealedSurfaceBucket"/>.</summary>
+        public const string LooseSurfaceBucket = "Loose";
+
         private static Corners ComputeChannel(
             ITelemetryFrame frame, Corners rawWheels, AchievedMotion.Result motion,
-            KeyedGripLearner learners, string gameId, string carId, bool engaged, bool triggered,
-            bool observeAllowed, double dtSeconds, ref double rawPresence)
+            KeyedGripLearner learners, KeyedGripLearner physicalReference, KeyedScaleLearner scaleLearner,
+            string gameId, string carId, string sourceIdentity, double instantLooseFraction, bool engaged, bool triggered,
+            bool observeAllowed, double dtSeconds, ref double rawPresence, ref double smoothedLooseFraction,
+            out double? scaleCeiling, out bool scaleCeilingIsPrimaryTier)
         {
             double w0 = ClampMath.To0100(rawWheels.FrontLeft);
             double w1 = ClampMath.To0100(rawWheels.FrontRight);
             double w2 = ClampMath.To0100(rawWheels.RearLeft);
             double w3 = ClampMath.To0100(rawWheels.RearRight);
+
+            scaleCeiling = scaleLearner.LearnedCeiling(gameId, carId, sourceIdentity, out scaleCeilingIsPrimaryTier);
 
             // TRIGGER THRESHOLD (owner-requested restructure, and the owner's OWN clarification: this
             // gate applies at the SOURCE BOUNDARY, unconditionally, whatever the configured source is
@@ -290,10 +481,19 @@ namespace QAdvanceFeedback.Core.Normalized
                 return Corners.Zero;
 
             // Degradation floor (ladder level 3): no g signal at all, direct or derived - Raw is the
-            // only available basis, so it is passed through rather than reading zero or garbage (but
-            // only once the trigger threshold above has already been cleared).
+            // only available basis, so it is passed through (but PER-SOURCE CALIBRATED - see
+            // KeyedScaleLearner's own remarks - using whatever has already been learned; there is no G
+            // signal this frame to detect a fresh physical-limit moment, so nothing new is OBSERVED
+            // here, only whatever calibration already exists is APPLIED) rather than reading zero,
+            // garbage, or the source's own unrescaled native magnitude.
             if (motion.Level == AchievedMotion.SignalLevel.Unavailable)
-                return new Corners(w0, w1, w2, w3);
+            {
+                return new Corners(
+                    scaleLearner.Rescale(gameId, carId, sourceIdentity, w0),
+                    scaleLearner.Rescale(gameId, carId, sourceIdentity, w1),
+                    scaleLearner.Rescale(gameId, carId, sourceIdentity, w2),
+                    scaleLearner.Rescale(gameId, carId, sourceIdentity, w3));
+            }
 
             // "engaged" = this channel's own direction (Slowing for Lock, SpeedingUp for Slip) is what
             // LongitudinalDirectionResolver measured THIS frame - see this class's own remarks on why
@@ -303,28 +503,80 @@ namespace QAdvanceFeedback.Core.Normalized
             if (!engaged)
                 return Corners.Zero;
 
-            if (observeAllowed && IsLongitudinallyIsolated(frame))
-                learners.Observe(gameId, carId, motion.MagnitudeG);
+            // SURFACE-KEYED LEARNING (docs\branch-dispatch-and-source-keyed-learning-report.md) - smooth
+            // the raw per-frame loose fraction (continuity: see SurfaceFractionSmoothingTauSeconds' own
+            // remarks for why this is a continuous blend, not a discrete Sealed/Loose/Mixed switch).
+            smoothedLooseFraction = ExponentialSmoothTowardTarget(
+                smoothedLooseFraction, instantLooseFraction, dtSeconds, SurfaceFractionSmoothingTauSeconds);
 
-            double gripUtilization = ClampMath.To0100(learners.Ratio(gameId, carId, motion.MagnitudeG) * 100.0);
+            // "Purely" sealed/loose (within SurfaceLearningPurityThreshold of 0/1) is confident enough to
+            // teach that ONE bucket; anything ambiguous in between teaches NEITHER (excluded from
+            // learning entirely - the safest choice for learning integrity) but still gets a LIVE
+            // blended read below.
+            bool confidentlySealed = smoothedLooseFraction <= SurfaceLearningPurityThreshold;
+            bool confidentlyLoose = smoothedLooseFraction >= 1.0 - SurfaceLearningPurityThreshold;
+            string observeBucket = confidentlySealed ? SealedSurfaceBucket : (confidentlyLoose ? LooseSurfaceBucket : null);
+
+            if (observeAllowed && IsLongitudinallyIsolated(frame) && observeBucket != null)
+            {
+                learners.Observe(gameId, carId, motion.MagnitudeG, sourceIdentity, observeBucket);
+                // SHARED physical-limit reference (docs\branch-dispatch-and-source-keyed-learning-report.md)
+                // - always the (game,car)-only source key, regardless of which source is actually
+                // configured, but STILL surface-keyed (the physics genuinely differs by surface too).
+                physicalReference.Observe(gameId, carId, motion.MagnitudeG, PhysicalReferenceSourceIdentity, observeBucket);
+            }
+
+            // LIVE read: blend the Sealed-bucket and Loose-bucket ratios by the SAME smoothed fraction -
+            // continuous in both the underlying ratios and the blend weight, so a surface transition
+            // produces no step change in the published severity.
+            double gripUtilizationSealed = learners.Ratio(gameId, carId, motion.MagnitudeG, sourceIdentity, SealedSurfaceBucket);
+            double gripUtilizationLoose = learners.Ratio(gameId, carId, motion.MagnitudeG, sourceIdentity, LooseSurfaceBucket);
+            double gripUtilization = ClampMath.To0100(Blend(gripUtilizationSealed, gripUtilizationLoose, smoothedLooseFraction) * 100.0);
 
             double mean = (w0 + w1 + w2 + w3) / 4.0;
+
+            // PER-SOURCE INPUT CALIBRATION (docs\branch-dispatch-and-source-keyed-learning-report.md):
+            // detect whether THIS frame is physically at this car's own learned grip limit - using the
+            // SHARED, (game,car)-only physical reference, never the source-keyed one above - and, if so,
+            // teach the scale learner what THIS source's own raw reading looks like at that moment.
+            // Blended the same way as gripUtilization, for the same continuity reason.
+            double physicalConfidenceSealed = physicalReference.Confidence(gameId, carId, PhysicalReferenceSourceIdentity, SealedSurfaceBucket);
+            double physicalConfidenceLoose = physicalReference.Confidence(gameId, carId, PhysicalReferenceSourceIdentity, LooseSurfaceBucket);
+            double physicalConfidence = Blend(physicalConfidenceSealed, physicalConfidenceLoose, smoothedLooseFraction);
+
+            double physicalRatioSealed = physicalReference.Ratio(gameId, carId, motion.MagnitudeG, PhysicalReferenceSourceIdentity, SealedSurfaceBucket);
+            double physicalRatioLoose = physicalReference.Ratio(gameId, carId, motion.MagnitudeG, PhysicalReferenceSourceIdentity, LooseSurfaceBucket);
+            double physicalRatioNow = Blend(physicalRatioSealed, physicalRatioLoose, smoothedLooseFraction);
+
+            bool physicallyAtLimit = physicalConfidence >= 1.0 && physicalRatioNow >= PhysicalLimitRatioThreshold;
+
+            if (mean >= MinRawForCalibrationObservation)
+            {
+                if (physicallyAtLimit) scaleLearner.ObserveAtPhysicalLimit(gameId, carId, sourceIdentity, mean);
+                scaleLearner.ObserveGeneral(gameId, carId, sourceIdentity, mean);
+            }
+
+            double calibratedMean = scaleLearner.Rescale(gameId, carId, sourceIdentity, mean);
+            scaleCeiling = scaleLearner.LearnedCeiling(gameId, carId, sourceIdentity, out scaleCeilingIsPrimaryTier);
 
             // ---- DEFECTS B/D fix - see this class's own remarks on RawActiveThreshold/ReleaseTauSeconds.
             // Instant attack (Raw active this frame -> envelope snaps to 1.0, no lag), fast release
             // (Raw inactive -> envelope decays toward 0 with ReleaseTauSeconds) - the classical
             // asymmetric attack/release shape, deliberately mirroring GForceEngine's own washout
-            // filter convention elsewhere in this plugin.
-            bool rawActiveNow = mean >= RawActiveThreshold;
+            // filter convention elsewhere in this plugin. Uses the CALIBRATED mean (identical to the
+            // raw mean during cold start - see KeyedScaleLearner's own remarks) so this threshold means
+            // the same thing regardless of the configured source's own native scale.
+            bool rawActiveNow = calibratedMean >= RawActiveThreshold;
             rawPresence = rawActiveNow ? 1.0 : ExponentialDecayToZero(rawPresence, dtSeconds, ReleaseTauSeconds);
 
             double effectiveGripUtilization = gripUtilization * rawPresence;
 
-            // The floor: severity can never read BELOW Raw's own instantaneous mean - this is what
-            // guarantees monotonicity in Raw (defects B/C) without needing to lag anything (the floor
-            // itself is instantaneous), while effectiveGripUtilization above is what makes the CEILING
-            // release quickly once Raw stops supporting it (defect D).
-            double severity = Math.Max(effectiveGripUtilization, mean);
+            // The floor: severity can never read BELOW Raw's own (calibrated) instantaneous mean - this
+            // is what guarantees monotonicity in Raw (defects B/C) without needing to lag anything (the
+            // floor itself is instantaneous), while effectiveGripUtilization above is what makes the
+            // CEILING release quickly once Raw stops supporting it (defect D). Calibrated, not raw, so
+            // the floor means the same thing ("roughly at the limit") for every configured source.
+            double severity = Math.Max(effectiveGripUtilization, calibratedMean);
 
             double s0, s1, s2, s3;
             if (mean <= NoRawSignalEpsilon)
@@ -335,6 +587,11 @@ namespace QAdvanceFeedback.Core.Normalized
             }
             else
             {
+                // Scale-invariant proportions (a uniform linear rescale of all four wheels leaves
+                // w_i/mean unchanged) - deliberately built from the RAW w0..w3/mean, not the calibrated
+                // ones, since calibration is a single shared scalar for this frame and therefore cancels
+                // out of the ratio exactly; using raw values here avoids a redundant Rescale call per
+                // wheel for a quantity that would come out identical either way.
                 s0 = w0 / mean; s1 = w1 / mean; s2 = w2 / mean; s3 = w3 / mean;
             }
 
@@ -362,5 +619,25 @@ namespace QAdvanceFeedback.Core.Normalized
             double? lateral = frame?.LateralG;
             return !lateral.HasValue || Math.Abs(lateral.Value) <= LateralIsolationGateG;
         }
+
+        /// <summary>Standard dt-correct exponential smoothing of <paramref name="previous"/> TOWARD
+        /// <paramref name="target"/> (as opposed to <see cref="ExponentialDecayToZero"/>'s fixed
+        /// zero target) - used for <see cref="SurfaceFractionSmoothingTauSeconds"/>'s own continuity
+        /// requirement (docs\branch-dispatch-and-source-keyed-learning-report.md). A non-positive/
+        /// non-finite dt holds <paramref name="previous"/> unchanged, same convention as
+        /// <see cref="ExponentialDecayToZero"/>.</summary>
+        private static double ExponentialSmoothTowardTarget(double previous, double target, double dtSeconds, double tauSeconds)
+        {
+            if (!ClampMath.IsFinite(dtSeconds) || dtSeconds <= 0.0) return previous;
+            double alpha = 1.0 - Math.Exp(-dtSeconds / tauSeconds);
+            return previous + alpha * (target - previous);
+        }
+
+        /// <summary>Linear blend between <paramref name="sealedValue"/> (weight <c>1-fraction</c>) and
+        /// <paramref name="looseValue"/> (weight <paramref name="fraction"/>) - the mechanism that keeps
+        /// a surface transition continuous rather than a discrete bucket switch (see
+        /// <see cref="SurfaceLooseFraction"/>'s own remarks).</summary>
+        private static double Blend(double sealedValue, double looseValue, double fraction)
+            => sealedValue * (1.0 - fraction) + looseValue * fraction;
     }
 }

@@ -120,7 +120,7 @@ namespace QAdvanceFeedback.Tests
         // ------------------------------------------------------------------------------------
         // TRIGGER THRESHOLD (owner-requested restructure, promoted out of "Sources" into its own
         // section - docs\lock-and-animation-report.md). Semantics: below the channel's own pedal
-        // threshold, BOTH Raw (Layer 3 - see LegacyWheelLockSlipEngineTests, Private\) AND Normalized
+        // threshold, BOTH Raw (Layer 3 - see RawCalculatorEngineTests) AND Normalized
         // (here) read exactly 0 - applied at the SOURCE BOUNDARY (this engine's own rawLockWheels/
         // rawSlipWheels parameters), unconditionally, regardless of what those values actually are or
         // where they came from (our own Raw, a ShakeIt export, or a Manual property/expression) - the
@@ -388,7 +388,7 @@ namespace QAdvanceFeedback.Tests
 
             NormalizedWheelLockSlipResult result = engine.Compute(sample, raw, Corners.Zero);
 
-            Assert.Equal(0, engine.LockLearners.Samples(string.Empty, string.Empty)); // excluded from learning
+            Assert.Equal(0, engine.LockLearners.Samples(string.Empty, string.Empty, string.Empty, NormalizedWheelLockSlipEngine.SealedSurfaceBucket)); // excluded from learning
             Assert.True(result.LockAll > 0.0);            // but still produces a live reading
         }
 
@@ -544,8 +544,8 @@ namespace QAdvanceFeedback.Tests
         // at THIS layer (Normalized). SUPERSEDED (docs\lock-and-animation-report.md): the owner
         // confirmed switching the Wheel Lock SOURCE to SimHub's own ShakeIt export resolves the
         // driver's complaint entirely - proving this layer was never the defect. The real fix (and its
-        // tests) now live in Private\QAdvanceFeedback.Tests\ against SimpleBrakingLockAlgorithm/
-        // LegacyWheelLockSlipEngine, where the actual Layer 3 branch mismatch was found.
+        // tests) now live in BrakingVsSpeedModelTests/RawCalculatorEngineTests, where the actual
+        // Layer 3 branch mismatch was found.
 
         [Fact]
         public void Aggregates_are_produced_by_the_same_owner_configured_scheme_layer_3_uses()
@@ -688,7 +688,7 @@ namespace QAdvanceFeedback.Tests
 
             NormalizedWheelLockSlipResult result = engine.Compute(sample, raw, Corners.Zero);
 
-            Assert.Equal(0, engine.LockLearners.Samples(string.Empty, string.Empty));
+            Assert.Equal(0, engine.LockLearners.Samples(string.Empty, string.Empty, string.Empty, NormalizedWheelLockSlipEngine.SealedSurfaceBucket));
             Assert.True(result.LockAll > 0.0, "measured direction still drives a live reading even while excluded from learning");
         }
 
@@ -711,7 +711,7 @@ namespace QAdvanceFeedback.Tests
 
             NormalizedWheelLockSlipResult result = engine.Compute(sample, raw, Corners.Zero);
 
-            Assert.Equal(0, engine.LockLearners.Samples(string.Empty, string.Empty));
+            Assert.Equal(0, engine.LockLearners.Samples(string.Empty, string.Empty, string.Empty, NormalizedWheelLockSlipEngine.SealedSurfaceBucket));
             Assert.Equal(0.0, result.LockAll, 6);
         }
 
@@ -728,7 +728,7 @@ namespace QAdvanceFeedback.Tests
 
             NormalizedWheelLockSlipResult result = engine.Compute(sample, Corners.Zero, raw);
 
-            Assert.Equal(0, engine.SlipLearners.Samples(string.Empty, string.Empty));
+            Assert.Equal(0, engine.SlipLearners.Samples(string.Empty, string.Empty, string.Empty, NormalizedWheelLockSlipEngine.SealedSurfaceBucket));
             Assert.Equal(0.0, result.SlipAll, 6);
         }
 
@@ -746,10 +746,10 @@ namespace QAdvanceFeedback.Tests
             var newFrame = new TelemetryFrame(groundSpeedKmh: 300.0, longitudinalG: -3.0, brakePercent: 80.0);
             var teleportSample = new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromMilliseconds(16));
 
-            int samplesBefore = engine.LockLearners.Samples(string.Empty, string.Empty);
+            int samplesBefore = engine.LockLearners.Samples(string.Empty, string.Empty, string.Empty, NormalizedWheelLockSlipEngine.SealedSurfaceBucket);
             engine.Compute(teleportSample, raw, Corners.Zero);
 
-            Assert.Equal(samplesBefore, engine.LockLearners.Samples(string.Empty, string.Empty));
+            Assert.Equal(samplesBefore, engine.LockLearners.Samples(string.Empty, string.Empty, string.Empty, NormalizedWheelLockSlipEngine.SealedSurfaceBucket));
         }
 
         [Fact]
@@ -767,7 +767,7 @@ namespace QAdvanceFeedback.Tests
 
             for (int i = 0; i < 5; i++) engine.Compute(BrakingSample(18.0), raw, Corners.Zero);
 
-            Assert.Equal(0, engine.LockLearners.Samples(string.Empty, string.Empty));
+            Assert.Equal(0, engine.LockLearners.Samples(string.Empty, string.Empty, string.Empty, NormalizedWheelLockSlipEngine.SealedSurfaceBucket));
         }
     }
 }

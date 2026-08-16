@@ -76,6 +76,57 @@ namespace QAdvanceFeedback.Core.Runtime
 
         private static readonly Dictionary<string, GripLearnerState> EmptyLearners = new Dictionary<string, GripLearnerState>();
 
+        /// <summary>Version 3 (items 2/3): the Raw-side per-source calibration learner's persisted cold
+        /// ceilings - see <c>KeyedScaleLearner</c>. Same in-memory-only convention as
+        /// <see cref="LoadLockLearners"/>/<see cref="SaveLockLearners"/> above.</summary>
+        public void LoadLockScaleLearners(out Dictionary<string, ScaleLearnerState> data)
+        {
+            lock (_gate) { data = new Dictionary<string, ScaleLearnerState>(_document.LockScaleLearners, StringComparer.Ordinal); }
+        }
+
+        public void SaveLockScaleLearners(Dictionary<string, ScaleLearnerState> data)
+        {
+            lock (_gate)
+            {
+                _document.LockScaleLearners = new Dictionary<string, ScaleLearnerState>(data ?? EmptyScaleLearners, StringComparer.Ordinal);
+                _dirty = true;
+            }
+        }
+
+        public void LoadSlipScaleLearners(out Dictionary<string, ScaleLearnerState> data)
+        {
+            lock (_gate) { data = new Dictionary<string, ScaleLearnerState>(_document.SlipScaleLearners, StringComparer.Ordinal); }
+        }
+
+        public void SaveSlipScaleLearners(Dictionary<string, ScaleLearnerState> data)
+        {
+            lock (_gate)
+            {
+                _document.SlipScaleLearners = new Dictionary<string, ScaleLearnerState>(data ?? EmptyScaleLearners, StringComparer.Ordinal);
+                _dirty = true;
+            }
+        }
+
+        private static readonly Dictionary<string, ScaleLearnerState> EmptyScaleLearners = new Dictionary<string, ScaleLearnerState>();
+
+        /// <summary>Version 3 (item 2): per-GAME telemetry support detection - see
+        /// <c>KeyedTelemetrySupport</c>.</summary>
+        public void LoadSurfaceSupport(out Dictionary<string, bool> data)
+        {
+            lock (_gate) { data = new Dictionary<string, bool>(_document.SurfaceSupportByGame, StringComparer.Ordinal); }
+        }
+
+        public void SaveSurfaceSupport(Dictionary<string, bool> data)
+        {
+            lock (_gate)
+            {
+                _document.SurfaceSupportByGame = new Dictionary<string, bool>(data ?? EmptySurfaceSupport, StringComparer.Ordinal);
+                _dirty = true;
+            }
+        }
+
+        private static readonly Dictionary<string, bool> EmptySurfaceSupport = new Dictionary<string, bool>();
+
         public void LoadGForceLearners(out Dictionary<string, double> accel, out Dictionary<string, double> decel)
         {
             lock (_gate)
@@ -130,6 +181,9 @@ namespace QAdvanceFeedback.Core.Runtime
             SlipLearners = CloneLearners(source.SlipLearners),
             GForceAccelLearnedMaxima = new Dictionary<string, double>(source.GForceAccelLearnedMaxima, StringComparer.Ordinal),
             GForceDecelLearnedMaxima = new Dictionary<string, double>(source.GForceDecelLearnedMaxima, StringComparer.Ordinal),
+            LockScaleLearners = CloneScaleLearners(source.LockScaleLearners),
+            SlipScaleLearners = CloneScaleLearners(source.SlipScaleLearners),
+            SurfaceSupportByGame = new Dictionary<string, bool>(source.SurfaceSupportByGame, StringComparer.Ordinal),
         };
 
         private static Dictionary<string, GripLearnerState> CloneLearners(Dictionary<string, GripLearnerState> source)
@@ -137,6 +191,14 @@ namespace QAdvanceFeedback.Core.Runtime
             var copy = new Dictionary<string, GripLearnerState>(StringComparer.Ordinal);
             foreach (KeyValuePair<string, GripLearnerState> pair in source)
                 copy[pair.Key] = new GripLearnerState { PeakG = pair.Value.PeakG, Samples = pair.Value.Samples };
+            return copy;
+        }
+
+        private static Dictionary<string, ScaleLearnerState> CloneScaleLearners(Dictionary<string, ScaleLearnerState> source)
+        {
+            var copy = new Dictionary<string, ScaleLearnerState>(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, ScaleLearnerState> pair in source)
+                copy[pair.Key] = new ScaleLearnerState { ColdCeiling = pair.Value.ColdCeiling, ColdIsPrimaryTier = pair.Value.ColdIsPrimaryTier };
             return copy;
         }
     }

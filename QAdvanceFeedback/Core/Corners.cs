@@ -7,7 +7,7 @@ namespace QAdvanceFeedback.Core
     /// EffectHelper.PlacementToIndex uses (confirmed by decompiling SimHub.Plugins.dll):
     /// FrontLeft=0, FrontRight=1, RearLeft=2, RearRight=3. The legacy algorithm's left/right
     /// halving test (<c>wheelIndex % 2</c>) depends on this exact order - see
-    /// <see cref="LegacySlipAlgorithm"/>.
+    /// <c>BrakeSpeedSlipModel</c>.
     /// <para/>
     /// A struct so per-frame maths allocates nothing (ported from the sibling
     /// ReliableWheelLockSlip project's Core/Corners.cs, which follows the same convention).

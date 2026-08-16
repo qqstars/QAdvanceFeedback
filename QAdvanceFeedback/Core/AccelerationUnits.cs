@@ -15,11 +15,11 @@ namespace QAdvanceFeedback.Core
     /// <para/>
     /// THE FIX: convert exactly once, at the Layer 1/2 boundary (<c>SimHubTelemetryAdapter.ToFrame</c>
     /// - the only caller), rather than teaching every downstream consumer to know SimHub's own
-    /// native unit. Kept here (Core, no SimHub dependency) rather than inline in the withheld
-    /// Private\ adapter so the conversion FACTOR itself is unit-testable without a SimHub reference
-    /// (see <c>AccelerationUnitsTests</c>) even though the adapter call site that uses it is not
-    /// (that class lives in a net48-only, gitignored file - see Private\README.md's own remarks on
-    /// why this project's test architecture cannot reach it directly).
+    /// native unit. Kept here (Core, no SimHub dependency) rather than inline in the SimHub-facing
+    /// adapter so the conversion FACTOR itself is unit-testable without a SimHub reference (see
+    /// <c>AccelerationUnitsTests</c>) even though the adapter call site that uses it is not (that
+    /// class needs GameReaderCommon/SimHub types this net8.0 test project deliberately does not
+    /// reference - see docs\architecture.md's own remarks on the SimHub-dependent/pure boundary).
     /// </summary>
     public static class AccelerationUnits
     {

@@ -123,15 +123,22 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(SourceMode.ShakeIt, slipDefaults.SourceMode);
 
             Assert.Equal(20.0, lockDefaults.BrakeThresholdPercent, 6);
+            // 100.0 - the owner's own explicit, deliberate instruction ("by default, set the break
+            // pedal presses as 100%, which means only throttle pedal pressed will trigger wheelSlip"),
+            // confirmed after driving it. A prior pass changed this to 20.0 (reasoning, correctly as a
+            // standalone fact, that SimHub's own decompiled GetRpmSpeedSlipLegacy applies an identical
+            // Brake>20 gate to both Lock and Slip - docs\raw-match-rootcause-report.md) but that
+            // overrode the owner's own tested decision; it was reverted back to 100.0. A driver who
+            // wants SimHub's brake-responsive Slip can still lower this to 20 themselves.
             Assert.Equal(100.0, slipDefaults.BrakeThresholdPercent, 6);
             Assert.Equal(40.0, slipDefaults.ThrottleThresholdPercent, 6);
         }
 
         [Fact]
-        public void ApplyShakeItDefaults_points_all_four_sources_at_the_confirmed_ShakeIt_Motors_names()
+        public void ApplyMotorsExportDefaults_points_all_four_sources_at_the_confirmed_ShakeIt_Motors_names()
         {
             WheelChannelSettings lockSettings = WheelChannelSettings.CreateLockDefaults();
-            lockSettings.ApplyShakeItDefaults(isLockChannel: true);
+            lockSettings.ApplyMotorsExportDefaults(isLockChannel: true);
 
             Assert.Equal(SourceMode.ShakeIt, lockSettings.SourceMode);
             Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelLock.IRacing.FrontLeft", lockSettings.SourceFrontLeft);
@@ -141,7 +148,7 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(ScriptType.Plain, lockSettings.ScriptTypeFrontLeft);
 
             WheelChannelSettings slipSettings = WheelChannelSettings.CreateSlipDefaults();
-            slipSettings.ApplyShakeItDefaults(isLockChannel: false);
+            slipSettings.ApplyMotorsExportDefaults(isLockChannel: false);
             Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelSlip.IRacing.FrontLeft", slipSettings.SourceFrontLeft);
             Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelSlip.IRacing.RearRight", slipSettings.SourceRearRight);
         }
@@ -150,7 +157,7 @@ namespace QAdvanceFeedback.Tests
         public void ResetSourcesToDefault_switches_back_to_Manual_even_after_ShakeIt_was_selected()
         {
             WheelChannelSettings s = WheelChannelSettings.CreateLockDefaults();
-            s.ApplyShakeItDefaults(isLockChannel: true);
+            s.ApplyMotorsExportDefaults(isLockChannel: true);
             Assert.Equal(SourceMode.ShakeIt, s.SourceMode);
 
             s.ResetSourcesToDefault(isLockChannel: true);
@@ -161,7 +168,7 @@ namespace QAdvanceFeedback.Tests
 
         // ---------------------------------------------------------------------------------------
         // THE PER-SOURCE "Reset to default" button's actual model logic - follows the CURRENT mode,
-        // never forces a switch (unlike ResetSourcesToDefault/ApplyShakeItDefaults, which each force
+        // never forces a switch (unlike ResetSourcesToDefault/ApplyMotorsExportDefaults, which each force
         // their own specific mode - those are still used INSIDE this method, see its own remarks).
         // ---------------------------------------------------------------------------------------
 

@@ -1,35 +1,29 @@
 using System;
 using System.Globalization;
 
-namespace QAdvanceFeedback.Core.ShakeIt
+namespace QAdvanceFeedback.Core.MotorsExport
 {
     /// <summary>
     /// Pure, SimHub-free resolution of whether SimHub's own ShakeIt Motors export
-    /// (<see cref="ShakeItPropertyNames"/>, see <c>docs\shakeit-export-guide.md</c>) is currently
+    /// (<see cref="MotorsExportPropertyNames"/>, see <c>docs\shakeit-export-guide.md</c>) is currently
     /// FULLY available for one channel (Wheel Lock or Wheel Slip). Takes the property lookup as an
-    /// injected delegate so this is unit-testable without a live SimHub/PluginManager - the
-    /// plugin-facing <c>ShakeItSourceProvider</c> class (outside Core, since it talks to a real
-    /// PluginManager) adapts <c>PluginManager.GetPropertyValue</c> to this shape, following the same
-    /// resolve-once/degrade-silently discipline as <c>SimHubScriptEditor</c>/
-    /// <c>PropertyPickerLauncher</c>/<c>SimHubExpressionEvaluator</c>, even though the underlying
-    /// primitive here is SimHub's own PUBLIC API (no private-type reflection is needed at all - see
-    /// that class's own remarks).
+    /// injected delegate so this is unit-testable without a live SimHub <c>PluginManager</c> - the
+    /// plugin-facing provider adapts <c>PluginManager.GetPropertyValue</c> to this shape.
     /// <para/>
     /// "FULLY available" means ALL FOUR wheels' properties exist and return a non-null,
     /// finite-convertible value - a partial match (e.g. three wheels exported, one not) is treated as
-    /// UNAVAILABLE, never a partially-working mode, per the brief's "never show a mode that cannot
-    /// work". A missing property is never read as 0 - it simply fails this resolution, and the
-    /// caller falls back to Manual/Raw (see <c>WheelSourceResolver</c>'s own fallback).
+    /// UNAVAILABLE, never a partially-working mode. A missing property is never read as 0 - it simply
+    /// fails this resolution, and the caller falls back to Manual/Raw.
     /// </summary>
-    public static class ShakeItAvailabilityResolver
+    public static class MotorsExportAvailabilityResolver
     {
         public static bool IsAvailable(Func<string, object> propertyReader, bool isLockChannel)
         {
             if (propertyReader == null) return false;
 
-            foreach (string wheel in ShakeItPropertyNames.WheelSuffixes)
+            foreach (string wheel in MotorsExportPropertyNames.WheelSuffixes)
             {
-                string name = ShakeItPropertyNames.GetWheelPropertyName(isLockChannel, wheel);
+                string name = MotorsExportPropertyNames.GetWheelPropertyName(isLockChannel, wheel);
                 object value;
                 try { value = propertyReader(name); }
                 catch { value = null; }

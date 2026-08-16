@@ -36,7 +36,7 @@ namespace QAdvanceFeedback.Settings
         private readonly PluginManager _pluginManager;
         private readonly PropertyPickerLauncher _picker = new PropertyPickerLauncher();
         private readonly SimHubExpressionEvaluator _evaluator = new SimHubExpressionEvaluator();
-        private readonly ShakeItSourceProvider _shakeIt = new ShakeItSourceProvider();
+        private readonly MotorsExportAvailabilityProvider _motorsExport = new MotorsExportAvailabilityProvider();
 
         // Resolved ONCE at construction (mirrors every other reflection-wrapper IsAvailable check in
         // this plugin). IMPORTANT - what this now controls: ONLY whether the "not available yet" inline
@@ -49,16 +49,17 @@ namespace QAdvanceFeedback.Settings
         // work" was the wrong rule here - the toggle is what LETS a driver discover and select ShakeIt
         // mode before they have configured SimHub, so it must always render; only the truthful "is it
         // actually resolving right now" status is conditional. See RefreshSourceModeUi.
-        private readonly bool _lockShakeItAvailable;
-        private readonly bool _slipShakeItAvailable;
+        private readonly bool _lockMotorsExportAvailable;
+        private readonly bool _slipMotorsExportAvailable;
 
         private readonly ProjectorSettings _workingLockProjector = new ProjectorSettings();
         private readonly ProjectorSettings _workingSlipProjector = new ProjectorSettings();
 
         // Guards every programmatic write to a control (loading settings, applying a preset) so the
         // resulting ValueChanged/SelectionChanged events do not re-enter the "user edited this"
-        // handlers.
-        private bool _isUpdatingUi;
+        // handlers, AND drives the Apply button's enabled state (see MarkDirty/MarkClean below and
+        // ApplyDirtyState's own remarks for why this single small class replaced the old bare bool).
+        private readonly ApplyDirtyState _dirty = new ApplyDirtyState();
 
         /// <summary>One source row's three controls, so the button-cascade logic (BUG 2's fix - the
         /// button depends on the ROW'S OWN script type, not just availability) can be refreshed
@@ -79,13 +80,14 @@ namespace QAdvanceFeedback.Settings
             _plugin = plugin ?? throw new ArgumentNullException(nameof(plugin));
             _pluginManager = pluginManager;
 
-            _lockShakeItAvailable = _shakeIt.IsLockAvailable(_pluginManager);
-            _slipShakeItAvailable = _shakeIt.IsSlipAvailable(_pluginManager);
+            _lockMotorsExportAvailable = _motorsExport.IsLockAvailable(_pluginManager);
+            _slipMotorsExportAvailable = _motorsExport.IsSlipAvailable(_pluginManager);
 
             LocalizeStaticText();
             WireSourceButtons();
             WireScriptTypeToggles();
             WireSourceModeToggles();
+            WireDirtyTracking();
 
             WireAnchorEvents(_workingLockProjector, LockStartRaw, LockSlightlyRaw, LockSlightlyOutput,
                 LockModerateRaw, LockModerateOutput, LockCriticalRaw, LockCriticalOutput, LockEndRaw,
@@ -104,9 +106,13 @@ namespace QAdvanceFeedback.Settings
             // Under Auto, the fixed-value spinner stays visible but read-only (IsEnabled=false, not
             // Collapsed) - the brief's own wording - and its value is refreshed to the currently
             // learned figure so the field reads as "here is what Auto has learned", not a stale
-            // Fixed-mode number sitting there doing nothing.
-            GForceAccelModeCombo.SelectionChanged += (s, e) => RefreshGForceModeControls();
-            GForceDecelModeCombo.SelectionChanged += (s, e) => RefreshGForceModeControls();
+            // Fixed-mode number sitting there doing nothing. MarkDirty() is called explicitly here
+            // (rather than relying on the fixed spinner's own ValueChanged, wired in
+            // WireDirtyTracking) because switching to Auto need not actually change that spinner's
+            // Value at all, yet is itself very much a setting the driver just edited.
+            GForceAccelModeCombo.SelectionChanged += (s, e) => { MarkDirty(); RefreshGForceModeControls(); };
+            GForceDecelModeCombo.SelectionChanged += (s, e) => { MarkDirty(); RefreshGForceModeControls(); };
+            GForceLateralDirectionCombo.SelectionChanged += (s, e) => MarkDirty();
             RefreshGForceModeControls();
 
             // While the shake feature is OFF, the settings it governs (frequency, both scales) are
@@ -115,32 +121,130 @@ namespace QAdvanceFeedback.Settings
             // logic here to extract into a testable seam; "unverified without a live WPF window",
             // same as every other visual-only behaviour in this control (see the settings-control
             // wiring report's own remarks on the three UI bugs it fixed).
-            GForceShakeEnabled.Checked += (s, e) => RefreshGForceShakeControls();
-            GForceShakeEnabled.Unchecked += (s, e) => RefreshGForceShakeControls();
+            GForceShakeEnabled.Checked += (s, e) => { MarkDirty(); RefreshGForceShakeControls(); };
+            GForceShakeEnabled.Unchecked += (s, e) => { MarkDirty(); RefreshGForceShakeControls(); };
             RefreshGForceShakeControls();
+
+            // Belt-and-suspenders: every load path above already runs inside a BeginLoading scope
+            // (LoadFromSettings wraps its own body; RefreshGForceModeControls/RefreshGForceShakeControls
+            // wrap theirs), so IsDirty should already be false here - this final call is what actually
+            // GUARANTEES a fresh control starts with Apply disabled, even if some future load path
+            // forgets its own guard.
+            MarkClean();
+        }
+
+        // ------------------------------------------------------------------------------------
+        // Apply-button dirty tracking - see ApplyDirtyState's own remarks for the guard/counter
+        // design. MarkDirty/MarkClean are the ONE centralised path every control's change handler (in
+        // WireDirtyTracking below, plus the few handlers with their own extra business logic elsewhere
+        // in this file) calls, so a newly added control has one obvious thing to wire.
+        // ------------------------------------------------------------------------------------
+
+        private void MarkDirty()
+        {
+            _dirty.MarkDirty();
+            ApplyButton.IsEnabled = _dirty.IsDirty;
+        }
+
+        private void MarkClean()
+        {
+            _dirty.MarkClean();
+            ApplyButton.IsEnabled = false;
+        }
+
+        /// <summary>
+        /// Routes every remaining PLAIN input control - the ones with no business-logic handler of
+        /// their own elsewhere in this file - to MarkDirty. Enumerated explicitly, by control type,
+        /// rather than hooked selectively: a control silently left out here would let a driver believe
+        /// an edit was saved when Apply never actually enabled, which is worse than no dirty tracking
+        /// at all. The controls NOT listed here still reach MarkDirty, just via a handler that also
+        /// does other work:
+        /// <list type="bullet">
+        /// <item>Curve anchor spinners (Lock/SlipStartRaw..EndRaw) - <see cref="OnAnchorRawChanged"/>/
+        /// <see cref="OnAnchorOutputChanged"/>, wired in <see cref="WireAnchorEvents"/>.</item>
+        /// <item>Curve preset combos (Lock/SlipPresetCombo) - the SelectionChanged lambda in
+        /// <see cref="WireAnchorEvents"/>.</item>
+        /// <item>Source mode combos (Lock/SlipSourceModeCombo) - <see cref="ApplySourceDefaultsForMode"/>,
+        /// reached via <see cref="OnSourceModeChanged"/>.</item>
+        /// <item>Per-source "Reset to default" buttons - also <see cref="ApplySourceDefaultsForMode"/>,
+        /// reached via <see cref="ResetSourcesToDefault"/>.</item>
+        /// <item>Script-type toggle buttons - <see cref="ScriptTypeToggle_Click"/> and, for the
+        /// script-editor round trip, <see cref="EditInto"/>.</item>
+        /// <item>Property-picker/script-editor buttons - indirectly, via the source TextBox's own
+        /// TextChanged (wired below), since both PickInto and EditInto write into that TextBox.</item>
+        /// <item>GForce accel/decel mode combos, lateral direction combo, and the shake ToggleSwitch -
+        /// wired directly in the constructor, beside their own RefreshGForceModeControls/
+        /// RefreshGForceShakeControls calls.</item>
+        /// </list>
+        /// </summary>
+        private void WireDirtyTracking()
+        {
+            // ---- mah:NumericUpDown spinners NOT already covered by the curve anchor editor. ----
+            MahApps.Metro.Controls.NumericUpDown[] spinners =
+            {
+                LockBrakeThreshold, LockSensibility, LockWMax, LockWMin, LockWFront, LockWRear,
+                LockPulseGapMs, LockPulseMinValue,
+                SlipBrakeThreshold, SlipThrottleThreshold, SlipWMax, SlipWMin, SlipWFront, SlipWRear,
+                SlipFloorFactor, SlipPulseGapMs, SlipPulseMinValue,
+                GForceFixedAccelMax, GForceFixedDecelMax,
+                GForceBrakeBottomRearSustain, GForceBrakeBackLowSustain,
+                GForceAccelBottomRearSustain, GForceAccelBackLowSustain,
+                GForceSustainTau, GForceTransientTau, GForceTransientGain,
+                GForceShakeFrequency, GForceShakeLockScale, GForceShakeSlipScale
+            };
+            foreach (MahApps.Metro.Controls.NumericUpDown spinner in spinners)
+                spinner.ValueChanged += (s, e) => MarkDirty();
+
+            // ---- Source text boxes. ----
+            TextBox[] sourceBoxes =
+            {
+                LockSourceFl, LockSourceFr, LockSourceRl, LockSourceRr,
+                SlipSourceFl, SlipSourceFr, SlipSourceRl, SlipSourceRr
+            };
+            foreach (TextBox box in sourceBoxes)
+                box.TextChanged += (s, e) => MarkDirty();
+
+            // ---- Checkboxes. ----
+            CheckBox[] checkBoxes = { LockPulseEnabled, SlipPulseEnabled, EnableDiagnosticsCheckBox, ExportCsvCheckBox };
+            foreach (CheckBox box in checkBoxes)
+            {
+                box.Checked += (s, e) => MarkDirty();
+                box.Unchecked += (s, e) => MarkDirty();
+            }
         }
 
         private void RefreshGForceShakeControls()
         {
-            bool enabled = GForceShakeEnabled.IsChecked == true;
-            GForceShakeFrequency.IsEnabled = enabled;
-            GForceShakeLockScale.IsEnabled = enabled;
-            GForceShakeSlipScale.IsEnabled = enabled;
+            // Self-guarded: called both from a genuine user edit (the ToggleSwitch handlers above,
+            // which call MarkDirty() themselves BEFORE this) and from pure reload paths (construction,
+            // after Apply, after Restore) where the IsEnabled flips below must never mark dirty.
+            using (_dirty.BeginLoading())
+            {
+                bool enabled = GForceShakeEnabled.IsChecked == true;
+                GForceShakeFrequency.IsEnabled = enabled;
+                GForceShakeLockScale.IsEnabled = enabled;
+                GForceShakeSlipScale.IsEnabled = enabled;
+            }
         }
 
         private void RefreshGForceModeControls()
         {
-            bool accelAuto = string.Equals(GetSelectedTag(GForceAccelModeCombo, "Fixed"), "Auto", StringComparison.Ordinal);
-            bool decelAuto = string.Equals(GetSelectedTag(GForceDecelModeCombo, "Fixed"), "Auto", StringComparison.Ordinal);
+            // Self-guarded - see RefreshGForceShakeControls's own remarks; the learned-value spinner
+            // assignments below are a DERIVED refresh, never themselves "the user's edit".
+            using (_dirty.BeginLoading())
+            {
+                bool accelAuto = string.Equals(GetSelectedTag(GForceAccelModeCombo, "Fixed"), "Auto", StringComparison.Ordinal);
+                bool decelAuto = string.Equals(GetSelectedTag(GForceDecelModeCombo, "Fixed"), "Auto", StringComparison.Ordinal);
 
-            GForceFixedAccelMax.IsEnabled = !accelAuto;
-            GForceFixedDecelMax.IsEnabled = !decelAuto;
+                GForceFixedAccelMax.IsEnabled = !accelAuto;
+                GForceFixedDecelMax.IsEnabled = !decelAuto;
 
-            if (accelAuto) GForceFixedAccelMax.Value = _plugin.Settings.GForce.CurrentLearnedAccelMaxG;
-            if (decelAuto) GForceFixedDecelMax.Value = _plugin.Settings.GForce.CurrentLearnedDecelMaxG;
+                if (accelAuto) GForceFixedAccelMax.Value = _plugin.Settings.GForce.CurrentLearnedAccelMaxG;
+                if (decelAuto) GForceFixedDecelMax.Value = _plugin.Settings.GForce.CurrentLearnedDecelMaxG;
 
-            GForceAccelLearnedText.Visibility = accelAuto ? Visibility.Visible : Visibility.Collapsed;
-            GForceDecelLearnedText.Visibility = decelAuto ? Visibility.Visible : Visibility.Collapsed;
+                GForceAccelLearnedText.Visibility = accelAuto ? Visibility.Visible : Visibility.Collapsed;
+                GForceDecelLearnedText.Visibility = decelAuto ? Visibility.Visible : Visibility.Collapsed;
+            }
         }
 
         // ------------------------------------------------------------------------------------
@@ -174,7 +278,7 @@ namespace QAdvanceFeedback.Settings
             LockResetSources.Content = SlipResetSources.Content = Strings.Get("Sources.ResetToDefault");
 
             // ---- Source mode toggle (Manual vs. ShakeIt Motors) - ALWAYS visible on both tabs (see
-            // _lockShakeItAvailable/_slipShakeItAvailable's own remarks for why this changed). ----
+            // _lockMotorsExportAvailable/_slipMotorsExportAvailable's own remarks for why this changed). ----
             LockLblSourceMode.Text = SlipLblSourceMode.Text = Strings.Get("Sources.Mode.Label");
             LockSourceModeManual.Content = SlipSourceModeManual.Content = Strings.Get("Sources.Mode.Manual");
             LockSourceModeShakeIt.Content = SlipSourceModeShakeIt.Content = Strings.Get("Sources.Mode.ShakeIt");
@@ -406,6 +510,12 @@ namespace QAdvanceFeedback.Settings
             row.SourceBox.Text = result.Expression ?? string.Empty;
             SetScriptTypeVisual(row.ScriptTypeButton, result.ScriptType);
             RefreshRowButton(row);
+
+            // Explicit call (not just relying on the SourceBox's own TextChanged->MarkDirty wiring):
+            // an edit that changes ONLY the script type/dialect, with the expression text coming back
+            // unchanged, would not raise TextChanged at all (WPF's Text DP no-ops on an unchanged
+            // value), which would silently leave Apply disabled despite a real, savable change.
+            MarkDirty();
         }
 
         // ------------------------------------------------------------------------------------
@@ -454,6 +564,8 @@ namespace QAdvanceFeedback.Settings
 
             SourceRow row = FindRowByScriptTypeButton(button);
             if (row != null) RefreshRowButton(row);
+
+            MarkDirty();
         }
 
         private SourceRow FindRowByScriptTypeButton(Button button)
@@ -512,7 +624,7 @@ namespace QAdvanceFeedback.Settings
         // ------------------------------------------------------------------------------------
         // Source mode toggle - Manual vs. SimHub's own ShakeIt Motors export. ALWAYS visible and
         // switchable on both tabs, regardless of whether ShakeIt is currently resolving (see
-        // _lockShakeItAvailable/_slipShakeItAvailable's own remarks - a previous version of this
+        // _lockMotorsExportAvailable/_slipMotorsExportAvailable's own remarks - a previous version of this
         // control hid the toggle whenever availability could not be confirmed, which is why the owner
         // could not find it at all).
         // ------------------------------------------------------------------------------------
@@ -525,7 +637,7 @@ namespace QAdvanceFeedback.Settings
 
         private void OnSourceModeChanged(bool isLock)
         {
-            if (_isUpdatingUi) return;
+            if (_dirty.IsLoading) return;
 
             ComboBox combo = isLock ? LockSourceModeCombo : SlipSourceModeCombo;
             SourceMode mode = ParseEnum(GetSelectedTag(combo, "ShakeIt"), SourceMode.ShakeIt);
@@ -555,6 +667,14 @@ namespace QAdvanceFeedback.Settings
             foreach (SourceRow row in rows) RefreshRowButton(row);
 
             RefreshSourceModeUi(isLock);
+
+            // Reached only from a genuine user action (the source-mode combo's own change, already
+            // guarded above in OnSourceModeChanged, or the per-source "Reset to default" button) -
+            // never from a load path - so this is safe to call unconditionally. Explicit rather than
+            // relying solely on the four SourceBox TextChanged hooks: if the mode being (re)applied
+            // happens to match the text already showing, WPF's Text DP would not raise TextChanged at
+            // all, yet the driver still clicked something that is meant to require an Apply.
+            MarkDirty();
         }
 
         /// <summary>
@@ -562,7 +682,7 @@ namespace QAdvanceFeedback.Settings
         /// combo currently shows:
         /// <list type="bullet">
         /// <item>ShakeIt mode: the concise setup guide is shown; the "not available yet" warning is
-        /// ALSO shown, but only if <see cref="_lockShakeItAvailable"/>/<see cref="_slipShakeItAvailable"/>
+        /// ALSO shown, but only if <see cref="_lockMotorsExportAvailable"/>/<see cref="_slipMotorsExportAvailable"/>
         /// says SimHub is not currently reporting the four expected properties.</item>
         /// <item>Manual mode: neither ShakeIt note is shown; the short "supply a 0-100 value" note is
         /// shown instead.</item>
@@ -574,7 +694,7 @@ namespace QAdvanceFeedback.Settings
         {
             ComboBox combo = isLock ? LockSourceModeCombo : SlipSourceModeCombo;
             SourceMode mode = ParseEnum(GetSelectedTag(combo, "ShakeIt"), SourceMode.ShakeIt);
-            bool available = isLock ? _lockShakeItAvailable : _slipShakeItAvailable;
+            bool available = isLock ? _lockMotorsExportAvailable : _slipMotorsExportAvailable;
             bool isShakeIt = mode == SourceMode.ShakeIt;
 
             TextBlock setupNote = isLock ? LockShakeItSetupNote : SlipShakeItSetupNote;
@@ -589,9 +709,10 @@ namespace QAdvanceFeedback.Settings
         private void SetSourceModeCombo(bool isLock, SourceMode mode)
         {
             ComboBox combo = isLock ? LockSourceModeCombo : SlipSourceModeCombo;
-            _isUpdatingUi = true;
-            try { SelectComboItemByTag(combo, mode.ToString()); }
-            finally { _isUpdatingUi = false; }
+            using (_dirty.BeginLoading())
+            {
+                SelectComboItemByTag(combo, mode.ToString());
+            }
         }
 
         // ------------------------------------------------------------------------------------
@@ -611,10 +732,21 @@ namespace QAdvanceFeedback.Settings
                 return;
 
             _plugin.Settings.RestoreDefaults();
+            // NOTE ON APPLY'S ENABLED STATE AFTER THIS: the brief asked for Restore to leave Apply
+            // enabled, reasoning that "the restore is not persisted until Apply" - but that is not what
+            // this method actually does, and was already true before dirty tracking existed (see this
+            // method's own doc comment above: "Destructive and immediate (it also persists, exactly
+            // like the ordinary Apply flow)"). ApplySettings() below calls ConfigStore.Save
+            // immediately, so by the time this method returns, the restored defaults are ALREADY on
+            // disk - there is nothing left for a subsequent Apply click to do. Matching that actual
+            // behaviour (per the brief's own "unless you determine restore already saves" escape
+            // hatch) rather than the stated assumption, this leaves Apply DISABLED, exactly like a
+            // normal Apply click does.
             _plugin.ApplySettings();
             LoadFromSettings();
             RefreshGForceModeControls();
             RefreshGForceShakeControls();
+            MarkClean();
         }
 
         // ------------------------------------------------------------------------------------
@@ -644,37 +776,41 @@ namespace QAdvanceFeedback.Settings
 
             presetCombo.SelectionChanged += (s, e) =>
             {
-                if (_isUpdatingUi) return;
+                if (_dirty.IsLoading) return;
                 ProjectorPreset preset = ParseEnum(GetSelectedTag(presetCombo, "Custom"), ProjectorPreset.Custom);
                 working.ApplyPreset(preset, channel);
                 LoadAnchorControls(working, startRaw, slightlyRaw, slightlyOutput, moderateRaw, moderateOutput,
                     criticalRaw, criticalOutput, endRaw, presetCombo);
                 RefreshCurvePlot(working, channel);
+                MarkDirty();
             };
         }
 
         private void OnAnchorRawChanged(ProjectorSettings working, AnchorSlot slot, double? value, ProjectionChannel channel)
         {
-            if (_isUpdatingUi) return;
+            if (_dirty.IsLoading) return;
             ProjectorAnchorEditor.SetRaw(working, slot, value);
             SyncPresetCombo(working, channel);
             RefreshCurvePlot(working, channel);
+            MarkDirty();
         }
 
         private void OnAnchorOutputChanged(ProjectorSettings working, AnchorSlot slot, double? value, ProjectionChannel channel)
         {
-            if (_isUpdatingUi) return;
+            if (_dirty.IsLoading) return;
             ProjectorAnchorEditor.SetOutput(working, slot, value);
             SyncPresetCombo(working, channel);
             RefreshCurvePlot(working, channel);
+            MarkDirty();
         }
 
         private void SyncPresetCombo(ProjectorSettings working, ProjectionChannel channel)
         {
             ComboBox combo = channel == ProjectionChannel.Lock ? LockPresetCombo : SlipPresetCombo;
-            _isUpdatingUi = true;
-            try { SelectComboItemByTag(combo, working.Preset.ToString()); }
-            finally { _isUpdatingUi = false; }
+            using (_dirty.BeginLoading())
+            {
+                SelectComboItemByTag(combo, working.Preset.ToString());
+            }
         }
 
         private void LoadAnchorControls(
@@ -685,8 +821,7 @@ namespace QAdvanceFeedback.Settings
             MahApps.Metro.Controls.NumericUpDown criticalRaw, MahApps.Metro.Controls.NumericUpDown criticalOutput,
             MahApps.Metro.Controls.NumericUpDown endRaw, ComboBox presetCombo)
         {
-            _isUpdatingUi = true;
-            try
+            using (_dirty.BeginLoading())
             {
                 startRaw.Value = ProjectorAnchorEditor.GetRaw(working, AnchorSlot.Start);
                 slightlyRaw.Value = ProjectorAnchorEditor.GetRaw(working, AnchorSlot.Slightly);
@@ -698,7 +833,6 @@ namespace QAdvanceFeedback.Settings
                 endRaw.Value = ProjectorAnchorEditor.GetRaw(working, AnchorSlot.End);
                 SelectComboItemByTag(presetCombo, working.Preset.ToString());
             }
-            finally { _isUpdatingUi = false; }
         }
 
         private void RefreshCurvePlot(ProjectorSettings working, ProjectionChannel channel)
@@ -751,82 +885,91 @@ namespace QAdvanceFeedback.Settings
 
         private void LoadFromSettings()
         {
-            QAdvanceFeedbackSettings s = _plugin.Settings;
+            // Wraps the ENTIRE method body - every control assignment below is a programmatic load,
+            // never a user edit, so none of it may mark Apply dirty (see ApplyDirtyState's own remarks
+            // on why this is a reentrant depth counter rather than a bool: this outer scope stays open
+            // across the several nested BeginLoading calls inside LoadAnchorControls/SetSourceModeCombo
+            // reached from here, so THEIR completion can never prematurely re-enable dirty tracking
+            // while this outer load is still assigning further controls below).
+            using (_dirty.BeginLoading())
+            {
+                QAdvanceFeedbackSettings s = _plugin.Settings;
 
-            LoadChannel(s.Lock, _lockRows, LockPulseEnabled, LockPulseGapMs, LockPulseMinValue);
-            SetSourceModeCombo(isLock: true, s.Lock.SourceMode);
-            RefreshSourceModeUi(isLock: true);
-            LockBrakeThreshold.Value = s.Lock.BrakeThresholdPercent;
-            LockSensibility.Value = s.Lock.LockSensibility;
+                LoadChannel(s.Lock, _lockRows, LockPulseEnabled, LockPulseGapMs, LockPulseMinValue);
+                SetSourceModeCombo(isLock: true, s.Lock.SourceMode);
+                RefreshSourceModeUi(isLock: true);
+                LockBrakeThreshold.Value = s.Lock.BrakeThresholdPercent;
+                LockSensibility.Value = s.Lock.LockSensibility;
 
-            LockWMax.Value = s.Lock.AggregationWMax;
-            LockWMin.Value = s.Lock.AggregationWMin;
-            LockWFront.Value = s.Lock.AggregationWFront;
-            LockWRear.Value = s.Lock.AggregationWRear;
+                LockWMax.Value = s.Lock.AggregationWMax;
+                LockWMin.Value = s.Lock.AggregationWMin;
+                LockWFront.Value = s.Lock.AggregationWFront;
+                LockWRear.Value = s.Lock.AggregationWRear;
 
-            _workingLockProjector.Preset = s.Lock.Projector.Preset;
-            _workingLockProjector.StartInput = s.Lock.Projector.StartInput;
-            _workingLockProjector.EndInput = s.Lock.Projector.EndInput;
-            _workingLockProjector.SlightlyInput = s.Lock.Projector.SlightlyInput;
-            _workingLockProjector.SlightlyOutput = s.Lock.Projector.SlightlyOutput;
-            _workingLockProjector.ModerateInput = s.Lock.Projector.ModerateInput;
-            _workingLockProjector.ModerateOutput = s.Lock.Projector.ModerateOutput;
-            _workingLockProjector.CriticalInput = s.Lock.Projector.CriticalInput;
-            _workingLockProjector.CriticalOutput = s.Lock.Projector.CriticalOutput;
-            LoadAnchorControls(_workingLockProjector, LockStartRaw, LockSlightlyRaw, LockSlightlyOutput,
-                LockModerateRaw, LockModerateOutput, LockCriticalRaw, LockCriticalOutput, LockEndRaw, LockPresetCombo);
-            RefreshCurvePlot(_workingLockProjector, ProjectionChannel.Lock);
+                _workingLockProjector.Preset = s.Lock.Projector.Preset;
+                _workingLockProjector.StartInput = s.Lock.Projector.StartInput;
+                _workingLockProjector.EndInput = s.Lock.Projector.EndInput;
+                _workingLockProjector.SlightlyInput = s.Lock.Projector.SlightlyInput;
+                _workingLockProjector.SlightlyOutput = s.Lock.Projector.SlightlyOutput;
+                _workingLockProjector.ModerateInput = s.Lock.Projector.ModerateInput;
+                _workingLockProjector.ModerateOutput = s.Lock.Projector.ModerateOutput;
+                _workingLockProjector.CriticalInput = s.Lock.Projector.CriticalInput;
+                _workingLockProjector.CriticalOutput = s.Lock.Projector.CriticalOutput;
+                LoadAnchorControls(_workingLockProjector, LockStartRaw, LockSlightlyRaw, LockSlightlyOutput,
+                    LockModerateRaw, LockModerateOutput, LockCriticalRaw, LockCriticalOutput, LockEndRaw, LockPresetCombo);
+                RefreshCurvePlot(_workingLockProjector, ProjectionChannel.Lock);
 
-            LoadChannel(s.Slip, _slipRows, SlipPulseEnabled, SlipPulseGapMs, SlipPulseMinValue);
-            SetSourceModeCombo(isLock: false, s.Slip.SourceMode);
-            RefreshSourceModeUi(isLock: false);
-            SlipBrakeThreshold.Value = s.Slip.BrakeThresholdPercent;
-            SlipThrottleThreshold.Value = s.Slip.ThrottleThresholdPercent;
+                LoadChannel(s.Slip, _slipRows, SlipPulseEnabled, SlipPulseGapMs, SlipPulseMinValue);
+                SetSourceModeCombo(isLock: false, s.Slip.SourceMode);
+                RefreshSourceModeUi(isLock: false);
+                SlipBrakeThreshold.Value = s.Slip.BrakeThresholdPercent;
+                SlipThrottleThreshold.Value = s.Slip.ThrottleThresholdPercent;
 
-            SlipWMax.Value = s.Slip.AggregationWMax;
-            SlipWMin.Value = s.Slip.AggregationWMin;
-            SlipWFront.Value = s.Slip.AggregationWFront;
-            SlipWRear.Value = s.Slip.AggregationWRear;
-            SlipFloorFactor.Value = s.Slip.SlipFloorFactor;
+                SlipWMax.Value = s.Slip.AggregationWMax;
+                SlipWMin.Value = s.Slip.AggregationWMin;
+                SlipWFront.Value = s.Slip.AggregationWFront;
+                SlipWRear.Value = s.Slip.AggregationWRear;
+                SlipFloorFactor.Value = s.Slip.SlipFloorFactor;
 
-            _workingSlipProjector.Preset = s.Slip.Projector.Preset;
-            _workingSlipProjector.StartInput = s.Slip.Projector.StartInput;
-            _workingSlipProjector.EndInput = s.Slip.Projector.EndInput;
-            _workingSlipProjector.SlightlyInput = s.Slip.Projector.SlightlyInput;
-            _workingSlipProjector.SlightlyOutput = s.Slip.Projector.SlightlyOutput;
-            _workingSlipProjector.ModerateInput = s.Slip.Projector.ModerateInput;
-            _workingSlipProjector.ModerateOutput = s.Slip.Projector.ModerateOutput;
-            _workingSlipProjector.CriticalInput = s.Slip.Projector.CriticalInput;
-            _workingSlipProjector.CriticalOutput = s.Slip.Projector.CriticalOutput;
-            LoadAnchorControls(_workingSlipProjector, SlipStartRaw, SlipSlightlyRaw, SlipSlightlyOutput,
-                SlipModerateRaw, SlipModerateOutput, SlipCriticalRaw, SlipCriticalOutput, SlipEndRaw, SlipPresetCombo);
-            RefreshCurvePlot(_workingSlipProjector, ProjectionChannel.Slip);
+                _workingSlipProjector.Preset = s.Slip.Projector.Preset;
+                _workingSlipProjector.StartInput = s.Slip.Projector.StartInput;
+                _workingSlipProjector.EndInput = s.Slip.Projector.EndInput;
+                _workingSlipProjector.SlightlyInput = s.Slip.Projector.SlightlyInput;
+                _workingSlipProjector.SlightlyOutput = s.Slip.Projector.SlightlyOutput;
+                _workingSlipProjector.ModerateInput = s.Slip.Projector.ModerateInput;
+                _workingSlipProjector.ModerateOutput = s.Slip.Projector.ModerateOutput;
+                _workingSlipProjector.CriticalInput = s.Slip.Projector.CriticalInput;
+                _workingSlipProjector.CriticalOutput = s.Slip.Projector.CriticalOutput;
+                LoadAnchorControls(_workingSlipProjector, SlipStartRaw, SlipSlightlyRaw, SlipSlightlyOutput,
+                    SlipModerateRaw, SlipModerateOutput, SlipCriticalRaw, SlipCriticalOutput, SlipEndRaw, SlipPresetCombo);
+                RefreshCurvePlot(_workingSlipProjector, ProjectionChannel.Slip);
 
-            SelectComboItemByTag(GForceAccelModeCombo, s.GForce.AccelMaxMode.ToString());
-            SelectComboItemByTag(GForceDecelModeCombo, s.GForce.DecelMaxMode.ToString());
-            GForceFixedAccelMax.Value = s.GForce.FixedAccelMaxG;
-            GForceFixedDecelMax.Value = s.GForce.FixedDecelMaxG;
-            RefreshGForceLearnedText();
-            GForceRecommendedHzText.Text = string.Format(Strings.Get("GForce.RecommendedHz.Note"), s.GForce.RecommendedFromHz, s.GForce.RecommendedToHz);
+                SelectComboItemByTag(GForceAccelModeCombo, s.GForce.AccelMaxMode.ToString());
+                SelectComboItemByTag(GForceDecelModeCombo, s.GForce.DecelMaxMode.ToString());
+                GForceFixedAccelMax.Value = s.GForce.FixedAccelMaxG;
+                GForceFixedDecelMax.Value = s.GForce.FixedDecelMaxG;
+                RefreshGForceLearnedText();
+                GForceRecommendedHzText.Text = string.Format(Strings.Get("GForce.RecommendedHz.Note"), s.GForce.RecommendedFromHz, s.GForce.RecommendedToHz);
 
-            GForceBrakeBottomRearSustain.Value = s.GForce.BrakeBottomRearSustainPercent;
-            GForceBrakeBackLowSustain.Value = s.GForce.BrakeBackLowSustainPercent;
-            GForceAccelBottomRearSustain.Value = s.GForce.AccelBottomRearSustainPercent;
-            GForceAccelBackLowSustain.Value = s.GForce.AccelBackLowSustainPercent;
+                GForceBrakeBottomRearSustain.Value = s.GForce.BrakeBottomRearSustainPercent;
+                GForceBrakeBackLowSustain.Value = s.GForce.BrakeBackLowSustainPercent;
+                GForceAccelBottomRearSustain.Value = s.GForce.AccelBottomRearSustainPercent;
+                GForceAccelBackLowSustain.Value = s.GForce.AccelBackLowSustainPercent;
 
-            GForceSustainTau.Value = s.GForce.SustainTimeConstantSeconds;
-            GForceTransientTau.Value = s.GForce.TransientTimeConstantSeconds;
-            GForceTransientGain.Value = s.GForce.TransientGain;
+                GForceSustainTau.Value = s.GForce.SustainTimeConstantSeconds;
+                GForceTransientTau.Value = s.GForce.TransientTimeConstantSeconds;
+                GForceTransientGain.Value = s.GForce.TransientGain;
 
-            SelectComboItemByTag(GForceLateralDirectionCombo, s.GForce.LateralDirection.ToString());
+                SelectComboItemByTag(GForceLateralDirectionCombo, s.GForce.LateralDirection.ToString());
 
-            GForceShakeEnabled.IsChecked = s.GForce.IntegrateWheelLockAndSlip;
-            GForceShakeFrequency.Value = s.GForce.ShakeFrequencyHz;
-            GForceShakeLockScale.Value = s.GForce.WheelLockShakeScale;
-            GForceShakeSlipScale.Value = s.GForce.WheelSlipShakeScale;
+                GForceShakeEnabled.IsChecked = s.GForce.IntegrateWheelLockAndSlip;
+                GForceShakeFrequency.Value = s.GForce.ShakeFrequencyHz;
+                GForceShakeLockScale.Value = s.GForce.WheelLockShakeScale;
+                GForceShakeSlipScale.Value = s.GForce.WheelSlipShakeScale;
 
-            EnableDiagnosticsCheckBox.IsChecked = s.General.EnableDiagnostics;
-            ExportCsvCheckBox.IsChecked = s.General.ExportCsv;
+                EnableDiagnosticsCheckBox.IsChecked = s.General.EnableDiagnostics;
+                ExportCsvCheckBox.IsChecked = s.General.ExportCsv;
+            }
         }
 
         private void RefreshGForceLearnedText()
@@ -904,6 +1047,7 @@ namespace QAdvanceFeedback.Settings
             LoadFromSettings();
             RefreshGForceModeControls();
             RefreshGForceShakeControls();
+            MarkClean();
         }
 
         private void SaveChannel(

@@ -5,10 +5,10 @@ namespace QAdvanceFeedback.Tests
 {
     /// <summary>
     /// Pins the m/s^2-to-G conversion factor (docs\field-fixes-report.md, defect A) - the actual
-    /// Private\SimHubTelemetryAdapter.cs call site that uses this cannot be unit-tested directly in
-    /// this project (it is a net48-only, gitignored file requiring a live GameReaderCommon.GameData -
-    /// see Private\README.md's own remarks on why this test project cannot reach it), so the
-    /// conversion is pinned here instead, at the one place it is actually computed.
+    /// <c>SimHubTelemetryAdapter.cs</c> call site that uses this cannot be unit-tested directly in
+    /// this project (it needs a live <c>GameReaderCommon.GameData</c>, so it is SimHub-dependent -
+    /// see docs\architecture.md's own remarks on that boundary), so the conversion is pinned here
+    /// instead, at the one place it is actually computed.
     /// <para/>
     /// MUTATION (a) in the report: replacing <see cref="AccelerationUnits.Ms2ToG"/>'s body with a
     /// no-op (<c>return ms2;</c>) - the exact real-world bug (SimHub's raw m/s^2 AccelerationSurge

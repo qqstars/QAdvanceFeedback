@@ -154,19 +154,18 @@ namespace QAdvanceFeedback.Settings
         /// </summary>
         public bool IntegrateWheelLockAndSlip { get; set; } = true;
 
-        private double _shakeFrequencyHz = 3.0;
+        private double _shakeFrequencyHz = 10.0;
 
         /// <summary>Hz, clamped to [<see cref="Core.GForce.GForceShake.MinFrequencyHz"/> (1),
         /// <see cref="Core.GForce.GForceShake.MaxFrequencyHz"/> (20)] in the setter itself - see
-        /// <see cref="GForceEngine.ShakeFrequencyHz"/>'s own remarks. Default **3 Hz**
-        /// (docs\shake-tuning-report.md) - RAISED off the floor deliberately: the floor itself was
-        /// lowered from 5 to 1 Hz per driver feedback ("5 Hz is not obvious enough; 1-2 Hz reads
-        /// better"), but a shipped DEFAULT sitting exactly on the new floor would under-shoot that same
-        /// feedback for anyone who never touches this spinner - 3 Hz sits inside the driver's own
-        /// preferred 1-2 Hz-reads-better range's upper half while leaving headroom either side. NOT
-        /// the Layer 5 pulse's own separate, UNCHANGED 200 ms (5 Hz) gap floor
-        /// (<see cref="Core.Projection.PulseSettings.MinGapMs"/>) on the Wheel Lock/Slip tabs - this
-        /// property only ever affects the G-Force "Integrate Wheel Lock and Slip" shake.</summary>
+        /// <see cref="GForceEngine.ShakeFrequencyHz"/>'s own remarks. Default **10 Hz** (raised from an
+        /// earlier 3 Hz default - docs\shake-frequency-default-report.md): the owner tried 3 Hz on real
+        /// hardware from the driver's seat and reports 10 Hz feels much better. The 1-20 Hz bounds
+        /// themselves are UNCHANGED by this - 10 sits comfortably inside them, so only the shipped
+        /// default moved, not the floor/ceiling. NOT the Layer 5 pulse's own separate, UNCHANGED 200 ms
+        /// (5 Hz) gap floor (<see cref="Core.Projection.PulseSettings.MinGapMs"/>) on the Wheel
+        /// Lock/Slip tabs - this property only ever affects the G-Force "Integrate Wheel Lock and Slip"
+        /// shake.</summary>
         public double ShakeFrequencyHz
         {
             get => _shakeFrequencyHz;
@@ -204,7 +203,7 @@ namespace QAdvanceFeedback.Settings
 
         private double _sustainTimeConstantSeconds = 0.15;
         private double _transientTimeConstantSeconds = 0.08;
-        private double _transientGain = 1.5;
+        private double _transientGain = 1.2;
 
         /// <summary>Seconds, clamped positive. See <see cref="GForceEngine.SustainTimeConstantSeconds"/>'s
         /// remarks for the default's reasoning.</summary>

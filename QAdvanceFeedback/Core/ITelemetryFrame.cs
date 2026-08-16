@@ -11,7 +11,7 @@ namespace QAdvanceFeedback.Core
     /// at all reports ClutchPercent == null. Higher layers must check HasValue (nullable's own
     /// pattern) before trusting a reading, and degrade - e.g. treat the guard it belongs to as not
     /// satisfied - rather than silently treating a missing reading as a real zero. See
-    /// <see cref="LegacySlipAlgorithm"/> for where this actually matters (the speed/RPM guards).
+    /// <c>BrakeSpeedSlipModel</c> for where this actually matters (the speed/RPM guards).
     /// </summary>
     public interface ITelemetryFrame
     {
@@ -100,5 +100,40 @@ namespace QAdvanceFeedback.Core
         /// See <see cref="IsInPit"/>'s remarks.
         /// </summary>
         bool? IsSessionRestart { get; }
+
+        /// <summary>
+        /// Whether the FRONT LEFT wheel is currently on a loose surface (grass/gravel) rather than
+        /// sealed tarmac (SimHub: <c>FeedbackData.WheelInGrassOrGravel[0]</c>, confirmed by decompiling
+        /// <c>GameReaderCommon.FeedbackData</c> - docs\branch-dispatch-and-source-keyed-learning-report.md,
+        /// "surface-keyed learning"). Added because a learned grip reference dominated by tarmac's
+        /// higher achievable deceleration silently reads a genuine loose-surface limit as low severity
+        /// (the owner's own worked example: ~1.5g tarmac peak vs ~0.4g grass peak - 0.4g against a
+        /// 1.5g reference reads ~27%, near-silent at exactly the moment grip is lowest).
+        /// <para/>
+        /// NULL VS FALSE IS UNRESOLVABLE FOR THIS ONE FIELD, FLAGGED HONESTLY: unlike
+        /// <c>WheelRPS</c>/<c>WheelSpeed</c>/<c>WheelSlip</c> (each backed by its own
+        /// <c>FeedbackCapabilities</c> flag - <c>WheelsRPS</c> etc.), decompiling
+        /// <c>FeedbackCapabilities</c> found NO corresponding capability flag for
+        /// <c>WheelInGrassOrGravel</c> at all - there is no reachable way to distinguish "this title
+        /// genuinely reports tarmac right now" from "this title does not populate this field and it
+        /// defaults to false" the way the raw-telemetry diagnostics gate already does for the other
+        /// three arrays. This is NOT silently assumed away: a title that never reports <c>true</c>
+        /// degrades, BY CONSTRUCTION (see <c>SurfaceLooseFraction</c>'s own remarks), to exactly the
+        /// single-reference behaviour this plugin had before surface-keying existed - so the ambiguity
+        /// is harmless for correctness even though it cannot be resolved for certainty - and
+        /// <c>Diag.Capabilities.SurfaceEverReportedLoose</c> (a latching, observed-evidence diagnostic,
+        /// not a capability flag) publishes whether any loose reading was EVER actually seen this
+        /// session, so the ambiguity is visible on a rig even though it cannot be resolved in code.
+        /// </summary>
+        bool? WheelOnLooseSurfaceFrontLeft { get; }
+
+        /// <summary>See <see cref="WheelOnLooseSurfaceFrontLeft"/> - the front right wheel.</summary>
+        bool? WheelOnLooseSurfaceFrontRight { get; }
+
+        /// <summary>See <see cref="WheelOnLooseSurfaceFrontLeft"/> - the rear left wheel.</summary>
+        bool? WheelOnLooseSurfaceRearLeft { get; }
+
+        /// <summary>See <see cref="WheelOnLooseSurfaceFrontLeft"/> - the rear right wheel.</summary>
+        bool? WheelOnLooseSurfaceRearRight { get; }
     }
 }

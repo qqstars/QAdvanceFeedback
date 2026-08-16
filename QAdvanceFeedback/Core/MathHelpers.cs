@@ -3,26 +3,19 @@ using System;
 namespace QAdvanceFeedback.Core
 {
     /// <summary>
-    /// Faithful, minimal port of the subset of WoteverCommon.Extensions.MathExtensions (decompiled;
-    /// see docs\reference\Wotever.MathExtensions.decompiled.cs) that
-    /// WheelSlipEffect.GetRpmSpeedSlipLegacy (docs\reference\SimHub.WheelSlipEffect.decompiled.cs)
-    /// actually calls: the 4-arg <see cref="Offset(double,double,double,bool)"/>, <see cref="Map"/>
-    /// and <see cref="Clamp"/>. Ported verbatim rather than approximated, per the brief - the
-    /// arithmetic here must match the decompiled source exactly, including its rounding/branch
-    /// order, not just its intent.
+    /// General-purpose clamping/remapping helpers shared by the Raw-layer formulas
+    /// (<c>QAdvanceFeedback.Core.RawCalculator</c>): turning a value on one numeric range into the
+    /// equivalent position on another, optionally clamped at either end.
     /// </summary>
     public static class MathHelpers
     {
-        /// <summary>
-        /// double Clamp(value, lowRange, highRange) -&gt; Math.Max(Math.Min(value, high), low),
-        /// exactly as WoteverCommon.Extensions.MathExtensions.Clamp(double, double, double).
-        /// </summary>
+        /// <summary>Clamps <paramref name="value"/> to <c>[lowRange, highRange]</c>.</summary>
         public static double Clamp(double value, double lowRange, double highRange)
             => Math.Max(Math.Min(value, highRange), lowRange);
 
         /// <summary>
-        /// MathExtensions.Map(x, in_min, in_max, out_min, out_max, constrain) ported verbatim -
-        /// linear remap, optionally constrained (clamped) to the output range afterwards.
+        /// Linear remap of <paramref name="x"/> from <c>[inMin, inMax]</c> onto <c>[outMin, outMax]</c>,
+        /// optionally constrained (clamped) to the output range afterwards.
         /// </summary>
         public static double Map(double x, double inMin, double inMax, double outMin, double outMax, bool constrain = false)
         {
@@ -36,14 +29,10 @@ namespace QAdvanceFeedback.Core
         }
 
         /// <summary>
-        /// The 4-arg Offset(min, max, value, clamp = true) overload - the ONLY Offset overload
-        /// GetRpmSpeedSlipLegacy calls (its three call sites - the lateral floor, the brake ratio,
-        /// and the throttle ratio - all pass a single bool). Returns 0 at/below <paramref name="min"/>
-        /// and 1 at/above <paramref name="max"/> when <paramref name="clamp"/> is true (both ends
-        /// clamped by the SAME bool); otherwise the raw, unclamped linear ratio.
-        /// <para/>
-        /// NOT the same semantics as the 5-arg overload below - see its remarks. Using the wrong one
-        /// at a call site silently changes clamping behaviour at one end only.
+        /// Where <paramref name="value"/> sits between <paramref name="min"/> and <paramref name="max"/>
+        /// as a 0-1 ratio: 0 at/below <paramref name="min"/>, 1 at/above <paramref name="max"/> when
+        /// <paramref name="clamp"/> is true (both ends clamped together); otherwise the raw, unclamped
+        /// linear ratio (which can go below 0 or above 1).
         /// </summary>
         public static double Offset(double min, double max, double value, bool clamp = true)
         {
@@ -66,12 +55,9 @@ namespace QAdvanceFeedback.Core
         }
 
         /// <summary>
-        /// The 5-arg Offset(min, max, value, clampMin, clampMax) overload - independent bottom/top
-        /// clamping. NOT used by the legacy lock/slip algorithm (all three of its Offset calls use
-        /// the 4-arg overload above) - kept here for fidelity with the decompiled source and as a
-        /// clean seam for later layers that port other WheelSlipEffect branches
-        /// (GetDirectSlip/GetLockFromWheelSpeed/GetRpsLock all call THIS overload, typically with
-        /// clampMax:false, which lets the ratio exceed 1.0 above <paramref name="max"/>).
+        /// Same 0-1 ratio as <see cref="Offset(double,double,double,bool)"/>, but with the bottom and
+        /// top clamps controlled independently - useful when a caller wants a floor at 0 but deliberately
+        /// wants the ratio free to exceed 1 above <paramref name="max"/> (or vice versa).
         /// </summary>
         public static double Offset(double min, double max, double value, bool clampMin, bool clampMax)
         {
@@ -91,6 +77,20 @@ namespace QAdvanceFeedback.Core
                 : ((!clampMax || !(value > max)) ? (value - min) / (max - min) : 1.0);
 
             return inverted ? 1.0 - ratio : ratio;
+        }
+
+        /// <summary>
+        /// A two-segment version of <see cref="Map(double,double,double,double,double,bool)"/>: below
+        /// <paramref name="inMiddle"/>, remaps <c>[inMin, inMiddle]</c> onto <c>[outMin, outMiddle]</c>;
+        /// at or above it, remaps <c>[inMiddle, inMax]</c> onto <c>[outMiddle, outMax]</c>. Both segments
+        /// are clamped to their own output range. Used where a response curve needs a different slope on
+        /// either side of a chosen midpoint rather than one straight line across the whole input range.
+        /// </summary>
+        public static double MapPiecewise(double x, double inMin, double inMiddle, double inMax, double outMin, double outMiddle, double outMax)
+        {
+            if (x >= Math.Min(inMin, inMiddle) && x <= Math.Max(inMin, inMiddle))
+                return Map(x, inMin, inMiddle, outMin, outMiddle, true);
+            return Map(x, inMiddle, inMax, outMiddle, outMax, true);
         }
     }
 }

@@ -80,6 +80,52 @@ namespace QAdvanceFeedback.Tests
             Assert.True(learner.LearnedPeakG < highPeak, "a single early spike should not permanently pin the peak");
         }
 
+        /// <summary>
+        /// SETTLING SPEED (docs\branch-dispatch-and-source-keyed-learning-report.md - the owner's own
+        /// "wet after dry" concern): a decaying maximum's own asymmetry means a carried-over dry-session
+        /// peak stays too high (under-reporting severity) until it decays down to the new, genuinely
+        /// lower condition. The owner's own bar: settle within "the first few braking zones" of a
+        /// session, not tens of them. Pinned here so a future change to the decay rate cannot silently
+        /// regress back to the old, measured-too-slow (~861-sample) behaviour.
+        /// </summary>
+        [Fact]
+        public void Learned_peak_settles_to_a_lower_condition_within_a_few_braking_zones()
+        {
+            var learner = new GripLearner();
+
+            // Establish a dry-session peak (~1.5g).
+            for (int i = 0; i < 300; i++) learner.Observe(1.5);
+            double dryPeak = learner.LearnedPeakG;
+            Assert.True(dryPeak > 1.3, $"precondition: dry peak should have converged near 1.5, was {dryPeak}");
+
+            // Carry that reference into a wet session (~0.9g - a 40% reduction) - feed roughly FIVE
+            // ordinary braking zones' worth of qualifying samples (30 each = 150 total), not tens of
+            // zones, and require the reference to have settled close to the new condition by then.
+            for (int i = 0; i < 150; i++) learner.Observe(0.9);
+
+            Assert.True(learner.LearnedPeakG < 1.1,
+                $"expected the reference to have settled close to the new ~0.9g condition within ~5 braking zones (150 qualifying samples), still reading {learner.LearnedPeakG}");
+        }
+
+        /// <summary>Guards the OTHER side of the same trade-off: an ordinarily-softer single braking
+        /// zone (not a real condition change) must not collapse the peak dramatically - it should still
+        /// read comfortably above the OLD test's own "settled" bar after just one such zone, self-
+        /// correcting on the very next hard zone via the instant-rise mechanism.</summary>
+        [Fact]
+        public void A_single_ordinarily_softer_braking_zone_does_not_make_the_peak_wander_far()
+        {
+            var learner = new GripLearner();
+            for (int i = 0; i < 300; i++) learner.Observe(1.5);
+            double dryPeak = learner.LearnedPeakG;
+
+            // One ordinary zone's worth of samples (~40) at a modestly softer 1.3g - NOT a condition
+            // change, just normal variance.
+            for (int i = 0; i < 40; i++) learner.Observe(1.3);
+
+            Assert.True(learner.LearnedPeakG > dryPeak * 0.85,
+                $"a single ordinary zone should not make the peak wander far: {dryPeak} -> {learner.LearnedPeakG}");
+        }
+
         [Theory]
         [InlineData(double.NaN)]
         [InlineData(double.PositiveInfinity)]

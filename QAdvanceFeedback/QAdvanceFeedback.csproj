@@ -12,8 +12,8 @@
     <RootNamespace>QAdvanceFeedback</RootNamespace>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <SimHubRefPath Condition="'$(SimHubRefPath)' == ''">$(MSBuildThisFileDirectory)..\lib</SimHubRefPath>
-    <AssemblyVersion>1.0.3</AssemblyVersion>
-    <FileVersion>1.0.3</FileVersion>
+    <AssemblyVersion>1.0.5</AssemblyVersion>
+    <FileVersion>1.0.5</FileVersion>
     <!-- Single-DLL distribution (hard requirement): every SimHub/GameReaderCommon/MahApps reference
          below is <Private>false</Private>, so none of them are copied into bin\Release\net48 - only
          QAdvanceFeedback.dll and its .pdb land there. -->
@@ -42,19 +42,5 @@
     <Reference Include="MahApps.Metro">
       <HintPath>$(SimHubRefPath)\MahApps.Metro.dll</HintPath><Private>false</Private>
     </Reference>
-  </ItemGroup>
-  <ItemGroup>
-    <!-- Withheld Layer 2/3 implementations (see ..\Private\README.md) now live in a single
-         top-level ..\Private\QAdvanceFeedback\ folder beside the .sln, mirroring this project's
-         name, instead of a Private\ folder INSIDE this project directory. Because it is now
-         OUTSIDE this project's own directory, the SDK's default `**\*.cs` glob (which only scans
-         under the project root) no longer finds it automatically, so it needs this explicit
-         Include. This is a wildcard, not a list of named files: it evaluates to an empty item
-         list (not a build error) when ..\Private\QAdvanceFeedback\ is completely absent - the
-         state of a fresh clone that has not been given a Private implementation - so the project
-         still builds, single-DLL, 0 warnings, without it. `Link` re-parents the files under a
-         virtual "Private" folder in Solution Explorer instead of flattening them at the project
-         root. -->
-    <Compile Include="..\Private\QAdvanceFeedback\**\*.cs" Link="Private\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>
