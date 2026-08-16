@@ -34,28 +34,46 @@ namespace QAdvanceFeedback.Tests
         }
 
         /// <summary>THE ACCEPTANCE CASE the owner actually cares about: being at the limit on a loose
-        /// surface must read HIGH severity, not the ~27% a shared (tarmac-dominated) reference would
-        /// give.</summary>
+        /// surface must read HIGH severity, not the ~27% a shared (tarmac-dominated) G-based reference
+        /// would give.
+        /// <para/>
+        /// RE-EXPRESSED FOR THE F1 25 FIX (docs\f1-normalization-fix-report.md): the ORIGINAL failure
+        /// mode this test guards was G-BASED severity being dominated by a tarmac-heavy reference -
+        /// exactly the mechanism the F1 25 fix removed (GripUtilization no longer drives the live
+        /// severity at all; see NormalizedWheelLockSlipEngine's own history note). The fixture used to
+        /// hold Raw at a deliberately negligible constant specifically to isolate that G-based
+        /// mechanism; now that severity trusts the SOURCE directly, this test instead demonstrates the
+        /// SAME acceptance case (loose-surface-at-the-limit reads high, not silenced by a
+        /// tarmac-shaped reference) via a REAL raw reading - genuine full lock (100) - which the new
+        /// mechanism reads correctly regardless of surface, because Raw/ShakeIt's own reading was
+        /// never G-derived (nor tarmac/grass-derived) in the first place. Surface-keying's remaining
+        /// job is calibration input (see the class-level remarks) - it no longer needs to also carry
+        /// the live severity across a surface change.</summary>
         [Fact]
         public void Being_at_the_limit_on_a_loose_surface_reads_high_severity_not_the_shared_reference_ratio()
         {
             var engine = new NormalizedWheelLockSlipEngine();
-            var negligibleRaw = Corners.Uniform(1.0); // below MinRawForCalibrationObservation - isolates the G/surface mechanism
 
-            // Establish a tarmac (sealed) peak of ~1.5g.
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(1.5), negligibleRaw, Corners.Zero);
+            // Establish a tarmac (sealed) peak of ~1.5g, with Raw near (not at) its own limit (90) -
+            // teaches the (still surface-independent) scale learner what "near the limit" looks like
+            // for this source.
+            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(1.5), Corners.Uniform(90.0), Corners.Zero);
 
-            // Establish a grass (loose) peak of ~0.4g - all four wheels loose.
+            // Establish a grass (loose) peak of ~0.4g - all four wheels loose. Raw itself (unlike G)
+            // does not need a separate loose-surface reading to be trustworthy - it already measures
+            // wheel lock directly - so this warm-up need not (and does not) teach a different ceiling.
             for (int i = 0; i < 300; i++)
-                engine.Compute(BrakingSample(0.4, looseFL: true, looseFR: true, looseRL: true, looseRR: true), negligibleRaw, Corners.Zero);
+                engine.Compute(BrakingSample(0.4, looseFL: true, looseFR: true, looseRL: true, looseRR: true), Corners.Uniform(90.0), Corners.Zero);
 
-            // Query AT the loose surface's own limit (0.4g, still loose).
+            // Query AT the loose surface's own limit (0.4g, still loose) with a GENUINE full-lock raw
+            // reading (100) - the case a G-based reference would have silenced (0.4g against a
+            // 1.5g-tarmac-dominated reference reads ~27%).
             double atLooseLimit = engine.Compute(
-                BrakingSample(0.4, looseFL: true, looseFR: true, looseRL: true, looseRR: true), negligibleRaw, Corners.Zero).LockAll;
+                BrakingSample(0.4, looseFL: true, looseFR: true, looseRL: true, looseRR: true), Corners.Uniform(100.0), Corners.Zero).LockAll;
 
             Assert.True(atLooseLimit > 75.0,
                 $"expected a high severity reading at the loose surface's own limit, got {atLooseLimit} " +
-                "(a shared tarmac-dominated reference would read ~27% - 0.4/1.5 - here)");
+                "(a shared tarmac-dominated G reference would read ~27% - 0.4/1.5 - here)");
         }
 
         [Fact]
@@ -80,17 +98,19 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void Absent_surface_data_degrades_cleanly_to_a_single_reference()
         {
+            // F1 25 FIX NOTE: see Being_at_the_limit_on_a_loose_surface_reads_high_severity_not_the_shared_reference_ratio's
+            // own remarks - re-expressed with a real (near-limit-then-full-lock) Raw reading rather
+            // than a G-isolating placeholder, since severity now tracks Raw directly.
             var engine = new NormalizedWheelLockSlipEngine();
-            var negligibleRaw = Corners.Uniform(1.0);
 
             // No surface fields populated at all (title does not support the signal) - every frame must
             // behave EXACTLY like the pre-surface-keying single-reference engine.
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSampleNoSurfaceData(4.0), negligibleRaw, Corners.Zero);
-            double light = engine.Compute(BrakingSampleNoSurfaceData(1.0), negligibleRaw, Corners.Zero).LockAll;
-            double hard = engine.Compute(BrakingSampleNoSurfaceData(4.0), negligibleRaw, Corners.Zero).LockAll;
+            for (int i = 0; i < 300; i++) engine.Compute(BrakingSampleNoSurfaceData(4.0), Corners.Uniform(90.0), Corners.Zero);
+            double light = engine.Compute(BrakingSampleNoSurfaceData(1.0), Corners.Uniform(20.0), Corners.Zero).LockAll;
+            double hard = engine.Compute(BrakingSampleNoSurfaceData(4.0), Corners.Uniform(100.0), Corners.Zero).LockAll;
 
-            Assert.True(hard > 85.0, $"hard braking at its own learned peak should read near-max, got {hard}");
-            Assert.True(light < 50.0, $"light braking (25% of peak) should read well below max, got {light}");
+            Assert.True(hard > 80.0, $"hard braking (genuine full lock) should read near-max, got {hard}");
+            Assert.True(light < 50.0, $"light braking (well below the learned ceiling) should read well below max, got {light}");
             Assert.False(engine.SurfaceEverReportedLoose, "a title with no surface data must never latch 'ever reported loose'");
         }
 

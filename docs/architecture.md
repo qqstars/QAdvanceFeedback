@@ -209,6 +209,36 @@ the test build immediately, not just a runtime assumption nobody checks.
 | `ApplyDirtyState.cs` | Tracks whether the settings UI has unsaved edits, for the Apply button's enabled state. |
 | `SettingsControl.xaml` / `SettingsControl.xaml.cs` | The one WPF settings control (four tabs). |
 
+## Settings screenshot capture rule (standing rule)
+
+`docs\images\settings-*.png` (linked from both READMEs' "Screenshots" section) are rendered by a
+throwaway, out-of-repo WPF harness (not part of this solution/tests) that loads the built
+`QAdvanceFeedback.dll`, instantiates `Settings\SettingsControl.xaml(.cs)` standalone, and renders it
+to PNG per tab. The Apply/Restore button row is a `DockPanel.Dock="Bottom"` sibling of `MainTabs` in
+`SettingsControl.xaml` - it sits OUTSIDE the `TabControl`, so a per-tab capture never includes it no
+matter which tab is selected.
+
+The capture rule, by tab (apply this to every future regeneration without needing to be told again):
+
+- **Wheel Lock, Wheel Slip, G-Force** - these three are tall. Capture ONLY the selected `TabItem`'s
+  content (its `ScrollViewer`'s content element), excluding the tab strip above and the button row
+  below, so the whole tab's settings fit in one image with nothing clipped.
+- **General** - short enough that nothing is lost by including the chrome. Capture the FULL
+  `SettingsControl` instead: tab strip, the General tab's content, AND the Apply/Restore row.
+
+In both cases, measure/arrange the render target at its own full natural extent (height =
+`PositiveInfinity` on `Measure`, then an explicit `Arrange` at the resulting `DesiredSize`) rather
+than accepting whatever height the hosting preview window happens to impose - the ScrollViewer's
+viewport clips tall content, and the DockPanel's fill child stretches to fill an oversized host
+window, leaving a dead gap above the button row, if you skip the explicit re-Arrange step.
+
+Output filenames (note `settings-gforce.png`, NOT `settings-g-force.png` - the harness derives the
+name from the tab header text and needs a rename on the G-Force one to match the README links):
+`settings-wheel-lock.png`, `settings-wheel-slip.png`, `settings-gforce.png`, `settings-general.png`.
+
+Full rationale, verification evidence and pixel dimensions from the pass that established this rule:
+`docs\screenshot-capture-rule.md`.
+
 ## Where "Private" used to be
 
 Everything under `Core\RawCalculator\` plus `SimHubTelemetryAdapter.cs` used to live in a withheld,

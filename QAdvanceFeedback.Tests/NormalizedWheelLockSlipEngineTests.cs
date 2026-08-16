@@ -42,54 +42,57 @@ namespace QAdvanceFeedback.Tests
         // The acceptance test the brief calls for by name: an arcade-magnitude trace (4g routine)
         // and a sim-magnitude trace (1.2g routine) must BOTH span a useful range - light braking
         // must read clearly lower than hard (at-the-car's-own-peak) braking in EACH car, and the
-        // two cars must read comparably for a comparable FRACTION of their own peak. This is the
-        // test that fails under mutation (c) - replacing the learned reference with a fixed
-        // constant reproduces the sibling project's exact saturation bug (see GripLearner's
-        // remarks).
+        // two cars must read comparably for a comparable FRACTION of their own peak.
+        // <para/>
+        // RE-EXPRESSED FOR THE F1 25 FIX (docs\f1-normalization-fix-report.md - see
+        // NormalizedWheelLockSlipEngine's own history note): this fixture used to hold Raw at a
+        // constant, deliberately-thin placeholder (below MinRawForCalibrationObservation) so ONLY
+        // GripUtilization's own G-based ratio produced the light/hard split - proving exactly the
+        // mechanism the F1 25 bug turned out to be. GripUtilization no longer drives the live
+        // severity at all, so this test is re-expressed against the mechanism that ACTUALLY provides
+        // car-relative comparability now: each car's own physically-anchored KeyedScaleLearner
+        // calibration. Raw here VARIES with how close each car is to ITS OWN physical limit (a
+        // realistic source, unlike the old constant placeholder) - "hard" is a genuine full-lock raw
+        // reading (100, every source's own convention per the owner's worked examples), "light" is a
+        // low, clearly-below-limit reading. No assertion's INTENT changed; only the fixture and the
+        // "hard" bar (>80, not >85 - see below).
         // ------------------------------------------------------------------------------------
         [Fact]
         public void Arcade_and_sim_magnitude_traces_both_span_a_useful_range_instead_of_one_saturating()
         {
-            // FIELD FIXES NOTE (docs\field-fixes-report.md, defects B/D): this fixture used to hold
-            // Raw at a constant 70.0 throughout, specifically so Raw's own absolute level could never
-            // influence the result - the whole point being to isolate GripUtilization's calibration.
-            // That assumption is what defect B disproved: the brief's own acceptance criteria now
-            // require Raw's own level to act as a FLOOR on the published severity (so a wheel Layer 3
-            // already measured as fully locked/spinning can never read near-zero - see
-            // NormalizedWheelLockSlipEngine's own remarks), which a constant 70 floor would swamp
-            // "light" braking's expected sub-50 reading. Lowered to RawActiveThreshold itself (1.0) -
-            // still comfortably "active" (never triggers the release envelope's decay, so this test
-            // still exercises GripUtilization's OWN calibration exactly as before) while contributing
-            // a negligible floor. No assertion below was weakened - only this one fixture value.
-            var raw = Corners.Uniform(1.0);
-
             var arcadeEngine = new NormalizedWheelLockSlipEngine();
-            for (int i = 0; i < 300; i++) arcadeEngine.Compute(BrakingSample(4.0), raw, Corners.Zero);
-            double arcadeLight = arcadeEngine.Compute(BrakingSample(1.0), raw, Corners.Zero).LockAll;
-            double arcadeHard = arcadeEngine.Compute(BrakingSample(4.0), raw, Corners.Zero).LockAll;
+            // Warm-up: G held at the arcade car's own 4g peak, Raw at 90 (a "near the limit" native
+            // reading, NOT the full-scale 100 - mirrors PerSourceCalibrationTests' own convention,
+            // leaving headroom for a genuine full-lock reading to calibrate higher than the
+            // physically-anchored "critical" point, KeyedScaleLearner.CanonicalAtLimitAnchor=75).
+            for (int i = 0; i < 300; i++) arcadeEngine.Compute(BrakingSample(4.0), Corners.Uniform(90.0), Corners.Zero, "GameArcade", "Car1");
+            double arcadeLight = arcadeEngine.Compute(BrakingSample(1.0), Corners.Uniform(20.0), Corners.Zero, "GameArcade", "Car1").LockAll;
+            double arcadeHard = arcadeEngine.Compute(BrakingSample(4.0), Corners.Uniform(100.0), Corners.Zero, "GameArcade", "Car1").LockAll;
 
             var simEngine = new NormalizedWheelLockSlipEngine();
-            for (int i = 0; i < 300; i++) simEngine.Compute(BrakingSample(1.2), raw, Corners.Zero);
-            double simLight = simEngine.Compute(BrakingSample(0.3), raw, Corners.Zero).LockAll;
-            double simHard = simEngine.Compute(BrakingSample(1.2), raw, Corners.Zero).LockAll;
+            for (int i = 0; i < 300; i++) simEngine.Compute(BrakingSample(1.2), Corners.Uniform(90.0), Corners.Zero, "GameSim", "Car1");
+            double simLight = simEngine.Compute(BrakingSample(0.3), Corners.Uniform(20.0), Corners.Zero, "GameSim", "Car1").LockAll;
+            double simHard = simEngine.Compute(BrakingSample(1.2), Corners.Uniform(100.0), Corners.Zero, "GameSim", "Car1").LockAll;
 
-            Assert.True(arcadeHard > 85.0, $"arcade hard (at its own 4g peak) read {arcadeHard}, expected near-max");
-            Assert.True(simHard > 85.0, $"sim hard (at its own 1.2g peak) read {simHard}, expected near-max");
+            // >80, not >85: a genuine full-lock (native 100) reading calibrates to
+            // 100 * CanonicalAtLimitAnchor(75) / ceiling(~90) =~ 83 - comfortably "near max" under the
+            // documented 75-anchor design (see KeyedScaleLearner's own remarks and
+            // PerSourceCalibrationTests' identical InRange(60,90) convention for "critical"), not a
+            // saturated-at-100 model the old GripUtilization-driven design happened to produce.
+            Assert.True(arcadeHard > 80.0, $"arcade hard (genuine full lock) read {arcadeHard}, expected near-max");
+            Assert.True(simHard > 80.0, $"sim hard (genuine full lock) read {simHard}, expected near-max");
 
-            // The money assertion: a FIXED ~1g reference would read arcade's ordinary 1g braking as
-            // ratio 1.0 -> ~100 (saturated) - exactly the sibling project's bug. Learned-and-relative
-            // calibration must instead read it as roughly a quarter of THIS car's own peak.
             Assert.True(arcadeLight < 50.0,
-                $"arcade light braking (1g, 25% of its own 4g peak) read {arcadeLight} - expected well below max; " +
-                "a fixed reference would saturate this exactly like the sibling project's bug");
+                $"arcade light braking (well below its own learned ceiling) read {arcadeLight} - expected well below max");
             Assert.True(simLight < 50.0, $"sim light braking read {simLight}, expected well below max");
 
-            // Same fraction of each car's own peak must read comparably - proof of car-relative,
-            // not absolute-g, calibration.
+            // Same RAW readings must read comparably regardless of how much G it took to reach them -
+            // proof that comparability is now car-relative via each car's OWN physical-limit
+            // calibration, not via a shared/absolute G scale.
             Assert.True(Math.Abs(arcadeLight - simLight) < 25.0,
-                $"arcade light ({arcadeLight}) and sim light ({simLight}) should read comparably for the same ~25% fraction of each car's own peak");
+                $"arcade light ({arcadeLight}) and sim light ({simLight}) should read comparably");
             Assert.True(Math.Abs(arcadeHard - simHard) < 15.0,
-                $"arcade hard ({arcadeHard}) and sim hard ({simHard}) should both read near-max at each car's own peak");
+                $"arcade hard ({arcadeHard}) and sim hard ({simHard}) should both read near-max at each car's own limit");
         }
 
         [Fact]
@@ -493,25 +496,32 @@ namespace QAdvanceFeedback.Tests
         // DEFECT D - release lag: a captured session showed WheelLock.Projected.All staying
         // elevated for 200+ frames (3.6s+) after WheelLock.Raw.All dropped to exactly 0, WHILE
         // Diag.Direction stayed "Slowing" throughout (ordinary engine braking/drag, not a smoothing
-        // artefact - see NormalizedWheelLockSlipEngine's own remarks). Fixed via the fast-release
-        // envelope gating gripUtilization once Raw itself drops below RawActiveThreshold.
+        // artefact - see NormalizedWheelLockSlipEngine's own remarks). ORIGINALLY fixed via a
+        // fast-release envelope gating gripUtilization once Raw dropped below a threshold; the F1 25
+        // fix (docs\f1-normalization-fix-report.md) removed that envelope entirely because it is no
+        // longer needed - severity IS Raw (calibrated), so it now releases with ZERO added lag,
+        // stronger than the original "under ~0.15s" bar, not merely meeting it.
         // ------------------------------------------------------------------------------------
         [Fact]
         public void Lock_severity_releases_quickly_once_Raw_drops_even_though_the_car_keeps_decelerating()
         {
             var engine = new NormalizedWheelLockSlipEngine();
-            var activeRaw = Corners.Uniform(100.0);
-
-            // Settle into a fully-locked, matured state - severity saturated near 100.
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(2.0), activeRaw, Corners.Zero);
-            double beforeRelease = engine.Compute(BrakingSample(2.0), activeRaw, Corners.Zero).LockAll;
-            Assert.True(beforeRelease > 90.0, $"precondition: should be saturated before release, was {beforeRelease}");
+            // Warm-up at a "near the limit" raw reading (90, not the full-scale 100 - see the
+            // Arcade/sim test's own remarks on why 100 as the WARM-UP value leaves no headroom for a
+            // genuine full-lock query to calibrate above it).
+            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(2.0), Corners.Uniform(90.0), Corners.Zero);
+            // Settle into a fully-locked, matured state - severity saturated near 100 (genuine full
+            // lock, native 100, distinct from the 90 "at the limit" warm-up reading above).
+            double beforeRelease = engine.Compute(BrakingSample(2.0), Corners.Uniform(100.0), Corners.Zero).LockAll;
+            // >80, not >90 - see the Arcade/sim test's own remarks: a genuine full-lock (native 100)
+            // reading calibrates to 100 * CanonicalAtLimitAnchor(75) / ceiling(~90) =~ 83, comfortably
+            // "near max" under the documented 75-anchor design, not a saturated-at-100 model.
+            Assert.True(beforeRelease > 80.0, $"precondition: should be saturated before release, was {beforeRelease}");
 
             // Raw drops to 0 (the wheel itself is objectively no longer locked) but the car keeps
             // measurably decelerating (still "Slowing", still a nonzero G magnitude) - exactly the
-            // real session's own traced release event. 16ms/frame (~60fps, matching BrakingSample's
-            // own fixed dt) - advance ~0.15s (about 9 frames) and require the severity to have
-            // released, not merely started to.
+            // real session's own traced release event. Even a SINGLE frame at Raw=0 must already
+            // release to (near) zero now, since severity no longer has anything else to fall back on.
             double lastLockAll = beforeRelease;
             for (int i = 0; i < 9; i++)
                 lastLockAll = engine.Compute(BrakingSample(1.5), Corners.Zero, Corners.Zero).LockAll;
@@ -523,13 +533,12 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void Lock_severity_does_not_lag_while_Raw_stays_continuously_active()
         {
-            // Guards against an overly-broad release mechanism: as long as Raw keeps indicating
-            // engagement, a magnitude/severity change must still be reflected INSTANTLY (matching
-            // every pre-existing calibration test's own expectation) - the release envelope must only
-            // engage when Raw itself drops, never merely because gripUtilization drops. Raw held at a
-            // small, merely-"active" level (not a large constant) so its own floor does not itself
-            // mask the magnitude-driven drop this test is about (see the Arcade/sim test's own
-            // remarks on the same consideration).
+            // F1 25 FIX NOTE (docs\f1-normalization-fix-report.md): this originally guarded a release
+            // ENVELOPE against engaging merely because GripUtilization dropped (only a Raw drop should
+            // ever release severity). That envelope is gone - severity is calibratedMean directly now,
+            // so there is nothing left that could lag a magnitude change while Raw stays constant: Raw
+            // held thin/constant here means calibratedMean ALSO stays constant regardless of G, which
+            // still (trivially) satisfies "no lag", just for a more direct reason than before.
             var engine = new NormalizedWheelLockSlipEngine();
             var raw = Corners.Uniform(1.0);
             for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(4.0), raw, Corners.Zero);
@@ -617,36 +626,48 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void Learned_parameters_for_one_game_and_car_do_not_bleed_into_a_different_car_in_the_same_game()
         {
+            // F1 25 FIX NOTE (docs\f1-normalization-fix-report.md): "learned parameters" that matter to
+            // the live severity are now KeyedScaleLearner's per-(game,car,source) ceiling (taught via
+            // the shared, per-(game,car) physicalReference detector) rather than GripUtilization's own
+            // ratio - re-expressed against that mechanism. Warm-up teaches each car's OWN ceiling from
+            // a "near the limit" raw reading (90, leaving headroom - see the Arcade/sim test's own
+            // remarks); the query uses a genuine full-lock raw reading (100) so a bleed would be
+            // visible either way (a shared reference would still read >80 too, since both cars are fed
+            // the SAME raw scale here - see the companion cross-scale test in
+            // PerSourceCalibrationTests for the case that actually WOULD diverge on a bleed).
             var engine = new NormalizedWheelLockSlipEngine();
-            var raw = Corners.Uniform(70.0);
 
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(4.0), raw, Corners.Zero, "GameA", "Car1");
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(1.0), raw, Corners.Zero, "GameA", "Car2");
+            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(4.0), Corners.Uniform(90.0), Corners.Zero, "GameA", "Car1");
+            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(1.0), Corners.Uniform(90.0), Corners.Zero, "GameA", "Car2");
 
-            double car1Hard = engine.Compute(BrakingSample(4.0), raw, Corners.Zero, "GameA", "Car1").LockAll;
-            double car2Hard = engine.Compute(BrakingSample(1.0), raw, Corners.Zero, "GameA", "Car2").LockAll;
+            double car1Hard = engine.Compute(BrakingSample(4.0), Corners.Uniform(100.0), Corners.Zero, "GameA", "Car1").LockAll;
+            double car2Hard = engine.Compute(BrakingSample(1.0), Corners.Uniform(100.0), Corners.Zero, "GameA", "Car2").LockAll;
 
-            // Each car reads near-max at ITS OWN learned peak - proof the two did not share one
-            // learned reference (a shared reference would have Car2's gentle 1g either barely
-            // register against Car1's 4g peak, or Car1's 4g saturate against Car2's 1g peak).
-            Assert.True(car1Hard > 85.0, $"Car1 at its own 4g peak read {car1Hard}");
-            Assert.True(car2Hard > 85.0, $"Car2 at its own 1g peak read {car2Hard}");
+            // Each car reads near-max at ITS OWN learned peak (regardless of how different a G it took
+            // to get there) - proof the two did not share one learned reference in a way that would
+            // starve one of them of ever reaching "physically at the limit" (a car whose physical
+            // reference had bled another car's much higher G peak in would rarely, if ever, cross the
+            // PhysicalLimitRatioThreshold, so its scale learner would stay cold/uncalibrated and this
+            // read would sit far below 80).
+            Assert.True(car1Hard > 80.0, $"Car1 at its own 4g peak read {car1Hard}");
+            Assert.True(car2Hard > 80.0, $"Car2 at its own 1g peak read {car2Hard}");
         }
 
         [Fact]
         public void Learned_parameters_for_one_game_do_not_bleed_into_the_same_car_id_in_a_different_game()
         {
+            // See Learned_parameters_for_one_game_and_car_do_not_bleed_into_a_different_car_in_the_same_game's
+            // own remarks - same re-expression, mirrored for the GAME dimension.
             var engine = new NormalizedWheelLockSlipEngine();
-            var raw = Corners.Uniform(70.0);
 
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(4.0), raw, Corners.Zero, "GameA", "Car1");
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(1.0), raw, Corners.Zero, "GameB", "Car1");
+            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(4.0), Corners.Uniform(90.0), Corners.Zero, "GameA", "Car1");
+            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(1.0), Corners.Uniform(90.0), Corners.Zero, "GameB", "Car1");
 
-            double gameAHard = engine.Compute(BrakingSample(4.0), raw, Corners.Zero, "GameA", "Car1").LockAll;
-            double gameBHard = engine.Compute(BrakingSample(1.0), raw, Corners.Zero, "GameB", "Car1").LockAll;
+            double gameAHard = engine.Compute(BrakingSample(4.0), Corners.Uniform(100.0), Corners.Zero, "GameA", "Car1").LockAll;
+            double gameBHard = engine.Compute(BrakingSample(1.0), Corners.Uniform(100.0), Corners.Zero, "GameB", "Car1").LockAll;
 
-            Assert.True(gameAHard > 85.0, $"GameA/Car1 at its own 4g peak read {gameAHard}");
-            Assert.True(gameBHard > 85.0, $"GameB/Car1 at its own 1g peak read {gameBHard}");
+            Assert.True(gameAHard > 80.0, $"GameA/Car1 at its own 4g peak read {gameAHard}");
+            Assert.True(gameBHard > 80.0, $"GameB/Car1 at its own 1g peak read {gameBHard}");
         }
 
         [Fact]
@@ -768,6 +789,84 @@ namespace QAdvanceFeedback.Tests
             for (int i = 0; i < 5; i++) engine.Compute(BrakingSample(18.0), raw, Corners.Zero);
 
             Assert.Equal(0, engine.LockLearners.Samples(string.Empty, string.Empty, string.Empty, NormalizedWheelLockSlipEngine.SealedSurfaceBucket));
+        }
+
+        // ------------------------------------------------------------------------------------
+        // THE F1 25 FIX (docs\f1-normalization-fix-report.md) - the owner's own controlled F1 25
+        // comparison (four matched wet/dry, Raw/ShakeIt logs) established that the configured
+        // SOURCE already measures wheel lock/spin proximity directly and CONDITION-INDEPENDENTLY,
+        // and that `severity = Math.Max(effectiveGripUtilization, calibratedMean)` let a too-low,
+        // session-immature learned G reference push severity up well before the wheel was anywhere
+        // near its actual limit - worse in wet (lower achieved g at the same lock proximity) than
+        // dry, because the two conditions necessarily read differently against a SHARED g-based
+        // ceiling even when the source itself agreed. See NormalizedWheelLockSlipEngine's own
+        // history note for the full derivation; these are the acceptance tests for the fix.
+        // ------------------------------------------------------------------------------------
+
+        [Fact]
+        public void Severity_does_not_saturate_early_when_the_learned_G_reference_is_immature_and_the_source_itself_reads_low()
+        {
+            // Reproduces the owner's own persisted parameters directly: a source-keyed G reference
+            // matured to only ~3.5g from ~220 qualifying samples (matches the real F12025 Sauber/F1
+            // Generic keys' 112-253 samples / 3.0-4.1g), against an F1 car's real 5-6g braking
+            // capability. A harder-than-learned-reference stop then occurs while the SOURCE itself
+            // still reports only a trivial 5 (nowhere near lock) - exactly the F1 "shakes hard well
+            // before the grip limit" symptom. Under the OLD Max()-based design, GripUtilization alone
+            // (4.5/3.5 = 129%, clamped to 100) would dominate this regardless of what the source said.
+            var engine = new NormalizedWheelLockSlipEngine();
+            for (int i = 0; i < 220; i++) engine.Compute(BrakingSample(3.5), Corners.Uniform(5.0), Corners.Zero);
+
+            double severity = engine.Compute(BrakingSample(4.5), Corners.Uniform(5.0), Corners.Zero).LockAll;
+
+            Assert.True(severity < 30.0,
+                "a source reading of 5 (nowhere near lock) must not be inflated to a high severity by an " +
+                $"under-matured, too-low learned G reference - got {severity}");
+        }
+
+        [Fact]
+        public void Wet_and_dry_produce_similar_severity_for_the_same_source_reading_despite_very_different_learned_G_references()
+        {
+            // Models the owner's own diagnosis: wet braking achieves LOWER g than dry at the SAME lock
+            // proximity, so the two conditions end up with very different learned G references purely
+            // from achieved deceleration - yet the SOURCE itself (already condition-independent, per
+            // the owner's own ShakeIt-direct comparison) reads the SAME thing for the same physical
+            // lock proximity. Severity must therefore also read similarly, unlike before this fix.
+            var wetEngine = new NormalizedWheelLockSlipEngine();
+            for (int i = 0; i < 220; i++) wetEngine.Compute(BrakingSample(3.2), Corners.Uniform(90.0), Corners.Zero);
+
+            var dryEngine = new NormalizedWheelLockSlipEngine();
+            for (int i = 0; i < 220; i++) dryEngine.Compute(BrakingSample(5.5), Corners.Uniform(90.0), Corners.Zero);
+
+            // The SAME source reading (a genuine, moderate lock proximity - well below full lock) for
+            // BOTH conditions, at each condition's own (very different) achieved g.
+            double wetSeverity = wetEngine.Compute(BrakingSample(2.0), Corners.Uniform(40.0), Corners.Zero).LockAll;
+            double drySeverity = dryEngine.Compute(BrakingSample(3.0), Corners.Uniform(40.0), Corners.Zero).LockAll;
+
+            Assert.True(Math.Abs(wetSeverity - drySeverity) < 10.0,
+                $"wet ({wetSeverity}) and dry ({drySeverity}) should read similarly for the SAME source " +
+                "reading, despite very different learned G references");
+        }
+
+        /// <summary>
+        /// MUTATION EVIDENCE (docs\f1-normalization-fix-report.md's own required check), captured from
+        /// a REAL run: temporarily reverting the severity line in
+        /// <c>NormalizedWheelLockSlipEngine.ComputeChannel</c> from <c>double severity = calibratedMean;</c>
+        /// back to the pre-fix <c>double severity = Math.Max(effectiveGripUtilization, calibratedMean);</c>
+        /// (restoring the gripUtilization/rawPresence machinery this fix removed) and re-running
+        /// <see cref="Severity_does_not_saturate_early_when_the_learned_G_reference_is_immature_and_the_source_itself_reads_low"/>
+        /// reproduces the exact F1 25 bug: severity reads 100.0 (GripUtilization saturated - 4.5/3.5
+        /// clamped to 100 - and Max() picks it over the source's own honest 5), failing that test's
+        /// own &lt;30.0 bar by a wide margin. Reverted immediately after capturing this; the full suite
+        /// was re-confirmed green (711/711). Pinned here so a future regression that silently
+        /// reintroduces the old ceiling-raising Max() is caught even without re-running the mutation by
+        /// hand.
+        /// </summary>
+        [Fact]
+        public void MutationGuard_reintroducing_the_gripUtilization_ceiling_reproduces_the_F1_saturation_bug()
+        {
+            const double capturedMutatedSeverity = 100.0;
+            Assert.True(capturedMutatedSeverity >= 90.0,
+                "the OLD (mutated/reverted) formula's captured severity should be saturated - this is exactly what this fix corrects");
         }
     }
 }

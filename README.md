@@ -241,7 +241,7 @@ Two files, both in SimHub's `PluginsData\Common` folder (resolved via SimHub's o
 
 ## Screenshots
 
-*Rendered outside SimHub with a throwaway WPF harness, so they show the light MahApps theme; inside SimHub the same control picks up SimHub's own theme.*
+*Rendered outside SimHub with a throwaway WPF harness, so they show the light MahApps theme; inside SimHub the same control picks up SimHub's own theme. Wheel Lock, Wheel Slip and G-Force are tall tabs, so their screenshots show only that tab's own settings (no tab strip, no Apply/Restore row) so the whole tab fits in one image; General is short enough that its screenshot instead shows the full control, tab strip and Apply/Restore row included.*
 
 **Wheel Lock**
 
