@@ -1,3 +1,4 @@
+using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.Projection;
 using QAdvanceFeedback.Settings;
 using Xunit;
@@ -213,6 +214,18 @@ namespace QAdvanceFeedback.Tests
         }
 
         [Fact]
+        public void LockSensibility_is_clamped_to_0_100_and_defaults_to_50()
+        {
+            var fresh = new WheelChannelSettings();
+            Assert.Equal(50.0, fresh.LockSensibility, 6);
+
+            var s = new WheelChannelSettings { LockSensibility = -5.0 };
+            Assert.Equal(0.0, s.LockSensibility, 6);
+            s.LockSensibility = 250.0;
+            Assert.Equal(100.0, s.LockSensibility, 6);
+        }
+
+        [Fact]
         public void Lock_and_slip_defaults_are_independent_instances()
         {
             WheelChannelSettings lockSettings = WheelChannelSettings.CreateLockDefaults();
@@ -221,6 +234,118 @@ namespace QAdvanceFeedback.Tests
             lockSettings.Projector.CriticalOutput = 5.0;
 
             Assert.NotEqual(lockSettings.Projector.CriticalOutput, slipSettings.Projector.CriticalOutput);
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // Aggregation (docs\aggregation-report.md) - the owner's Max/Min axle blend + Front/Rear
+        // weight-transfer scheme, replacing the retired p-norm/GroupMode aggregation.
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void Lock_defaults_ship_the_owners_tested_aggregation_weights_exactly()
+        {
+            WheelChannelSettings s = WheelChannelSettings.CreateLockDefaults();
+
+            Assert.Equal(0.45, s.AggregationWMax, 9);
+            Assert.Equal(0.55, s.AggregationWMin, 9);
+            Assert.Equal(0.90, s.AggregationWFront, 9);
+            Assert.Equal(0.10, s.AggregationWRear, 9);
+            Assert.Equal(0.0, s.SlipFloorFactor, 9);
+        }
+
+        [Fact]
+        public void Slip_defaults_ship_the_owners_tested_aggregation_weights_exactly()
+        {
+            WheelChannelSettings s = WheelChannelSettings.CreateSlipDefaults();
+
+            Assert.Equal(0.55, s.AggregationWMax, 9);
+            Assert.Equal(0.45, s.AggregationWMin, 9);
+            Assert.Equal(0.65, s.AggregationWFront, 9);
+            Assert.Equal(0.35, s.AggregationWRear, 9);
+            Assert.Equal(0.4, s.SlipFloorFactor, 9);
+        }
+
+        [Fact]
+        public void A_bare_new_instance_ships_the_neutral_no_floor_fallback_not_either_channels_real_numbers()
+        {
+            // A settings file saved before this feature existed (missing these JSON keys) deserialises
+            // via the bare constructor, landing on the neutral fallback - NOT silently on one channel's
+            // real numbers for the other channel too (see this class's own remarks on why a shared POCO
+            // cannot give two different field-initialiser defaults).
+            var fresh = new WheelChannelSettings();
+
+            Assert.Equal(AggregationWeights.Neutral.WMax, fresh.AggregationWMax, 9);
+            Assert.Equal(AggregationWeights.Neutral.WMin, fresh.AggregationWMin, 9);
+            Assert.Equal(AggregationWeights.Neutral.WFront, fresh.AggregationWFront, 9);
+            Assert.Equal(AggregationWeights.Neutral.WRear, fresh.AggregationWRear, 9);
+            Assert.Equal(AggregationWeights.Neutral.SlipFloorFactor, fresh.SlipFloorFactor, 9);
+        }
+
+        [Fact]
+        public void Aggregation_weight_setters_clamp_negative_values_to_zero()
+        {
+            var s = new WheelChannelSettings
+            {
+                AggregationWMax = -1.0,
+                AggregationWMin = -2.0,
+                AggregationWFront = -3.0,
+                AggregationWRear = -4.0
+            };
+
+            Assert.Equal(0.0, s.AggregationWMax, 9);
+            Assert.Equal(0.0, s.AggregationWMin, 9);
+            Assert.Equal(0.0, s.AggregationWFront, 9);
+            Assert.Equal(0.0, s.AggregationWRear, 9);
+        }
+
+        [Fact]
+        public void Aggregation_weight_setters_accept_values_above_one_unclamped()
+        {
+            // Only >= 0 is enforced - NOT a sum-to-1 constraint (see AggregationWeights' own remarks on
+            // why: a driver's typed weights are never silently rescaled).
+            var s = new WheelChannelSettings { AggregationWMax = 3.5 };
+            Assert.Equal(3.5, s.AggregationWMax, 9);
+        }
+
+        [Fact]
+        public void SlipFloorFactor_setter_clamps_to_0_1()
+        {
+            var s = new WheelChannelSettings { SlipFloorFactor = -0.5 };
+            Assert.Equal(0.0, s.SlipFloorFactor, 9);
+
+            s.SlipFloorFactor = 2.5;
+            Assert.Equal(1.0, s.SlipFloorFactor, 9);
+
+            s.SlipFloorFactor = 0.4;
+            Assert.Equal(0.4, s.SlipFloorFactor, 9);
+        }
+
+        [Fact]
+        public void ToAggregationWeights_round_trips_all_five_numbers()
+        {
+            WheelChannelSettings s = WheelChannelSettings.CreateSlipDefaults();
+            AggregationWeights weights = s.ToAggregationWeights();
+
+            Assert.Equal(s.AggregationWMax, weights.WMax, 9);
+            Assert.Equal(s.AggregationWMin, weights.WMin, 9);
+            Assert.Equal(s.AggregationWFront, weights.WFront, 9);
+            Assert.Equal(s.AggregationWRear, weights.WRear, 9);
+            Assert.Equal(s.SlipFloorFactor, weights.SlipFloorFactor, 9);
+        }
+
+        [Fact]
+        public void RestoreDefaults_restores_the_owners_aggregation_weights_after_being_customised()
+        {
+            var settings = QAdvanceFeedbackSettings.CreateDefault();
+            settings.Lock.AggregationWMax = 0.0;
+            settings.Lock.AggregationWMin = 0.0;
+            settings.Slip.SlipFloorFactor = 0.0;
+
+            settings.RestoreDefaults();
+
+            Assert.Equal(0.45, settings.Lock.AggregationWMax, 9);
+            Assert.Equal(0.55, settings.Lock.AggregationWMin, 9);
+            Assert.Equal(0.4, settings.Slip.SlipFloorFactor, 9);
         }
     }
 }

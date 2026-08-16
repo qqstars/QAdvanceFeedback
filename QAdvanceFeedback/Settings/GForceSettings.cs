@@ -135,36 +135,67 @@ namespace QAdvanceFeedback.Settings
         /// <summary>
         /// The owner-requested "Integrate Wheel Lock and Slip" G-force shake (see
         /// <see cref="GForceEngine.ShakeFrequencyHz"/>/<c>Core.GForce.GForceShake</c> for the mechanics).
-        /// Default OFF: this is a new, intrusive change to the existing G-force FEEL (it superimposes an
-        /// oscillation on top of every pad pair's level) - shipping it enabled by default would silently
-        /// change how the plugin already feels for every existing install, which nothing else in this
-        /// plugin family does (compare <see cref="Core.Projection.PulseSettings.Enabled"/>, the other
-        /// "changes the feel" toggle, which also ships OFF). A driver opts in deliberately.
+        /// Default ON (changed from an original OFF - docs\integrate-default-report.md): the owner
+        /// decided a fresh install should feel this without hunting for the toggle, rather than treating
+        /// it as an opt-in change to the existing G-force feel (contrast
+        /// <see cref="Core.Projection.PulseSettings.Enabled"/>, the OTHER "changes the feel" toggle,
+        /// which still ships OFF - that decision is untouched by this one). Turning this on by itself is
+        /// still behaviourally inert for anyone who has not wired up the Wheel Lock/Wheel Slip channels:
+        /// the shake amplitude is <c>gForceValue * (wheelValue/100) * scale</c>, so a wheel value of 0
+        /// (the default when nothing publishes a lock/slip signal) always contributes a zero-width band -
+        /// see <see cref="GForceEngine.Compute"/>.
+        /// <para/>
+        /// This is a SETTINGS-layer default only - <see cref="GForceEngine"/>'s own bare-constructor
+        /// default (<see cref="GForceEngine.IntegrateWheelLockAndSlip"/>) deliberately stays OFF as a
+        /// library-level "inert unless configured" baseline for anyone constructing the engine directly
+        /// (every <c>GForceEngineShakeTests</c> "disabled" fixture relies on exactly that). The two never
+        /// actually disagree for a real user: <see cref="ApplyTo"/> pushes THIS property onto the engine
+        /// at Init and on every settings Apply, so what ships here is what every fresh install experiences.
         /// </summary>
-        public bool IntegrateWheelLockAndSlip { get; set; } = false;
+        public bool IntegrateWheelLockAndSlip { get; set; } = true;
 
-        private double _shakeFrequencyHz = Core.GForce.GForceShake.MinFrequencyHz;
+        private double _shakeFrequencyHz = 3.0;
 
-        /// <summary>Hz, clamped to [5, 20] in the setter itself - see
-        /// <see cref="GForceEngine.ShakeFrequencyHz"/>'s own remarks. Default 5 Hz (the floor).</summary>
+        /// <summary>Hz, clamped to [<see cref="Core.GForce.GForceShake.MinFrequencyHz"/> (1),
+        /// <see cref="Core.GForce.GForceShake.MaxFrequencyHz"/> (20)] in the setter itself - see
+        /// <see cref="GForceEngine.ShakeFrequencyHz"/>'s own remarks. Default **3 Hz**
+        /// (docs\shake-tuning-report.md) - RAISED off the floor deliberately: the floor itself was
+        /// lowered from 5 to 1 Hz per driver feedback ("5 Hz is not obvious enough; 1-2 Hz reads
+        /// better"), but a shipped DEFAULT sitting exactly on the new floor would under-shoot that same
+        /// feedback for anyone who never touches this spinner - 3 Hz sits inside the driver's own
+        /// preferred 1-2 Hz-reads-better range's upper half while leaving headroom either side. NOT
+        /// the Layer 5 pulse's own separate, UNCHANGED 200 ms (5 Hz) gap floor
+        /// (<see cref="Core.Projection.PulseSettings.MinGapMs"/>) on the Wheel Lock/Slip tabs - this
+        /// property only ever affects the G-Force "Integrate Wheel Lock and Slip" shake.</summary>
         public double ShakeFrequencyHz
         {
             get => _shakeFrequencyHz;
             set => _shakeFrequencyHz = ClampMath.Clamp(value, Core.GForce.GForceShake.MinFrequencyHz, Core.GForce.GForceShake.MaxFrequencyHz);
         }
 
-        private double _wheelLockShakeScale = 1.0;
+        private double _wheelLockShakeScale = 1.5;
 
-        /// <summary>Non-negative, clamped in the setter. Default 1.0 (unscaled).</summary>
+        /// <summary>Non-negative, clamped in the setter. Default **1.5** (150%) - RAISED from an
+        /// original 1.0 (docs\shake-tuning-report.md), per driver feedback asking for a more obvious
+        /// shake by default. Displayed in the UI as "1.0 = 100%" so the multiplier reads intuitively;
+        /// deliberately NOT re-expressed as a separately-stored percentage field (which would create a
+        /// second control scaling the same amplitude term as this one and risk contradicting it) - see
+        /// <see cref="GForceEngine.ShakeFrequencyHz"/>'s sibling remarks and the report for the full
+        /// reconciliation of the driver's "shaking percentage" request against this pre-existing
+        /// setting. Concretely: at a pad level of 100 and a wheel value of 60, the old default produced
+        /// a shake band of 60 (out of 100); the new default produces a band of 90 - 50% wider, i.e.
+        /// audibly/physically more obvious, exactly as requested.</summary>
         public double WheelLockShakeScale
         {
             get => _wheelLockShakeScale;
             set => _wheelLockShakeScale = value >= 0.0 ? value : 0.0;
         }
 
-        private double _wheelSlipShakeScale = 1.0;
+        private double _wheelSlipShakeScale = 1.5;
 
-        /// <summary>Non-negative, clamped in the setter. Default 1.0 (unscaled).</summary>
+        /// <summary>Non-negative, clamped in the setter. Default **1.5** (150%) - see
+        /// <see cref="WheelLockShakeScale"/>'s remarks for the full rationale (identical, mirrored for
+        /// the Slip channel).</summary>
         public double WheelSlipShakeScale
         {
             get => _wheelSlipShakeScale;
@@ -368,15 +399,20 @@ namespace QAdvanceFeedback.Settings
         /// <summary>See <see cref="DeviceMinHz"/>.</summary>
         public const double DeviceMaxHz = 300.0;
 
-        private double _recommendedFromHz = 300.0;
-        private double _recommendedToHz = 20.0;
+        private double _recommendedFromHz = 100.0;
+        private double _recommendedToHz = 50.0;
 
         /// <summary>
         /// Recommended "From" Hz - the frequency a channel plays at when its published value is near
         /// 0 (the high/subtle end of the convention: value near 0 -&gt; high Hz, value 100 -&gt; low
-        /// Hz). Defaults to the owner's own example (300 Hz - the device's own maximum), clamped to
-        /// the device's actual 10-300 Hz capability so a differently-capable device still gets a sane
-        /// recommendation instead of an out-of-range one.
+        /// Hz). UPDATED TWICE (docs\raw-gap-and-pad-balance-report.md), both times per the owner's own
+        /// real seat-time feel, not theory: first from the original 300 Hz down to 50 Hz (300 Hz at the
+        /// low end of the value range read too harsh/thin), then - after further seat time found 20 Hz
+        /// too weak to shake strongly enough - to the current **100 Hz -&gt; 50 Hz** range. This is
+        /// DATA/GUIDANCE TEXT ONLY (see this class's own remarks above <see cref="DeviceMinHz"/>) - it
+        /// does not feed any computed output, so this change cannot move any behavioural test. Still
+        /// clamped to the device's actual 10-300 Hz capability so a differently-capable device still
+        /// gets a sane recommendation instead of an out-of-range one.
         /// </summary>
         public double RecommendedFromHz
         {
@@ -386,10 +422,11 @@ namespace QAdvanceFeedback.Settings
 
         /// <summary>
         /// Recommended "To" Hz - the frequency a channel plays at when its published value is 100
-        /// (the low/punchy end). Defaults to the owner's own example (20 Hz), clamped to the device
-        /// range AND kept at or below <see cref="RecommendedFromHz"/> - the whole point of the
-        /// convention is value 0 -&gt; high Hz, value 100 -&gt; low Hz, so a "to" above "from" would
-        /// silently invert it.
+        /// (the low/punchy end). See <see cref="RecommendedFromHz"/>'s own remarks for the revision
+        /// history - now 50 Hz (raised from an original 20 Hz, which real seat time found did not
+        /// shake strongly enough), clamped to the device range AND kept at or below
+        /// <see cref="RecommendedFromHz"/> - the whole point of the convention is value 0 -&gt; high Hz,
+        /// value 100 -&gt; low Hz, so a "to" above "from" would silently invert it.
         /// </summary>
         public double RecommendedToHz
         {

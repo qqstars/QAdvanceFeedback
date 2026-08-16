@@ -51,6 +51,17 @@ namespace QAdvanceFeedback.Core
         /// <see cref="LegacyThresholds"/>'s own remarks). Null (the default) means
         /// <see cref="LegacyThresholds.Defaults"/> - every pre-existing caller that does not yet pass
         /// this keeps compiling and behaving exactly as before.</param>
-        LegacyWheelLockSlipResult Compute(ITelemetrySample sample, LegacyThresholds? thresholds = null);
+        /// <param name="lockAggregation">Wheel Lock's own <see cref="Aggregator"/> weights
+        /// (docs\aggregation-report.md) - read fresh EVERY call (not baked into an implementation's own
+        /// constructor) so a driver's settings edit takes effect on the very next frame, with no engine
+        /// rebuild. Null (the default) means <see cref="AggregationWeights.LockDefaults"/> - every
+        /// pre-existing caller/test that does not yet pass this keeps compiling and behaving exactly as
+        /// before.</param>
+        /// <param name="slipAggregation">Wheel Slip's own <see cref="Aggregator"/> weights - see
+        /// <paramref name="lockAggregation"/>'s own remarks. Null (the default) means
+        /// <see cref="AggregationWeights.SlipDefaults"/>.</param>
+        LegacyWheelLockSlipResult Compute(
+            ITelemetrySample sample, LegacyThresholds? thresholds = null,
+            AggregationWeights? lockAggregation = null, AggregationWeights? slipAggregation = null);
     }
 }

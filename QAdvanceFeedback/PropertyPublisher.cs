@@ -55,6 +55,20 @@ namespace QAdvanceFeedback
         private double _gforceLearnedAccelMaxG;
         private double _gforceLearnedDecelMaxG;
 
+        // Diag.Source.* (docs\raw-gap-and-pad-balance-report.md) - the RESOLVED SOURCE value Layer 4
+        // actually consumed this frame, per wheel plus the same Front/Rear/Left/Right/All aggregates
+        // every other tier publishes - indexed exactly like _lockRaw/_slipRaw (PublishedPropertyNames.
+        // Targets order). Added so a future "does our Raw match the configured source" investigation
+        // never again needs to invert the Normalized transform to recover this value.
+        private readonly double[] _sourceLock = new double[TargetCount];
+        private readonly double[] _sourceSlip = new double[TargetCount];
+
+        // WheelLock/WheelSlip.ProjectedWithoutPulse.* (docs\raw-gap-and-pad-balance-report.md, the
+        // pulse-into-shake fix) - internal/troubleshooting only, gated the same as every other
+        // diagnostic name (see Register). Indexed exactly like _lockProjected/_slipProjected.
+        private readonly double[] _lockProjectedWithoutPulse = new double[TargetCount];
+        private readonly double[] _slipProjectedWithoutPulse = new double[TargetCount];
+
         /// <summary>
         /// Attaches every property this plugin publishes this session. <paramref name="diagnosticsEnabled"/>
         /// gates the diagnostic set only (see <see cref="AllPublishedProperties.DiagnosticNames"/>) -
@@ -89,6 +103,12 @@ namespace QAdvanceFeedback
             plugin.AttachDelegate("Diag.Slip.LearnerConfidence", () => _slipLearnerConfidence);
             plugin.AttachDelegate("Diag.GForce.LearnedAccelMaxG", () => _gforceLearnedAccelMaxG);
             plugin.AttachDelegate("Diag.GForce.LearnedDecelMaxG", () => _gforceLearnedDecelMaxG);
+
+            AttachTier(plugin, AllPublishedProperties.SourceLockPrefix, _sourceLock);
+            AttachTier(plugin, AllPublishedProperties.SourceSlipPrefix, _sourceSlip);
+
+            AttachTier(plugin, AllPublishedProperties.ProjectedLockWithoutPulsePrefix, _lockProjectedWithoutPulse);
+            AttachTier(plugin, AllPublishedProperties.ProjectedSlipWithoutPulsePrefix, _slipProjectedWithoutPulse);
         }
 
         private static void AttachTier<TPlugin>(TPlugin plugin, string prefix, double[] values) where TPlugin : IPlugin
@@ -146,6 +166,57 @@ namespace QAdvanceFeedback
             _slipProjected[6] = result.SlipLeft;
             _slipProjected[7] = result.SlipRight;
             _slipProjected[8] = result.SlipAll;
+
+            _lockProjectedWithoutPulse[0] = result.LockWheelsWithoutPulse.FrontLeft;
+            _lockProjectedWithoutPulse[1] = result.LockWheelsWithoutPulse.FrontRight;
+            _lockProjectedWithoutPulse[2] = result.LockWheelsWithoutPulse.RearLeft;
+            _lockProjectedWithoutPulse[3] = result.LockWheelsWithoutPulse.RearRight;
+            _lockProjectedWithoutPulse[4] = result.LockFrontWithoutPulse;
+            _lockProjectedWithoutPulse[5] = result.LockRearWithoutPulse;
+            _lockProjectedWithoutPulse[6] = result.LockLeftWithoutPulse;
+            _lockProjectedWithoutPulse[7] = result.LockRightWithoutPulse;
+            _lockProjectedWithoutPulse[8] = result.LockAllWithoutPulse;
+
+            _slipProjectedWithoutPulse[0] = result.SlipWheelsWithoutPulse.FrontLeft;
+            _slipProjectedWithoutPulse[1] = result.SlipWheelsWithoutPulse.FrontRight;
+            _slipProjectedWithoutPulse[2] = result.SlipWheelsWithoutPulse.RearLeft;
+            _slipProjectedWithoutPulse[3] = result.SlipWheelsWithoutPulse.RearRight;
+            _slipProjectedWithoutPulse[4] = result.SlipFrontWithoutPulse;
+            _slipProjectedWithoutPulse[5] = result.SlipRearWithoutPulse;
+            _slipProjectedWithoutPulse[6] = result.SlipLeftWithoutPulse;
+            _slipProjectedWithoutPulse[7] = result.SlipRightWithoutPulse;
+            _slipProjectedWithoutPulse[8] = result.SlipAllWithoutPulse;
+        }
+
+        /// <summary>
+        /// Diag.Source.* (docs\raw-gap-and-pad-balance-report.md): records exactly the per-wheel
+        /// Corners Layer 4 (<c>NormalizedWheelLockSlipEngine.Compute</c>) was actually called with THIS
+        /// frame - <c>lockSources</c>/<c>slipSources</c> in <c>QAdvanceFeedback.cs</c>'s own
+        /// <c>DataUpdate</c>, i.e. our own Layer 3 Raw by default, or whatever the driver's Source
+        /// fields resolved to instead (a ShakeIt export, a Manual property/expression, or the Layer 3
+        /// fallback on any resolution failure - see <c>WheelSourceResolver</c>). Front/Rear/Left/Right/
+        /// All are aggregated with the SAME owner-configured scheme every other tier uses for this
+        /// channel (docs\aggregation-report.md), so this reads exactly like the Raw/Normalized/Projected
+        /// tiers a driver already knows how to interpret.
+        /// </summary>
+        public void UpdateSource(Corners lockSources, Corners slipSources, AggregationWeights lockWeights, AggregationWeights slipWeights)
+        {
+            FillSource(_sourceLock, lockSources, lockWeights);
+            FillSource(_sourceSlip, slipSources, slipWeights);
+        }
+
+        private static void FillSource(double[] values, Corners wheels, AggregationWeights weights)
+        {
+            values[0] = wheels.FrontLeft;
+            values[1] = wheels.FrontRight;
+            values[2] = wheels.RearLeft;
+            values[3] = wheels.RearRight;
+            WheelAggregate aggregate = Aggregator.Compute(wheels, weights);
+            values[4] = aggregate.Front;
+            values[5] = aggregate.Rear;
+            values[6] = aggregate.Left;
+            values[7] = aggregate.Right;
+            values[8] = aggregate.All;
         }
 
         public void UpdateGForce(GForceOutput output)
@@ -206,6 +277,12 @@ namespace QAdvanceFeedback
             values.Add(_gforceLearnedAccelMaxG);
             values.Add(_gforceLearnedDecelMaxG);
 
+            foreach (double v in _sourceLock) values.Add(v);
+            foreach (double v in _sourceSlip) values.Add(v);
+
+            foreach (double v in _lockProjectedWithoutPulse) values.Add(v);
+            foreach (double v in _slipProjectedWithoutPulse) values.Add(v);
+
             return values.ToArray();
         }
 
@@ -226,6 +303,10 @@ namespace QAdvanceFeedback
         public double SlipLearnerConfidenceSnapshot => _slipLearnerConfidence;
         public double GForceLearnedAccelMaxGSnapshot => _gforceLearnedAccelMaxG;
         public double GForceLearnedDecelMaxGSnapshot => _gforceLearnedDecelMaxG;
+        public double[] SourceLockSnapshot => (double[])_sourceLock.Clone();
+        public double[] SourceSlipSnapshot => (double[])_sourceSlip.Clone();
+        public double[] LockProjectedWithoutPulseSnapshot => (double[])_lockProjectedWithoutPulse.Clone();
+        public double[] SlipProjectedWithoutPulseSnapshot => (double[])_slipProjectedWithoutPulse.Clone();
 
         private static void Fill(double[] lockValues, double[] slipValues, LegacyWheelLockSlipResult result)
         {

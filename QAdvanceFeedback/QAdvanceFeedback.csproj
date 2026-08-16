@@ -12,8 +12,8 @@
     <RootNamespace>QAdvanceFeedback</RootNamespace>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <SimHubRefPath Condition="'$(SimHubRefPath)' == ''">$(MSBuildThisFileDirectory)..\lib</SimHubRefPath>
-    <AssemblyVersion>1.0.1.0</AssemblyVersion>
-    <FileVersion>1.0.1.0</FileVersion>
+    <AssemblyVersion>1.0.3</AssemblyVersion>
+    <FileVersion>1.0.3</FileVersion>
     <!-- Single-DLL distribution (hard requirement): every SimHub/GameReaderCommon/MahApps reference
          below is <Private>false</Private>, so none of them are copied into bin\Release\net48 - only
          QAdvanceFeedback.dll and its .pdb land there. -->

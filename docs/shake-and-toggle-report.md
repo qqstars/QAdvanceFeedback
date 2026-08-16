@@ -6,6 +6,11 @@
 > (`Private\QAdvanceFeedback\` and `Private\QAdvanceFeedback.Tests\`) - left unchanged below as a
 > historical record.
 
+> **Superseded note (added later, see docs/shake-tuning-report.md):** this report's own "Settings"
+> section below documents the shake's ORIGINAL 5-20 Hz range (default 5 Hz) and 1.0 scale defaults -
+> both since revised (floor lowered to 1 Hz, default raised to 3 Hz; both Wheel Lock/Slip scale
+> defaults raised to 1.5) per further driver feedback. Left unchanged below as a historical record.
+
 ## STATUS
 
 Complete. Both features implemented, tested, and documented; both owner-confirmed decisions

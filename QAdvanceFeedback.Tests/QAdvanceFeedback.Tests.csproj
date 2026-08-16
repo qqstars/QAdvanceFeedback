@@ -58,6 +58,11 @@
              Condition="Exists('..\Private\QAdvanceFeedback\LegacySlipAlgorithm.cs')" />
     <Compile Include="..\Private\QAdvanceFeedback\LegacyWheelLockSlipEngine.cs" LinkBase="Core"
              Condition="Exists('..\Private\QAdvanceFeedback\LegacyWheelLockSlipEngine.cs')" />
+    <!-- Lock-and-animation task's own addition (docs\lock-and-animation-report.md) - the Wheel Lock
+         channel's corrected Layer 3 algorithm (SimHub's "Braking vs speed" branch, faithfully ported,
+         plus the documented low-speed fix). Same Exists()-guard convention as the two files above. -->
+    <Compile Include="..\Private\QAdvanceFeedback\SimpleBrakingLockAlgorithm.cs" LinkBase="Core"
+             Condition="Exists('..\Private\QAdvanceFeedback\SimpleBrakingLockAlgorithm.cs')" />
   </ItemGroup>
   <ItemGroup>
     <!-- This project's OWN withheld fidelity tests (see ..\Private\README.md) now live in a

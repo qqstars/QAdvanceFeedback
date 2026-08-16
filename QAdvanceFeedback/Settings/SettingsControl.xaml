@@ -96,6 +96,30 @@
       <TabItem x:Name="WheelLockTab">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
           <StackPanel>
+            <!-- TRIGGER THRESHOLD - owner-requested restructure: promoted out of "Sources" into its
+                 own section, ABOVE Sources, on both the Wheel Lock and Wheel Slip tabs (see
+                 docs\lock-and-animation-report.md). Gates the WHOLE channel (Raw AND Normalized), not
+                 just the underlying algorithm's own per-wheel term - see the note text/localisation for
+                 the exact semantics, including the ShakeIt-source composition caveat. -->
+            <GroupBox x:Name="LockTriggerThresholdGroup">
+              <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock x:Name="LockLblBrakeThreshold"/>
+                  <mah:NumericUpDown x:Name="LockBrakeThreshold" StringFormat="0"/>
+                </StackPanel>
+                <TextBlock x:Name="LockThresholdNote" TextWrapping="Wrap" FontStyle="Italic"/>
+
+                <!-- LockSensibility (docs\lock-and-animation-report.md) - matches SimHub's own
+                     WheelsLockContainer.LockSensibility exactly (name, range 0-100, default 50); now
+                     load-bearing for Lock's own corrected Layer 3 algorithm. -->
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock x:Name="LockLblSensibility"/>
+                  <mah:NumericUpDown x:Name="LockSensibility" StringFormat="0"/>
+                </StackPanel>
+                <TextBlock x:Name="LockSensibilityNote" TextWrapping="Wrap" FontStyle="Italic"/>
+              </StackPanel>
+            </GroupBox>
+
             <GroupBox x:Name="LockSourcesGroup">
               <StackPanel>
                 <!-- Source mode toggle - ALWAYS at the top of this section, ALWAYS visible and
@@ -115,11 +139,6 @@
 
                 <TextBlock x:Name="LockSourcesNote" TextWrapping="Wrap" FontStyle="Italic"/>
                 <TextBlock x:Name="LockSourcesContractNote" TextWrapping="Wrap" FontStyle="Italic"/>
-
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock x:Name="LockLblBrakeThreshold"/>
-                  <mah:NumericUpDown x:Name="LockBrakeThreshold" StringFormat="0"/>
-                </StackPanel>
 
                 <Grid>
                   <Grid.ColumnDefinitions>
@@ -150,6 +169,41 @@
                   <Button    Grid.Row="3" Grid.Column="3" x:Name="LockPickRr"/>
                 </Grid>
                 <Button x:Name="LockResetSources" Padding="16,4" HorizontalAlignment="Left"/>
+              </StackPanel>
+            </GroupBox>
+
+            <!-- AGGREGATION (docs\aggregation-report.md) - the owner's physically-motivated Max/Min
+                 axle blend + Front/Rear weight-transfer scheme that combines the four wheels above into
+                 Front/Rear/Left/Right/All, replacing the previous generic aggregation. Every weight is
+                 independently configurable per channel (Wheel Lock has no slip-floor control - see
+                 SlipAggregationGroup below for that one). -->
+            <GroupBox x:Name="LockAggregationGroup">
+              <StackPanel>
+                <TextBlock x:Name="LockAggregationNote" TextWrapping="Wrap" FontStyle="Italic"/>
+
+                <Grid Margin="0,4,0,0">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+                  </Grid.RowDefinitions>
+
+                  <TextBlock Grid.Row="0" Grid.Column="0" x:Name="LockLblWMax"/>
+                  <mah:NumericUpDown Grid.Row="0" Grid.Column="1" x:Name="LockWMax" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+
+                  <TextBlock Grid.Row="1" Grid.Column="0" x:Name="LockLblWMin"/>
+                  <mah:NumericUpDown Grid.Row="1" Grid.Column="1" x:Name="LockWMin" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+
+                  <TextBlock Grid.Row="2" Grid.Column="0" x:Name="LockLblWFront"/>
+                  <mah:NumericUpDown Grid.Row="2" Grid.Column="1" x:Name="LockWFront" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+
+                  <TextBlock Grid.Row="3" Grid.Column="0" x:Name="LockLblWRear"/>
+                  <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="LockWRear" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+                </Grid>
+
+                <TextBlock x:Name="LockAggregationAxleHelp" TextWrapping="Wrap" FontStyle="Italic" Margin="4,8,4,0"/>
+                <TextBlock x:Name="LockAggregationSideHelp" TextWrapping="Wrap" FontStyle="Italic" Margin="4,4,4,4"/>
               </StackPanel>
             </GroupBox>
 
@@ -239,6 +293,20 @@
       <TabItem x:Name="WheelSlipTab">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
           <StackPanel>
+            <!-- TRIGGER THRESHOLD - see LockTriggerThresholdGroup's own remarks; identical layout,
+                 independently for this channel (brake AND throttle, brake-priority unchanged). -->
+            <GroupBox x:Name="SlipTriggerThresholdGroup">
+              <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock x:Name="SlipLblBrakeThreshold"/>
+                  <mah:NumericUpDown x:Name="SlipBrakeThreshold" StringFormat="0"/>
+                  <TextBlock x:Name="SlipLblThrottleThreshold"/>
+                  <mah:NumericUpDown x:Name="SlipThrottleThreshold" StringFormat="0"/>
+                </StackPanel>
+                <TextBlock x:Name="SlipThresholdNote" TextWrapping="Wrap" FontStyle="Italic"/>
+              </StackPanel>
+            </GroupBox>
+
             <GroupBox x:Name="SlipSourcesGroup">
               <StackPanel>
                 <!-- Source mode toggle - see LockSourcesGroup's own remarks; identical layout/logic,
@@ -256,13 +324,6 @@
 
                 <TextBlock x:Name="SlipSourcesNote" TextWrapping="Wrap" FontStyle="Italic"/>
                 <TextBlock x:Name="SlipSourcesContractNote" TextWrapping="Wrap" FontStyle="Italic"/>
-
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock x:Name="SlipLblBrakeThreshold"/>
-                  <mah:NumericUpDown x:Name="SlipBrakeThreshold" StringFormat="0"/>
-                  <TextBlock x:Name="SlipLblThrottleThreshold"/>
-                  <mah:NumericUpDown x:Name="SlipThrottleThreshold" StringFormat="0"/>
-                </StackPanel>
 
                 <Grid>
                   <Grid.ColumnDefinitions>
@@ -293,6 +354,45 @@
                   <Button    Grid.Row="3" Grid.Column="3" x:Name="SlipPickRr"/>
                 </Grid>
                 <Button x:Name="SlipResetSources" Padding="16,4" HorizontalAlignment="Left"/>
+              </StackPanel>
+            </GroupBox>
+
+            <!-- AGGREGATION - see LockAggregationGroup's own remarks; identical layout, independently
+                 for this channel, PLUS the slip floor factor (Wheel Lock has no equivalent control - see
+                 docs\aggregation-report.md for why Lock does not need one). -->
+            <GroupBox x:Name="SlipAggregationGroup">
+              <StackPanel>
+                <TextBlock x:Name="SlipAggregationNote" TextWrapping="Wrap" FontStyle="Italic"/>
+
+                <Grid Margin="0,4,0,0">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+                  </Grid.RowDefinitions>
+
+                  <TextBlock Grid.Row="0" Grid.Column="0" x:Name="SlipLblWMax"/>
+                  <mah:NumericUpDown Grid.Row="0" Grid.Column="1" x:Name="SlipWMax" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+
+                  <TextBlock Grid.Row="1" Grid.Column="0" x:Name="SlipLblWMin"/>
+                  <mah:NumericUpDown Grid.Row="1" Grid.Column="1" x:Name="SlipWMin" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+
+                  <TextBlock Grid.Row="2" Grid.Column="0" x:Name="SlipLblWFront"/>
+                  <mah:NumericUpDown Grid.Row="2" Grid.Column="1" x:Name="SlipWFront" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+
+                  <TextBlock Grid.Row="3" Grid.Column="0" x:Name="SlipLblWRear"/>
+                  <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="SlipWRear" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+                </Grid>
+
+                <TextBlock x:Name="SlipAggregationAxleHelp" TextWrapping="Wrap" FontStyle="Italic" Margin="4,8,4,0"/>
+                <TextBlock x:Name="SlipAggregationSideHelp" TextWrapping="Wrap" FontStyle="Italic" Margin="4,4,4,0"/>
+
+                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                  <TextBlock x:Name="SlipLblFloorFactor"/>
+                  <mah:NumericUpDown x:Name="SlipFloorFactor" Minimum="0" Maximum="1" Interval="0.05" StringFormat="0.00"/>
+                </StackPanel>
+                <TextBlock x:Name="SlipFloorFactorNote" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,4"/>
               </StackPanel>
             </GroupBox>
 
@@ -491,7 +591,7 @@
                   </Grid.RowDefinitions>
 
                   <TextBlock Grid.Row="0" Grid.Column="0" x:Name="GForceLblShakeFrequency"/>
-                  <mah:NumericUpDown Grid.Row="0" Grid.Column="1" x:Name="GForceShakeFrequency" Minimum="5" Maximum="20" Interval="1" StringFormat="0.#"/>
+                  <mah:NumericUpDown Grid.Row="0" Grid.Column="1" x:Name="GForceShakeFrequency" Minimum="1" Maximum="20" Interval="1" StringFormat="0.#"/>
 
                   <TextBlock Grid.Row="1" Grid.Column="0" x:Name="GForceLblShakeLockScale"/>
                   <mah:NumericUpDown Grid.Row="1" Grid.Column="1" x:Name="GForceShakeLockScale" Minimum="0" Maximum="10" Interval="0.1" StringFormat="0.0"/>

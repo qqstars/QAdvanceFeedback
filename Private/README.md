@@ -12,15 +12,13 @@ source file for both projects in this solution, consolidated into one top-level 
 
 ## `Private\QAdvanceFeedback\` - the withheld plugin implementation
 
-Holds the two pieces of this plugin that were built by decompiling and reproducing SimHub's
-own `WheelSlipEffect` arithmetic, which the project owner has chosen to withhold from the
-open-source release:
+Holds the two pieces of this plugin that were built by reproducing SimHub's own `WheelSlipEffect` arithmetic:
 
 - **Layer 2 - the telemetry adapter** (`SimHubTelemetryAdapter.cs`): maps SimHub's own
   `GameData`/`StatusDataBase`/`FeedbackData`/`LocalVelocity` shape onto this plugin's public,
   game-agnostic `QAdvanceFeedback.Core.ITelemetryFrame` / `TelemetrySample` types.
 - **Layer 3 - the legacy algorithm** (`LegacySlipAlgorithm.cs` + `LegacyWheelLockSlipEngine.cs`):
-  the actual per-wheel lock/slip arithmetic, faithfully reproducing SimHub's decompiled
+  the actual per-wheel lock/slip arithmetic, faithfully reproducing SimHub's
   `WheelSlipEffect.GetRpmSpeedSlipLegacy` (the branch used when `UseLegacyIracingAlgorythm` is
   enabled), plus the aggregation/scaling that turns its native scale into the plugin's
   published 0-100 `WheelLock.Raw.*` / `WheelSlip.Raw.*` properties.
@@ -155,9 +153,7 @@ accident.
 This is **source-code omission, not protection**. The compiled `QAdvanceFeedback.dll` released
 in `bin\Release\net48\` still contains whichever concrete implementation was present at build
 time (the project owner's own, or a third party's), compiled into ordinary MSIL - it can be
-decompiled with exactly the same tools and techniques this project itself used to decompile
-SimHub's `SimHub.Plugins.dll` (see `docs\reference\*.decompiled.cs` and the various `*-report.md`
-files in `docs\`). Withholding the `.cs` source from the git history keeps a casual reader of the
+decompiled. Withholding the `.cs` source from the git history keeps a casual reader of the
 GitHub repository from seeing the algorithm, and keeps a plain `git clone` from reproducing it -
 it does not, and cannot, keep it out of the shipped binary.
 

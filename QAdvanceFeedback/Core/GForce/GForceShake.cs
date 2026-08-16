@@ -39,10 +39,13 @@ namespace QAdvanceFeedback.Core.GForce
     /// </summary>
     public static class GForceShake
     {
-        /// <summary>5 Hz - the slowest this shake is allowed to run, enforced in
+        /// <summary>1 Hz - the slowest this shake is allowed to run, enforced in
         /// <see cref="Settings.GForceSettings.ShakeFrequencyHz"/>'s own setter (not merely a UI
-        /// spinner minimum).</summary>
-        public const double MinFrequencyHz = 5.0;
+        /// spinner minimum). LOWERED from an original 5 Hz floor (docs\shake-tuning-report.md) per
+        /// real seat-time driver feedback: 5 Hz did not read as "obvious" enough, and 1-2 Hz reads
+        /// better. NOT to be confused with <see cref="Projection.PulseSettings"/>'s own, separate,
+        /// UNCHANGED 200 ms (5 Hz) pulse gap floor on the Wheel Lock/Slip tabs.</summary>
+        public const double MinFrequencyHz = 1.0;
 
         /// <summary>20 Hz - the fastest this shake is allowed to run. See <see cref="MinFrequencyHz"/>.</summary>
         public const double MaxFrequencyHz = 20.0;

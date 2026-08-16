@@ -38,18 +38,21 @@ namespace QAdvanceFeedback.Tests
         }
 
         // ---------------------------------------------------------------------------------------
-        // Settings-level clamps (5-20 Hz floor/ceiling, non-negative scales) - enforced in the SETTER,
-        // not only a UI spinner range.
+        // Settings-level clamps (1-20 Hz floor/ceiling, default 3 Hz off the floor; non-negative
+        // scales, default 1.5) - enforced in the SETTER, not only a UI spinner range. Floor/default
+        // LOWERED/RAISED respectively (docs\shake-tuning-report.md) per driver feedback that 5 Hz was
+        // not obvious enough and the shake was not pronounced enough by default - this is a legitimate
+        // default/floor change, not a weakened assertion.
         // ---------------------------------------------------------------------------------------
 
         [Fact]
-        public void ShakeFrequencyHz_defaults_to_5_and_is_clamped_to_5_20_in_the_setter()
+        public void ShakeFrequencyHz_defaults_to_3_and_is_clamped_to_1_20_in_the_setter()
         {
             var engine = new GForceEngine();
-            Assert.Equal(5.0, engine.ShakeFrequencyHz, 6);
+            Assert.Equal(3.0, engine.ShakeFrequencyHz, 6);
 
-            engine.ShakeFrequencyHz = 1.0; // below floor
-            Assert.Equal(5.0, engine.ShakeFrequencyHz, 6);
+            engine.ShakeFrequencyHz = 0.1; // below floor
+            Assert.Equal(1.0, engine.ShakeFrequencyHz, 6);
 
             engine.ShakeFrequencyHz = 100.0; // above ceiling
             Assert.Equal(20.0, engine.ShakeFrequencyHz, 6);
@@ -58,21 +61,31 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(12.0, engine.ShakeFrequencyHz, 6);
         }
 
-        /// <summary>MUTATION (b) target: if the setter allowed a frequency below 5 Hz, this test would
-        /// fail (the second assertion above would instead read 1.0).</summary>
+        /// <summary>MUTATION (a) target: if the setter allowed a frequency below 1 Hz, this test would
+        /// fail (the assertion below would instead pass with an unclamped 0.001).</summary>
         [Fact]
-        public void MUTATION_b_a_frequency_below_5Hz_must_never_be_readable_back()
+        public void MUTATION_a_a_frequency_below_1Hz_must_never_be_readable_back()
         {
             var engine = new GForceEngine { ShakeFrequencyHz = 0.001 };
             Assert.True(engine.ShakeFrequencyHz >= GForceShake.MinFrequencyHz);
+            Assert.Equal(1.0, engine.ShakeFrequencyHz, 6);
+        }
+
+        /// <summary>The Layer 5 pulse's own, separate, UNCHANGED 200 ms (5 Hz) gap floor must not be
+        /// the one that moved - see <c>PulseSettingsTests</c> for the dedicated pulse-side assertion;
+        /// this is the shake-side half of that same distinction.</summary>
+        [Fact]
+        public void The_pulse_gap_floor_is_a_different_setting_and_is_unaffected_by_the_shake_floor_change()
+        {
+            Assert.Equal(200.0, QAdvanceFeedback.Core.Projection.PulseSettings.MinGapMs, 6);
         }
 
         [Fact]
-        public void WheelLockShakeScale_and_WheelSlipShakeScale_default_to_1_and_reject_negative_values()
+        public void WheelLockShakeScale_and_WheelSlipShakeScale_default_to_1_5_and_reject_negative_values()
         {
             var engine = new GForceEngine();
-            Assert.Equal(1.0, engine.WheelLockShakeScale, 6);
-            Assert.Equal(1.0, engine.WheelSlipShakeScale, 6);
+            Assert.Equal(1.5, engine.WheelLockShakeScale, 6);
+            Assert.Equal(1.5, engine.WheelSlipShakeScale, 6);
 
             engine.WheelLockShakeScale = -5.0;
             engine.WheelSlipShakeScale = -5.0;
@@ -80,8 +93,19 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(0.0, engine.WheelSlipShakeScale, 6);
         }
 
+        /// <summary>
+        /// This is the RAW ENGINE's own bare-constructor default, which deliberately stays OFF
+        /// (docs\integrate-default-report.md) as a library-level "inert unless configured" baseline for
+        /// any caller constructing <see cref="GForceEngine"/> directly - it is NOT the same thing as what
+        /// a real, fully-wired install experiences. The SETTINGS-layer default
+        /// (<see cref="Settings.GForceSettings.IntegrateWheelLockAndSlip"/>) is now ON, and
+        /// <c>GForceSettings.ApplyTo</c> pushes that value onto this property at Init and on every
+        /// settings Apply - so the two defaults disagreeing here is intentional, not drift. See
+        /// <c>GForceSettingsTests.Shake_settings_now_default_to_on_3Hz_and_scale_1_5</c> for the
+        /// settings-layer counterpart.
+        /// </summary>
         [Fact]
-        public void IntegrateWheelLockAndSlip_defaults_to_off()
+        public void IntegrateWheelLockAndSlip_defaults_to_off_on_the_bare_engine_itself()
         {
             Assert.False(new GForceEngine().IntegrateWheelLockAndSlip);
         }
@@ -93,8 +117,8 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void Checkbox_off_produces_byte_identical_output_regardless_of_wheel_values_passed_in()
         {
-            var baseline = new GForceEngine();
-            var withWheelArgsButDisabled = new GForceEngine(); // IntegrateWheelLockAndSlip defaults false
+            var baseline = new GForceEngine { IntegrateWheelLockAndSlip = false };
+            var withWheelArgsButDisabled = new GForceEngine { IntegrateWheelLockAndSlip = false }; // explicit, not relying on the bare-constructor default
 
             for (int i = 0; i < 50; i++)
             {
@@ -113,7 +137,7 @@ namespace QAdvanceFeedback.Tests
         public void Wheel_value_of_zero_produces_no_shake_even_when_enabled()
         {
             var withZeroWheel = new GForceEngine { IntegrateWheelLockAndSlip = true };
-            var disabled = new GForceEngine();
+            var disabled = new GForceEngine { IntegrateWheelLockAndSlip = false }; // explicit, not relying on the bare-constructor default
 
             for (int i = 0; i < 50; i++)
             {
@@ -134,7 +158,7 @@ namespace QAdvanceFeedback.Tests
                 WheelLockShakeScale = 0.0,
                 WheelSlipShakeScale = 0.0,
             };
-            var disabled = new GForceEngine();
+            var disabled = new GForceEngine { IntegrateWheelLockAndSlip = false }; // explicit, not relying on the bare-constructor default
 
             for (int i = 0; i < 50; i++)
             {
@@ -193,7 +217,7 @@ namespace QAdvanceFeedback.Tests
         public void Slip_alone_can_also_drive_the_shake()
         {
             var engine = new GForceEngine { IntegrateWheelLockAndSlip = true, WheelSlipShakeScale = 1.0, WheelLockShakeScale = 1.0 };
-            var disabled = new GForceEngine();
+            var disabled = new GForceEngine { IntegrateWheelLockAndSlip = false }; // explicit, not relying on the bare-constructor default
 
             double? maxGap = null;
             for (int i = 0; i < 400; i++)

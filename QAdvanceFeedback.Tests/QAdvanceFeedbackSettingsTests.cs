@@ -49,7 +49,9 @@ namespace QAdvanceFeedback.Tests
             settings.Slip.Pulse.Enabled = true;
             settings.GForce.FixedAccelMaxG = 5.0;
             settings.GForce.AccelMaxMode = GMaxMode.Auto;
-            settings.GForce.IntegrateWheelLockAndSlip = true;
+            // Touch it to the NON-default value (false) - the default is now true, so setting it to
+            // true here would not actually exercise RestoreDefaults for this field.
+            settings.GForce.IntegrateWheelLockAndSlip = false;
             settings.GForce.ShakeFrequencyHz = 18.0;
             settings.GForce.WheelLockShakeScale = 4.0;
             settings.GForce.WheelSlipShakeScale = 4.0;

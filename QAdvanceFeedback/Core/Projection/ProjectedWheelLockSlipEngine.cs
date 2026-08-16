@@ -55,17 +55,32 @@ namespace QAdvanceFeedback.Core.Projection
 
             double[] lockProjected = new double[TargetCount];
             double[] slipProjected = new double[TargetCount];
+            // THE PULSE-INTO-SHAKE FIX (docs\raw-gap-and-pad-balance-report.md, see
+            // ProjectedWheelLockSlipResult's own remarks): the curve-only value, BEFORE the pulse
+            // stage - a pure recomputation of exactly what is fed INTO PulseGenerator.Advance below, so
+            // it is trivially, structurally identical to the pulsed value whenever the pulse is not
+            // currently engaged (PulseGenerator.Advance itself returns this same plain projected value
+            // in that case), and differs from it only while a pulse cycle is actively modulating.
+            double[] lockWithoutPulse = new double[TargetCount];
+            double[] slipWithoutPulse = new double[TargetCount];
             for (int i = 0; i < TargetCount; i++)
             {
-                lockProjected[i] = _lockPulses[i].Advance(dtSeconds, _lockProjector.Project(lockRaw[i]));
-                slipProjected[i] = _slipPulses[i].Advance(dtSeconds, _slipProjector.Project(slipRaw[i]));
+                lockWithoutPulse[i] = _lockProjector.Project(lockRaw[i]);
+                slipWithoutPulse[i] = _slipProjector.Project(slipRaw[i]);
+
+                lockProjected[i] = _lockPulses[i].Advance(dtSeconds, lockWithoutPulse[i]);
+                slipProjected[i] = _slipPulses[i].Advance(dtSeconds, slipWithoutPulse[i]);
             }
 
             return new ProjectedWheelLockSlipResult(
                 new Corners(lockProjected[0], lockProjected[1], lockProjected[2], lockProjected[3]),
                 lockProjected[4], lockProjected[5], lockProjected[6], lockProjected[7], lockProjected[8],
                 new Corners(slipProjected[0], slipProjected[1], slipProjected[2], slipProjected[3]),
-                slipProjected[4], slipProjected[5], slipProjected[6], slipProjected[7], slipProjected[8]);
+                slipProjected[4], slipProjected[5], slipProjected[6], slipProjected[7], slipProjected[8],
+                new Corners(lockWithoutPulse[0], lockWithoutPulse[1], lockWithoutPulse[2], lockWithoutPulse[3]),
+                lockWithoutPulse[4], lockWithoutPulse[5], lockWithoutPulse[6], lockWithoutPulse[7], lockWithoutPulse[8],
+                new Corners(slipWithoutPulse[0], slipWithoutPulse[1], slipWithoutPulse[2], slipWithoutPulse[3]),
+                slipWithoutPulse[4], slipWithoutPulse[5], slipWithoutPulse[6], slipWithoutPulse[7], slipWithoutPulse[8]);
         }
     }
 }

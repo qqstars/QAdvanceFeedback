@@ -148,12 +148,19 @@ not a runtime check that could be bypassed.
 
 ## Recommended frequency range
 
-`GForceSettings.RecommendedFromHz` / `RecommendedToHz` default to **300 Hz -> 20 Hz** - the owner's own
-example verbatim (value near 0 -> the high/subtle end (300 Hz), value 100 -> the low/punchy end
-(20 Hz)), both properties clamped to the device's declared 10-300 Hz capability
-(`GForceSettings.DeviceMinHz`/`DeviceMaxHz`), and `RecommendedToHz` additionally clamped to never
-exceed `RecommendedFromHz` (so the convention can't be silently inverted by a bad UI value). This is
-exposed purely as data for the (not-yet-built) settings UI to display as a recommendation - it does
+**CORRECTION (docs\raw-gap-and-pad-balance-report.md, superseding the default stated below):** the
+300 Hz -> 20 Hz default this section originally described was revised TWICE after real seat-time
+feedback, not theory: first down to 50 Hz -> 20 Hz (300 Hz at the low end read too harsh/thin), then -
+after further seat time found 20 Hz too weak to shake strongly enough - to the current **100 Hz ->
+50 Hz**. Everything else in this section (data-only, clamped to device capability, no effect on any
+computed output) is unchanged and still accurate.
+
+`GForceSettings.RecommendedFromHz` / `RecommendedToHz` defaulted to **300 Hz -> 20 Hz** at the time
+this report was written - the owner's own example verbatim (value near 0 -> the high/subtle end
+(300 Hz), value 100 -> the low/punchy end (20 Hz)), both properties clamped to the device's declared
+10-300 Hz capability (`GForceSettings.DeviceMinHz`/`DeviceMaxHz`), and `RecommendedToHz` additionally
+clamped to never exceed `RecommendedFromHz` (so the convention can't be silently inverted by a bad UI
+value). This is exposed purely as data for the settings UI to display as a recommendation - it does
 not drive anything inside `Core/GForce` itself.
 
 ## What still needs wiring (explicitly NOT done here, per file ownership)

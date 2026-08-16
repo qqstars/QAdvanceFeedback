@@ -44,6 +44,33 @@ namespace QAdvanceFeedback.Core
         public const string ProjectedSlipPrefix = "WheelSlip.Projected.";
 
         /// <summary>
+        /// DIAGNOSTIC prefix (docs\raw-gap-and-pad-balance-report.md) - the RESOLVED SOURCE value Layer
+        /// 4 actually consumed for the Lock channel this frame (i.e. <c>QAdvanceFeedback.cs</c>'s own
+        /// <c>lockSources</c> - our own Layer 3 Raw by default, or whatever the driver configured
+        /// instead: a ShakeIt export, a Manual property/expression). Added specifically so a future
+        /// "does our Raw match ShakeIt's real value" investigation never again needs to INVERT the
+        /// Normalized transform to recover this - see that report's own account of how much work the
+        /// inversion took the first time, with this diagnostic absent.
+        /// </summary>
+        public const string SourceLockPrefix = "Diag.Source.Lock.";
+
+        /// <summary>See <see cref="SourceLockPrefix"/> - the Slip channel's equivalent.</summary>
+        public const string SourceSlipPrefix = "Diag.Source.Slip.";
+
+        /// <summary>
+        /// DIAGNOSTIC prefix (docs\raw-gap-and-pad-balance-report.md, the pulse-into-shake fix) - the
+        /// Lock channel's Layer 5 value with the pulse stage NOT applied (see
+        /// <see cref="Projection.ProjectedWheelLockSlipResult"/>'s own remarks). Internal/troubleshooting
+        /// only, per the owner's own request - NOT part of the default published property set, gated
+        /// behind <see cref="Settings.GeneralSettings.EnableDiagnostics"/> exactly like every other name
+        /// in <see cref="DiagnosticNames"/>.
+        /// </summary>
+        public const string ProjectedLockWithoutPulsePrefix = "WheelLock.ProjectedWithoutPulse.";
+
+        /// <summary>See <see cref="ProjectedLockWithoutPulsePrefix"/> - the Slip channel's equivalent.</summary>
+        public const string ProjectedSlipWithoutPulsePrefix = "WheelSlip.ProjectedWithoutPulse.";
+
+        /// <summary>
         /// The 54 Raw/Normalized/Projected names (9 targets x 3 tiers x 2 channels) plus the 8
         /// G-force names - 62 total, always published regardless of the diagnostics toggle. Order:
         /// Lock Raw, Slip Raw, Lock Normalized, Slip Normalized, Lock Projected, Slip Projected, then
@@ -67,7 +94,9 @@ namespace QAdvanceFeedback.Core
         /// The internal/troubleshooting properties published ONLY when
         /// <see cref="Settings.GeneralSettings.EnableDiagnostics"/> is on - real state this plugin
         /// actually computes (Layer 4's measured direction and motion signal level, both channels'
-        /// learned-grip state, and the G-force learners' current values), not placeholders.
+        /// learned-grip state, the G-force learners' current values, and - see
+        /// <see cref="SourceLockPrefix"/>/<see cref="SourceSlipPrefix"/> - the RESOLVED SOURCE value
+        /// Layer 4 actually consumed, per wheel plus All, both channels), not placeholders.
         /// </summary>
         public static IEnumerable<string> DiagnosticNames()
         {
@@ -80,6 +109,12 @@ namespace QAdvanceFeedback.Core
             yield return "Diag.Slip.LearnerConfidence";
             yield return "Diag.GForce.LearnedAccelMaxG";
             yield return "Diag.GForce.LearnedDecelMaxG";
+
+            foreach (string t in PublishedPropertyNames.Targets) yield return SourceLockPrefix + t;
+            foreach (string t in PublishedPropertyNames.Targets) yield return SourceSlipPrefix + t;
+
+            foreach (string t in PublishedPropertyNames.Targets) yield return ProjectedLockWithoutPulsePrefix + t;
+            foreach (string t in PublishedPropertyNames.Targets) yield return ProjectedSlipWithoutPulsePrefix + t;
         }
 
         /// <summary>
