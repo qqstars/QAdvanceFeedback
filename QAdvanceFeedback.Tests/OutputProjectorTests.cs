@@ -363,6 +363,42 @@ namespace QAdvanceFeedback.Tests
         }
 
         [Fact]
+        public void CreateShippedDefault_lock_matches_ApplyPreset_curve_lock()
+        {
+            var expected = Defaults();
+            expected.ApplyPreset(ProjectorPreset.Curve, ProjectionChannel.Lock);
+
+            var actual = ProjectorSettings.CreateShippedDefault(ProjectionChannel.Lock);
+
+            Assert.Equal(expected.StartInput, actual.StartInput);
+            Assert.Equal(expected.EndInput, actual.EndInput);
+            Assert.Equal(expected.SlightlyInput, actual.SlightlyInput);
+            Assert.Equal(expected.SlightlyOutput, actual.SlightlyOutput);
+            Assert.Equal(expected.ModerateInput, actual.ModerateInput);
+            Assert.Equal(expected.ModerateOutput, actual.ModerateOutput);
+            Assert.Equal(expected.CriticalInput, actual.CriticalInput);
+            Assert.Equal(expected.CriticalOutput, actual.CriticalOutput);
+        }
+
+        [Fact]
+        public void CreateShippedDefault_slip_matches_ApplyPreset_curve_slip()
+        {
+            var expected = Defaults();
+            expected.ApplyPreset(ProjectorPreset.Curve, ProjectionChannel.Slip);
+
+            var actual = ProjectorSettings.CreateShippedDefault(ProjectionChannel.Slip);
+
+            Assert.Equal(expected.StartInput, actual.StartInput);
+            Assert.Equal(expected.EndInput, actual.EndInput);
+            Assert.Equal(expected.SlightlyInput, actual.SlightlyInput);
+            Assert.Equal(expected.SlightlyOutput, actual.SlightlyOutput);
+            Assert.Equal(expected.ModerateInput, actual.ModerateInput);
+            Assert.Equal(expected.ModerateOutput, actual.ModerateOutput);
+            Assert.Equal(expected.CriticalInput, actual.CriticalInput);
+            Assert.Equal(expected.CriticalOutput, actual.CriticalOutput);
+        }
+
+        [Fact]
         public void ApplyPreset_linear_slip_is_identity_at_slip_anchors()
         {
             var s = Defaults();

@@ -340,10 +340,17 @@ namespace QAdvanceFeedback.Settings
             LockColRawHeader.Text = SlipColRawHeader.Text = Strings.Get("Curve.Column.RawValue");
             LockColOutputHeader.Text = SlipColOutputHeader.Text = Strings.Get("Curve.Column.OutputValue");
 
+            // Start/End's own Desc text quotes this channel's shipped DEFAULT input threshold (Ships
+            // at {0} by default) - read from ProjectorSettings.CreateShippedDefault, the single source
+            // of truth the "Curve" preset itself stamps, rather than a hand-typed number that could
+            // drift from the real default the next time it changes (see that method's own remarks).
+            ProjectorSettings lockDefaults = ProjectorSettings.CreateShippedDefault(ProjectionChannel.Lock);
+            ProjectorSettings slipDefaults = ProjectorSettings.CreateShippedDefault(ProjectionChannel.Slip);
+
             LockAnchorNoteText.Text = Strings.Get("Curve.Lock.AnchorNote");
             LockLblStart.Text = Strings.Get("Curve.StartPoint.Label");
             LockStartOutputStatic.Text = Strings.Get("Curve.StartPoint.AlwaysZero");
-            LockDescStart.Text = Strings.Get("Curve.Lock.StartPoint.Desc");
+            LockDescStart.Text = string.Format(Strings.Get("Curve.Lock.StartPoint.Desc"), FormatNum(lockDefaults.StartInput));
             LockLblSlightly.Text = Strings.Get("Curve.Anchor.Slightly") + ":";
             LockDescSlightly.Text = Strings.Get("Curve.Lock.Slightly.Desc");
             LockLblModerate.Text = Strings.Get("Curve.Anchor.Ideal") + ":";
@@ -352,12 +359,12 @@ namespace QAdvanceFeedback.Settings
             LockDescCritical.Text = Strings.Get("Curve.Lock.Critical.Desc");
             LockLblEnd.Text = Strings.Get("Curve.EndPoint.Label");
             LockEndOutputStatic.Text = Strings.Get("Curve.EndPoint.AlwaysFull");
-            LockDescEnd.Text = Strings.Get("Curve.Lock.EndPoint.Desc");
+            LockDescEnd.Text = string.Format(Strings.Get("Curve.Lock.EndPoint.Desc"), FormatNum(lockDefaults.EndInput));
 
             SlipAnchorNoteText.Text = Strings.Get("Curve.Slip.AnchorNote");
             SlipLblStart.Text = Strings.Get("Curve.StartPoint.Label");
             SlipStartOutputStatic.Text = Strings.Get("Curve.StartPoint.AlwaysZero");
-            SlipDescStart.Text = Strings.Get("Curve.Slip.StartPoint.Desc");
+            SlipDescStart.Text = string.Format(Strings.Get("Curve.Slip.StartPoint.Desc"), FormatNum(slipDefaults.StartInput));
             SlipLblSlightly.Text = Strings.Get("Curve.Anchor.Slightly") + ":";
             SlipDescSlightly.Text = Strings.Get("Curve.Slip.Slightly.Desc");
             SlipLblModerate.Text = Strings.Get("Curve.Anchor.Ideal") + ":";
@@ -366,7 +373,7 @@ namespace QAdvanceFeedback.Settings
             SlipDescCritical.Text = Strings.Get("Curve.Slip.Critical.Desc");
             SlipLblEnd.Text = Strings.Get("Curve.EndPoint.Label");
             SlipEndOutputStatic.Text = Strings.Get("Curve.EndPoint.AlwaysFull");
-            SlipDescEnd.Text = Strings.Get("Curve.Slip.EndPoint.Desc");
+            SlipDescEnd.Text = string.Format(Strings.Get("Curve.Slip.EndPoint.Desc"), FormatNum(slipDefaults.EndInput));
 
             LockPulseGroup.Header = SlipPulseGroup.Header = Strings.Get("Group.Pulse");
             LockPulseEnabled.Content = SlipPulseEnabled.Content = Strings.Get("Pulse.Enable");
@@ -859,16 +866,45 @@ namespace QAdvanceFeedback.Settings
             PlaceMarker(isLock ? LockCriticalMarker : SlipCriticalMarker, working.CriticalInput, working.CriticalOutput, w, h);
             PlaceMarker(isLock ? LockEndMarker : SlipEndMarker, working.EndInput, 100.0, w, h);
 
-            UpdateLiveOutputText(projector, working, isLock ? LockLiveSlightly : SlipLiveSlightly, AnchorSlot.Slightly);
-            UpdateLiveOutputText(projector, working, isLock ? LockLiveModerate : SlipLiveModerate, AnchorSlot.Moderate);
-            UpdateLiveOutputText(projector, working, isLock ? LockLiveCritical : SlipLiveCritical, AnchorSlot.Critical);
+            ProjectorSettings defaults = ProjectorSettings.CreateShippedDefault(channel);
+            UpdateAnchorHelpText(projector, working, defaults, isLock ? LockLiveSlightly : SlipLiveSlightly, AnchorSlot.Slightly);
+            UpdateAnchorHelpText(projector, working, defaults, isLock ? LockLiveModerate : SlipLiveModerate, AnchorSlot.Moderate);
+            UpdateAnchorHelpText(projector, working, defaults, isLock ? LockLiveCritical : SlipLiveCritical, AnchorSlot.Critical);
         }
 
-        private void UpdateLiveOutputText(OutputProjector projector, ProjectorSettings source, TextBlock block, AnchorSlot slot)
+        /// <summary>
+        /// Fills one anchor row's help text (the table's 4th column): the SHIPPED DEFAULT input-&gt;
+        /// output mapping for this anchor/channel (read from <paramref name="defaults"/>, itself
+        /// sourced from <see cref="ProjectorSettings.CreateShippedDefault"/> so the number can never
+        /// drift out of sync with the real default), which stays stable no matter what the driver has
+        /// typed - unlike a live "the curve currently sends X" readout, which is redundant with the
+        /// spinner textboxes sitting right next to it.
+        /// <para/>
+        /// That live comparison is NOT thrown away, though: <see cref="OutputProjector"/> drops an
+        /// anchor entirely if it falls at/below the Start input or at/above the End input, and always
+        /// forces outputs non-decreasing after sorting by input - so a driver can type a raw/output
+        /// pair that the curve does not actually honour, with nothing in the spinners themselves ever
+        /// showing that. Appending "Curve.Anchor.LiveDiffersFormat" ONLY when the curve's actual
+        /// output at the driver's own typed raw input differs from what they typed keeps that safety
+        /// net (as a warning that only appears when it matters) without restoring the noisy always-on
+        /// live line the owner asked to remove.
+        /// </summary>
+        private void UpdateAnchorHelpText(OutputProjector projector, ProjectorSettings source, ProjectorSettings defaults, TextBlock block, AnchorSlot slot)
         {
-            double raw = ProjectorAnchorEditor.GetRaw(source, slot);
-            double live = projector.Project(raw);
-            block.Text = string.Format(Strings.Get("Curve.LiveOutputFormat"), FormatNum(live));
+            double defaultRaw = ProjectorAnchorEditor.GetRaw(defaults, slot);
+            double defaultOutput = ProjectorAnchorEditor.GetOutput(defaults, slot);
+            string text = string.Format(Strings.Get("Curve.Anchor.DefaultFormat"), FormatNum(defaultRaw), FormatNum(defaultOutput));
+
+            double typedRaw = ProjectorAnchorEditor.GetRaw(source, slot);
+            double typedOutput = ProjectorAnchorEditor.GetOutput(source, slot);
+            double actualOutput = projector.Project(typedRaw);
+
+            if (Math.Abs(actualOutput - typedOutput) > 0.05)
+            {
+                text += " " + string.Format(Strings.Get("Curve.Anchor.LiveDiffersFormat"), FormatNum(actualOutput));
+            }
+
+            block.Text = text;
         }
 
         private static void PlaceMarker(Ellipse marker, double x0100, double y0100, double w, double h)

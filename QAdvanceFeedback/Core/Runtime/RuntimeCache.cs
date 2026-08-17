@@ -127,6 +127,67 @@ namespace QAdvanceFeedback.Core.Runtime
 
         private static readonly Dictionary<string, bool> EmptySurfaceSupport = new Dictionary<string, bool>();
 
+        /// <summary>Version 4 (docs\cold-start-and-timing-fix-report.md): the shared, (game,car)-only
+        /// physical-limit detector - see <c>NormalizedWheelLockSlipEngine.LockPhysicalReference</c>. Same
+        /// in-memory-only convention as <see cref="LoadLockLearners"/>/<see cref="SaveLockLearners"/>.</summary>
+        public void LoadLockPhysicalReference(out Dictionary<string, GripLearnerState> data)
+        {
+            lock (_gate) { data = new Dictionary<string, GripLearnerState>(_document.LockPhysicalReference, StringComparer.Ordinal); }
+        }
+
+        public void SaveLockPhysicalReference(Dictionary<string, GripLearnerState> data)
+        {
+            lock (_gate)
+            {
+                _document.LockPhysicalReference = new Dictionary<string, GripLearnerState>(data ?? EmptyLearners, StringComparer.Ordinal);
+                _dirty = true;
+            }
+        }
+
+        public void LoadSlipPhysicalReference(out Dictionary<string, GripLearnerState> data)
+        {
+            lock (_gate) { data = new Dictionary<string, GripLearnerState>(_document.SlipPhysicalReference, StringComparer.Ordinal); }
+        }
+
+        public void SaveSlipPhysicalReference(Dictionary<string, GripLearnerState> data)
+        {
+            lock (_gate)
+            {
+                _document.SlipPhysicalReference = new Dictionary<string, GripLearnerState>(data ?? EmptyLearners, StringComparer.Ordinal);
+                _dirty = true;
+            }
+        }
+
+        /// <summary>Version 4: the per-(gameId,sourceIdentity) cross-car cold-start seed - see
+        /// <c>KeyedScaleLearner.ExportCrossCarSeeds</c>/<c>ImportCrossCarSeeds</c>.</summary>
+        public void LoadLockScaleCrossCarSeed(out Dictionary<string, ScaleLearnerState> data)
+        {
+            lock (_gate) { data = new Dictionary<string, ScaleLearnerState>(_document.LockScaleCrossCarSeed, StringComparer.Ordinal); }
+        }
+
+        public void SaveLockScaleCrossCarSeed(Dictionary<string, ScaleLearnerState> data)
+        {
+            lock (_gate)
+            {
+                _document.LockScaleCrossCarSeed = new Dictionary<string, ScaleLearnerState>(data ?? EmptyScaleLearners, StringComparer.Ordinal);
+                _dirty = true;
+            }
+        }
+
+        public void LoadSlipScaleCrossCarSeed(out Dictionary<string, ScaleLearnerState> data)
+        {
+            lock (_gate) { data = new Dictionary<string, ScaleLearnerState>(_document.SlipScaleCrossCarSeed, StringComparer.Ordinal); }
+        }
+
+        public void SaveSlipScaleCrossCarSeed(Dictionary<string, ScaleLearnerState> data)
+        {
+            lock (_gate)
+            {
+                _document.SlipScaleCrossCarSeed = new Dictionary<string, ScaleLearnerState>(data ?? EmptyScaleLearners, StringComparer.Ordinal);
+                _dirty = true;
+            }
+        }
+
         public void LoadGForceLearners(out Dictionary<string, double> accel, out Dictionary<string, double> decel)
         {
             lock (_gate)
@@ -184,6 +245,10 @@ namespace QAdvanceFeedback.Core.Runtime
             LockScaleLearners = CloneScaleLearners(source.LockScaleLearners),
             SlipScaleLearners = CloneScaleLearners(source.SlipScaleLearners),
             SurfaceSupportByGame = new Dictionary<string, bool>(source.SurfaceSupportByGame, StringComparer.Ordinal),
+            LockPhysicalReference = CloneLearners(source.LockPhysicalReference),
+            SlipPhysicalReference = CloneLearners(source.SlipPhysicalReference),
+            LockScaleCrossCarSeed = CloneScaleLearners(source.LockScaleCrossCarSeed),
+            SlipScaleCrossCarSeed = CloneScaleLearners(source.SlipScaleCrossCarSeed),
         };
 
         private static Dictionary<string, GripLearnerState> CloneLearners(Dictionary<string, GripLearnerState> source)

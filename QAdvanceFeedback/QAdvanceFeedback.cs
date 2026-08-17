@@ -111,6 +111,20 @@ namespace QAdvanceFeedback
             _runtimeStore.LoadSlipScaleLearners(out var slipScaleData);
             _normalizedEngine.SlipScaleLearner.ImportAll(slipScaleData);
 
+            // COLD-START CONTINUITY AND CROSS-CAR SEEDING (RuntimeDocument Version 4,
+            // docs\cold-start-and-timing-fix-report.md) - the shared, (game,car)-only physical-limit
+            // detector that now solely gates KeyedScaleLearner's PRIMARY tier, and the per-(game,source)
+            // cross-car cold-start seed a brand-new car can start from - both previously session-scoped
+            // only (flagged, not fixed, in the f1-normalization-fix-report's own Concerns).
+            _runtimeStore.LoadLockPhysicalReference(out var lockPhysicalReferenceData);
+            _normalizedEngine.LockPhysicalReference.ImportAll(lockPhysicalReferenceData);
+            _runtimeStore.LoadSlipPhysicalReference(out var slipPhysicalReferenceData);
+            _normalizedEngine.SlipPhysicalReference.ImportAll(slipPhysicalReferenceData);
+            _runtimeStore.LoadLockScaleCrossCarSeed(out var lockScaleCrossCarSeedData);
+            _normalizedEngine.LockScaleLearner.ImportCrossCarSeeds(lockScaleCrossCarSeedData);
+            _runtimeStore.LoadSlipScaleCrossCarSeed(out var slipScaleCrossCarSeedData);
+            _normalizedEngine.SlipScaleLearner.ImportCrossCarSeeds(slipScaleCrossCarSeedData);
+
             // PER-GAME TELEMETRY SUPPORT DETECTION (item 2, RuntimeDocument Version 3) - a title already
             // proven (in a PREVIOUS session) to support loose-surface reporting is trusted from frame one
             // of this one too, before this session has observed anything itself.
@@ -235,13 +249,21 @@ namespace QAdvanceFeedback
                 // whole channel, not just the algorithm's own per-wheel term. The SAME aggregation
                 // weights apply too (docs\aggregation-report.md) - Layer 4 aggregates its OWN per-wheel
                 // output with the same formula/weights Layer 3 used, "inheriting" the scheme.
+                // SHAKEIT-SILENCE FALLBACK (docs\shakeit-silence-diagnosis-report.md) - legacy.LockWheels/
+                // SlipWheels is Layer 3's OWN Raw, ALWAYS computed above regardless of which source is
+                // actually configured (see UpdateRaw just above) - passed through as the independent
+                // "is the wheel genuinely near its limit" measurement the Normalized engine can fall back
+                // to if the configured source (lockSources/slipSources) goes quiet. See
+                // NormalizedWheelLockSlipEngine's own remarks for the full mechanism.
                 NormalizedWheelLockSlipResult normalized = _normalizedEngine.Compute(
                     sample, lockSources, slipSources, gameId, carId, thresholds, lockAggregation, slipAggregation,
-                    lockSourceIdentity, slipSourceIdentity);
+                    lockSourceIdentity, slipSourceIdentity, legacy.LockWheels, legacy.SlipWheels);
                 _publisher.UpdateNormalized(normalized);
                 _publisher.UpdateSourceScaleCalibration(
                     _normalizedEngine.LockScaleCeiling, _normalizedEngine.LockScaleCeilingIsPrimaryTier,
                     _normalizedEngine.SlipScaleCeiling, _normalizedEngine.SlipScaleCeilingIsPrimaryTier);
+                _publisher.UpdateSourceFallback(
+                    _normalizedEngine.LockSourceFallbackActive, _normalizedEngine.SlipSourceFallbackActive);
                 _publisher.UpdateSurfaceLearning(
                     _normalizedEngine.SurfaceEverReportedLoose, _normalizedEngine.LockLooseFraction, _normalizedEngine.SlipLooseFraction);
 
@@ -305,6 +327,12 @@ namespace QAdvanceFeedback
                 _runtimeStore.SaveSlipScaleLearners(_normalizedEngine.SlipScaleLearner.ExportAll());
                 // Per-game telemetry support (item 2).
                 _runtimeStore.SaveSurfaceSupport(_normalizedEngine.SurfaceSupport.ExportAll());
+                // COLD-START CONTINUITY AND CROSS-CAR SEEDING (RuntimeDocument Version 4) - see Init's
+                // own remarks.
+                _runtimeStore.SaveLockPhysicalReference(_normalizedEngine.LockPhysicalReference.ExportAll());
+                _runtimeStore.SaveSlipPhysicalReference(_normalizedEngine.SlipPhysicalReference.ExportAll());
+                _runtimeStore.SaveLockScaleCrossCarSeed(_normalizedEngine.LockScaleLearner.ExportCrossCarSeeds());
+                _runtimeStore.SaveSlipScaleCrossCarSeed(_normalizedEngine.SlipScaleLearner.ExportCrossCarSeeds());
                 _settings.GForce.ExportLearnedMaxima(out var accelSnapshot, out var decelSnapshot);
                 _runtimeStore.SaveGForceLearners(accelSnapshot, decelSnapshot);
 
@@ -313,6 +341,7 @@ namespace QAdvanceFeedback
                 AchievedMotion.Result motion = AchievedMotion.Resolve(sample);
                 // Diag.Lock/Slip.LearnedPeakG: the actual COLD/WARM BLENDED reference (item 3) this
                 // frame's Ratio() call divides by - see GripLearner.PublishedPeakG's own remarks.
+                _publisher.UpdateIdentity(gameId, carId);
                 _publisher.UpdateDiagnostics(
                     _normalizedEngine.CurrentDirection, motion.Level, motion.MagnitudeG,
                     _normalizedEngine.LockLearners.PublishedPeakG(gameId, carId, lockSourceIdentity), _normalizedEngine.LockLearners.Confidence(gameId, carId, lockSourceIdentity),

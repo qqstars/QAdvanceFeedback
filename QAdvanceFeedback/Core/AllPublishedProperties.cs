@@ -126,6 +126,12 @@ namespace QAdvanceFeedback.Core
         /// </summary>
         public static IEnumerable<string> DiagnosticNames()
         {
+            // Diag.GameId/Diag.CarId (docs\shakeit-silence-diagnosis-report.md) - the resolved (gameId,
+            // carId) every learner/scale-calibration key this frame is actually keyed under, so a
+            // captured session can settle whether a car id is genuinely stable (vs. changing
+            // frame-to-frame, or empty) - previously uncapturable at all.
+            yield return "Diag.GameId";
+            yield return "Diag.CarId";
             yield return "Diag.Direction";
             yield return "Diag.MotionLevel";
             yield return "Diag.MotionMagnitudeG";
@@ -144,6 +150,15 @@ namespace QAdvanceFeedback.Core
             yield return "Diag.Lock.SourceScaleCeilingIsPrimaryTier";
             yield return "Diag.Slip.SourceScaleCeiling";
             yield return "Diag.Slip.SourceScaleCeilingIsPrimaryTier";
+
+            // SHAKEIT-SILENCE FALLBACK (docs\shakeit-silence-diagnosis-report.md) - whether the most
+            // recent frame substituted Layer 3's own Raw for the configured source because the
+            // configured source read near-zero while Raw independently read a genuine, well-above-floor
+            // value (see NormalizedWheelLockSlipEngine's own remarks). Makes a degraded upstream source
+            // (e.g. ShakeIt's own per-car calibration not yet mature) VISIBLE rather than indistinguishable
+            // from "genuinely no lockup".
+            yield return "Diag.Lock.SourceFallbackActive";
+            yield return "Diag.Slip.SourceFallbackActive";
 
             // Surface-keyed learning (docs\branch-dispatch-and-source-keyed-learning-report.md) - each
             // channel's own current smoothed loose fraction (the per-wheel raw reading and the

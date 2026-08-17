@@ -191,8 +191,15 @@ namespace QAdvanceFeedback.Core.Normalized
             LearnCapG = learnCapG > 0.0 && ClampMath.IsFinite(learnCapG) ? learnCapG : MaxPlausibleG;
         }
 
-        /// <summary>0..1 maturity of the learned peak - 1.0 once <see cref="MaturitySamples"/>
-        /// qualifying observations have been folded in.</summary>
+        /// <summary>0..1 maturity of the learned peak - 1.0 once <see cref="MaturitySamples"/> qualifying
+        /// observations have been folded in. NOTE (docs\regression-fix-report.md - the sample-threshold
+        /// follow-up): this LINEAR, absolute-count-based notion is kept for the diagnostic-only readout
+        /// (<c>Diag.Lock/Slip.LearnerConfidence</c>) but is deliberately NOT what gates the live
+        /// physical-limit detector's own ratio comparison any more (see <see cref="Ratio"/>'s own
+        /// <c>applyColdStartCeiling</c> parameter) - the ONE continuous, dispersion-weighted confidence
+        /// that gates live calibration now lives entirely in
+        /// <see cref="Normalized.KeyedScaleLearner"/>'s own ramp (<see cref="ColdWarmBlend.ConcaveHotWeight"/>),
+        /// not duplicated here, precisely so there is a single confidence notion, not two.</summary>
         public double Confidence => ClampMath.To01(ClampMath.SafeDiv(_samples, MaturitySamples, 0.0));
 
         /// <summary>
@@ -234,10 +241,18 @@ namespace QAdvanceFeedback.Core.Normalized
         /// being dropped - dropping it would freeze the published severity at its last value instead
         /// of producing a real (saturated) reading for that frame and recovering immediately after.
         /// </summary>
-        public double Ratio(double magnitudeG)
+        /// <param name="applyColdStartCeiling">Defaults to <c>true</c> (every pre-existing caller/test
+        /// keeps its exact behaviour). The ONE caller that now passes <c>false</c>
+        /// (<see cref="NormalizedWheelLockSlipEngine"/>'s shared physical-limit detector) relies entirely
+        /// on <see cref="Normalized.KeyedScaleLearner"/>'s OWN continuous, dispersion-weighted confidence
+        /// (see that class's own remarks) to decide how much a taught observation ultimately matters -
+        /// keeping THIS ceiling active too would be exactly the "second confidence notion" the owner's
+        /// own follow-up asked to avoid (docs\regression-fix-report.md).</param>
+        public double Ratio(double magnitudeG, bool applyColdStartCeiling = true)
         {
             double clamped = ClampMath.Clamp(magnitudeG, 0.0, LiveClampG);
             double raw = ClampMath.SafeDiv(clamped, PublishedPeakG, 0.0);
+            if (!applyColdStartCeiling) return raw;
 
             double confidence = Confidence;
             if (confidence >= 1.0) return raw;

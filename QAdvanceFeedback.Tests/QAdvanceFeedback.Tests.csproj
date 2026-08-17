@@ -41,6 +41,13 @@
     <!-- AllPublishedProperties.cs and Core\Localization\*.cs already arrive via the Core\**\*.cs
          wildcard above - no separate Include needed (and would be a duplicate-Compile-item error). -->
     <Compile Include="..\QAdvanceFeedback\CsvExportWriter.cs" LinkBase="Adapters" />
+    <!-- SimHub-free half of PropertyPublisher (docs\regression-fix-report.md, CSV-header-only
+         regression) - fields/Update*/Snapshot*/SnapshotAllValuesForCsv, split out specifically so the
+         CSV-row-building code can be link-compiled and tested here against the REAL class; the
+         sibling PropertyPublisher.cs (Register/AttachTier, SimHub-dependent) is intentionally NOT
+         included, for the same "would break test discovery for the whole assembly" reason
+         PropertyPublisherStructureTests.cs already documents. -->
+    <Compile Include="..\QAdvanceFeedback\PropertyPublisher.State.cs" LinkBase="Adapters" />
 
     <!-- Apply-button dirty-tracking task's own addition (docs\apply-dirty-and-screenshots-report.md) -
          ApplyDirtyState.cs is the one part of that feature with no WPF/SimHub dependency at all, so it

@@ -61,6 +61,46 @@ namespace QAdvanceFeedback.Core.Normalized
 
         private const double NoRawSignalEpsilon = 1e-6;
 
+        // ---- SHAKEIT-SILENCE FALLBACK (docs\shakeit-silence-diagnosis-report.md - the field report of
+        // a car+weather switch producing NO FEEDBACK AT ALL on the ShakeIt source). Diagnosis: decompiled
+        // SimHub.Plugins.DataPlugins.ShakeItV3.Calibration.CalibrationData requires 7000 samples before
+        // its own per-car calibration is "ready" (IsReady => Count >= 7000); before that, its own
+        // GetPercentile pre-maturity fallback is Math.Max(1.0, Max*0.9)*percentile/100.0 - on a car
+        // ShakeIt has genuinely never seen (a custom-built car is exactly that), or even on a
+        // well-established car mid-session (measured directly, see below), this can publish literal
+        // zero while the wheel is genuinely near its limit. MEASURED, not assumed: replaying the
+        // owner's own four F1 25 logs, at frames where Layer 3's OWN Raw (WheelLock.Raw.All - computed
+        // independently of whatever source is actually configured, ALWAYS available) reads > 50 (a
+        // strong, independent signal that the wheel genuinely is near its limit), the CONFIGURED
+        // ShakeIt source itself (Diag.Source.Lock.All) reads under 5 in 21.6%-22.7% of those frames
+        // (min 0.00 in every threshold band checked, up to Raw>70), even for this SAME, previously-
+        // driven, already-calibrated car. WheelLock.Normalized.All tracks that same near-zero almost
+        // exactly (matching percentages) - proof this engine is faithfully PASSING THROUGH what ShakeIt
+        // reports, not independently suppressing a healthy source (a from-scratch custom car, with zero
+        // calibration history instead of an established one, would be expected to hit this far more
+        // severely and for far longer - see the report for the full derivation and what capture would
+        // settle the custom-car case directly).
+        //
+        // THE FIX: rather than silently publishing nothing (indistinguishable from "no lockup is
+        // happening" - the worst failure mode per this task's own brief), detect the specific, narrow
+        // condition "the configured source reads near-zero WHILE Layer 3's own, independently-computed
+        // Raw reads a genuine, well-above-noise-floor value" and fall back to Layer 3's Raw for BOTH the
+        // severity and the per-wheel proportions for that frame - a real, already-computed alternate
+        // measurement (never a fabricated one), rescaled via this SAME KeyedScaleLearner under a
+        // DEDICATED, always-fed (game,car) fallback identity kept warm every qualifying frame regardless
+        // of what source is actually configured (so the fallback, when it engages, is not itself cold).
+        // Made VISIBLE via Diag.Lock/Slip.SourceFallbackActive - so the owner can tell "the configured
+        // source went quiet and we substituted Raw" from "genuinely no lockup", per this task's explicit
+        // requirement that a degraded state must never be silently indistinguishable from "nothing is
+        // happening".
+        private const double SourceLooksColdEpsilon = 2.0;
+
+        /// <summary>The fixed sourceIdentity segment <see cref="KeyedScaleLearner"/> keys the
+        /// always-fed Layer-3-Raw fallback calibration under - deliberately never collides with a real
+        /// <see cref="SourceIdentity.Compute"/> output (those are either a verbatim property name or an
+        /// 8-hex-digit FNV-1a hash, never this literal).</summary>
+        private const string RawFallbackSourceIdentity = "__layer3_raw_fallback__";
+
         // FIELD FIXES HISTORY, superseded below (docs\field-fixes-report.md defects B/D, then
         // docs\f1-normalization-fix-report.md) - kept because the ORIGINAL defects are still fixed,
         // just by a more direct mechanism now:
@@ -221,6 +261,12 @@ namespace QAdvanceFeedback.Core.Normalized
         private double? _slipScaleCeiling;
         private bool _slipScaleCeilingIsPrimaryTier;
 
+        // SHAKEIT-SILENCE FALLBACK (see this class's own history note above) - whether THIS frame's
+        // published severity/proportions came from the Layer-3-Raw fallback rather than the configured
+        // source, exposed the same way LockScaleCeilingIsPrimaryTier is.
+        private bool _lockSourceFallbackActive;
+        private bool _slipSourceFallbackActive;
+
         // NOTE: this used to be where the per-channel "is Raw currently active" release-envelope state
         // lived (_lockRawPresence/_slipRawPresence, defect D) - removed entirely by the F1 25 fix (see
         // the class-level history note above): severity is calibratedMean directly now, so it already
@@ -271,6 +317,20 @@ namespace QAdvanceFeedback.Core.Normalized
         /// <summary>The Slip channel's equivalent of <see cref="LockScaleLearner"/>.</summary>
         public KeyedScaleLearner SlipScaleLearner => _slipScaleLearner;
 
+        /// <summary>The Lock channel's shared, (game,car)-only physical-limit detector (RuntimeDocument
+        /// Version 4, docs\cold-start-and-timing-fix-report.md) - exposed so the composition root can
+        /// Import/Export it through <c>RuntimeStore</c> at Init/every frame, mirroring
+        /// <see cref="LockLearners"/>'s own exposure. Previously session-scoped only (flagged, not fixed,
+        /// in docs\f1-normalization-fix-report.md's own Concerns): with severity now driven solely by
+        /// <see cref="KeyedScaleLearner"/>'s PRIMARY (physically-anchored) tier, this detector is what
+        /// gates that tier's own calibration - a driver who restarts SimHub mid-session re-cold-starts it
+        /// (and therefore calibration) every time unless it survives the restart like every other learner
+        /// here does.</summary>
+        public KeyedGripLearner LockPhysicalReference => _lockPhysicalReference;
+
+        /// <summary>The Slip channel's equivalent of <see cref="LockPhysicalReference"/>.</summary>
+        public KeyedGripLearner SlipPhysicalReference => _slipPhysicalReference;
+
         /// <summary>The Lock channel's currently-configured source's own learned near-the-limit ceiling
         /// (native units, this source's own scale) - null while not yet calibrated (cold start). See
         /// <see cref="KeyedScaleLearner"/>'s own remarks.</summary>
@@ -286,6 +346,17 @@ namespace QAdvanceFeedback.Core.Normalized
 
         /// <summary>The Slip channel's equivalent of <see cref="LockScaleCeilingIsPrimaryTier"/>.</summary>
         public bool SlipScaleCeilingIsPrimaryTier => _slipScaleCeilingIsPrimaryTier;
+
+        /// <summary>SHAKEIT-SILENCE FALLBACK (docs\shakeit-silence-diagnosis-report.md) - whether the
+        /// MOST RECENT frame's Lock severity/proportions were substituted from Layer 3's own Raw because
+        /// the configured source read near-zero while Raw independently read a genuine, well-above-floor
+        /// value. Published as <c>Diag.Lock.SourceFallbackActive</c> so a driver/rig can tell "the
+        /// configured source went quiet and we substituted Raw" from "genuinely no lockup" - see this
+        /// class's own history note.</summary>
+        public bool LockSourceFallbackActive => _lockSourceFallbackActive;
+
+        /// <summary>The Slip channel's equivalent of <see cref="LockSourceFallbackActive"/>.</summary>
+        public bool SlipSourceFallbackActive => _slipSourceFallbackActive;
 
         /// <summary>Whether the CURRENT game (the last one <see cref="Compute"/> was called with) is
         /// known to genuinely support loose-surface reporting - see
@@ -368,11 +439,25 @@ namespace QAdvanceFeedback.Core.Normalized
         /// <param name="slipSourceIdentity">The Slip channel's equivalent of
         /// <paramref name="lockSourceIdentity"/> - independent (Slip's own four wheels may be configured
         /// to a completely different source than Lock's).</param>
+        /// <param name="layer3RawLockWheels">
+        /// SHAKEIT-SILENCE FALLBACK (docs\shakeit-silence-diagnosis-report.md) - Layer 3's OWN Lock
+        /// per-wheel Raw values, ALWAYS computed independently of whatever source is actually configured
+        /// (see <c>QAdvanceFeedback.cs</c>'s own <c>legacy.LockWheels</c>, published verbatim as
+        /// <c>WheelLock.Raw.*</c> regardless of this engine's source). Used ONLY as a fallback detector +
+        /// fallback value for the narrow case where the CONFIGURED source (<paramref name="rawLockWheels"/>)
+        /// reads near-zero while this independent measurement reads a genuine, well-above-floor value -
+        /// see this class's own history note. Defaults to <c>Corners.Zero</c> so every existing
+        /// caller/test (which never varies this) keeps compiling and behaving exactly as before - a
+        /// permanently-zero fallback input can never look like a genuine disagreement, so the fallback
+        /// simply never engages for them.</param>
+        /// <param name="layer3RawSlipWheels">The Slip channel's equivalent of
+        /// <paramref name="layer3RawLockWheels"/>.</param>
         public NormalizedWheelLockSlipResult Compute(
             ITelemetrySample sample, Corners rawLockWheels, Corners rawSlipWheels,
             string gameId = "", string carId = "", LegacyThresholds? thresholds = null,
             AggregationWeights? lockAggregation = null, AggregationWeights? slipAggregation = null,
-            string lockSourceIdentity = "", string slipSourceIdentity = "")
+            string lockSourceIdentity = "", string slipSourceIdentity = "",
+            Corners layer3RawLockWheels = default(Corners), Corners layer3RawSlipWheels = default(Corners))
         {
             if (sample == null) throw new ArgumentNullException(nameof(sample));
 
@@ -426,11 +511,13 @@ namespace QAdvanceFeedback.Core.Normalized
             Corners lockWheels = ComputeChannel(sample.New, rawLockWheels, motion, _lockLearners, _lockPhysicalReference, _lockScaleLearner,
                 gameId, carId, lockSourceIdentity, instantLooseFraction,
                 direction == LongitudinalMotionState.Slowing, lockTriggered, lockObserveAllowed, dtSeconds,
-                ref _lockLooseFraction, out _lockScaleCeiling, out _lockScaleCeilingIsPrimaryTier);
+                ref _lockLooseFraction, layer3RawLockWheels, out _lockScaleCeiling, out _lockScaleCeilingIsPrimaryTier,
+                out _lockSourceFallbackActive);
             Corners slipWheels = ComputeChannel(sample.New, rawSlipWheels, motion, _slipLearners, _slipPhysicalReference, _slipScaleLearner,
                 gameId, carId, slipSourceIdentity, instantLooseFraction,
                 direction == LongitudinalMotionState.SpeedingUp, slipTriggered, slipObserveAllowed, dtSeconds,
-                ref _slipLooseFraction, out _slipScaleCeiling, out _slipScaleCeilingIsPrimaryTier);
+                ref _slipLooseFraction, layer3RawSlipWheels, out _slipScaleCeiling, out _slipScaleCeilingIsPrimaryTier,
+                out _slipSourceFallbackActive);
 
             WheelAggregate lockAggregate = Aggregator.Compute(lockWheels, lockWeights);
             WheelAggregate slipAggregate = Aggregator.Compute(slipWheels, slipWeights);
@@ -463,14 +550,20 @@ namespace QAdvanceFeedback.Core.Normalized
             ITelemetryFrame frame, Corners rawWheels, AchievedMotion.Result motion,
             KeyedGripLearner learners, KeyedGripLearner physicalReference, KeyedScaleLearner scaleLearner,
             string gameId, string carId, string sourceIdentity, double instantLooseFraction, bool engaged, bool triggered,
-            bool observeAllowed, double dtSeconds, ref double smoothedLooseFraction,
-            out double? scaleCeiling, out bool scaleCeilingIsPrimaryTier)
+            bool observeAllowed, double dtSeconds, ref double smoothedLooseFraction, Corners layer3RawWheels,
+            out double? scaleCeiling, out bool scaleCeilingIsPrimaryTier, out bool sourceFallbackActive)
         {
             double w0 = ClampMath.To0100(rawWheels.FrontLeft);
             double w1 = ClampMath.To0100(rawWheels.FrontRight);
             double w2 = ClampMath.To0100(rawWheels.RearLeft);
             double w3 = ClampMath.To0100(rawWheels.RearRight);
 
+            double lw0 = ClampMath.To0100(layer3RawWheels.FrontLeft);
+            double lw1 = ClampMath.To0100(layer3RawWheels.FrontRight);
+            double lw2 = ClampMath.To0100(layer3RawWheels.RearLeft);
+            double lw3 = ClampMath.To0100(layer3RawWheels.RearRight);
+
+            sourceFallbackActive = false;
             scaleCeiling = scaleLearner.LearnedCeiling(gameId, carId, sourceIdentity, out scaleCeilingIsPrimaryTier);
 
             // TRIGGER THRESHOLD (owner-requested restructure, and the owner's OWN clarification: this
@@ -542,20 +635,51 @@ namespace QAdvanceFeedback.Core.Normalized
             // SHARED, (game,car)-only physical reference, never the source-keyed one above - and, if so,
             // teach the scale learner what THIS source's own raw reading looks like at that moment.
             // Blended the same way as gripUtilization, for the same continuity reason.
-            double physicalConfidenceSealed = physicalReference.Confidence(gameId, carId, PhysicalReferenceSourceIdentity, SealedSurfaceBucket);
-            double physicalConfidenceLoose = physicalReference.Confidence(gameId, carId, PhysicalReferenceSourceIdentity, LooseSurfaceBucket);
-            double physicalConfidence = Blend(physicalConfidenceSealed, physicalConfidenceLoose, smoothedLooseFraction);
-
-            double physicalRatioSealed = physicalReference.Ratio(gameId, carId, motion.MagnitudeG, PhysicalReferenceSourceIdentity, SealedSurfaceBucket);
-            double physicalRatioLoose = physicalReference.Ratio(gameId, carId, motion.MagnitudeG, PhysicalReferenceSourceIdentity, LooseSurfaceBucket);
+            //
+            // CONTINUOUS CONFIDENCE, NO ABSOLUTE-COUNT GATE, ONE SINGLE CONFIDENCE NOTION
+            // (docs\regression-fix-report.md - the owner's own "why not just lower the sample bar, and
+            // why not for every title" follow-up, then their own concrete blend specification): an
+            // EARLIER pass here required physicalReference's OWN confidence to reach a fixed sample count
+            // (first 200, then 60) before ANY frame could ever be treated as "at the limit" - still a
+            // hard cliff, and worse, an ABSOLUTE COUNT tuned against exactly one captured title's own
+            // qualifying-frame rate. A LATER pass then tried a second, separate continuous weight here
+            // (how much THIS shared detector's own G-evidence should be trusted) on top of
+            // <see cref="KeyedScaleLearner"/>'s own - exactly the "second confidence notion" the owner
+            // explicitly said to avoid. Both are gone: `Ratio` is called WITHOUT its own confidence-based
+            // ceiling (`applyColdStartCeiling: false` - see that method's own remarks) so "is this moment
+            // near what we've learned so far" is answered honestly at any sample count, and every
+            // qualifying "at the limit" frame teaches <see cref="KeyedScaleLearner"/> at full weight (1.0)
+            // - the ONE place a continuous, dispersion-weighted confidence is computed is
+            // <see cref="KeyedScaleLearner"/>'s OWN ramp (see its own remarks), which already answers
+            // "how much do we trust the ACCUMULATED calibration evidence for this exact key" - a single,
+            // sufficient confidence notion, not two. A virgin physical reference's own inflated ratio
+            // (dividing by an unlearned seed peak) can therefore look "at the limit" readily in the very
+            // first few frames of a session, but this is harmless by construction: KeyedScaleLearner's
+            // own concave, dispersion-weighted ramp starts at 0 regardless (its OWN count is what is
+            // low, not this one), so a handful of early, possibly-unrepresentative teachings cannot move
+            // the published ceiling meaningfully until real, dispersion-confirmed evidence accumulates
+            // FOR THIS EXACT KEY.
+            double physicalRatioSealed = physicalReference.Ratio(gameId, carId, motion.MagnitudeG, PhysicalReferenceSourceIdentity, SealedSurfaceBucket, applyColdStartCeiling: false);
+            double physicalRatioLoose = physicalReference.Ratio(gameId, carId, motion.MagnitudeG, PhysicalReferenceSourceIdentity, LooseSurfaceBucket, applyColdStartCeiling: false);
             double physicalRatioNow = Blend(physicalRatioSealed, physicalRatioLoose, smoothedLooseFraction);
 
-            bool physicallyAtLimit = physicalConfidence >= 1.0 && physicalRatioNow >= PhysicalLimitRatioThreshold;
+            bool physicallyAtLimit = physicalRatioNow >= PhysicalLimitRatioThreshold;
 
             if (mean >= MinRawForCalibrationObservation)
             {
                 if (physicallyAtLimit) scaleLearner.ObserveAtPhysicalLimit(gameId, carId, sourceIdentity, mean);
                 scaleLearner.ObserveGeneral(gameId, carId, sourceIdentity, mean);
+            }
+
+            // SHAKEIT-SILENCE FALLBACK (docs\shakeit-silence-diagnosis-report.md) - keep the fallback's
+            // OWN calibration warm every qualifying frame, regardless of what source is actually
+            // configured (mirroring how physicalReference above is always fed regardless of source), so
+            // that WHEN the fallback below actually engages, Rescale is not itself starting cold.
+            double layer3RawMean = (lw0 + lw1 + lw2 + lw3) / 4.0;
+            if (layer3RawMean >= MinRawForCalibrationObservation)
+            {
+                if (physicallyAtLimit) scaleLearner.ObserveAtPhysicalLimit(gameId, carId, RawFallbackSourceIdentity, layer3RawMean);
+                scaleLearner.ObserveGeneral(gameId, carId, RawFallbackSourceIdentity, layer3RawMean);
             }
 
             double calibratedMean = scaleLearner.Rescale(gameId, carId, sourceIdentity, mean);
@@ -572,8 +696,25 @@ namespace QAdvanceFeedback.Core.Normalized
             // Max()/envelope needed for either property anymore.
             double severity = calibratedMean;
 
+            // SHAKEIT-SILENCE FALLBACK - the configured source reads near-zero (SourceLooksColdEpsilon)
+            // WHILE Layer 3's own, independently-computed Raw reads a genuine, well-above-floor value
+            // (MinRawForCalibrationObservation - the SAME bar this class already trusts as "a real
+            // near-limit reading, not a placeholder" - see that constant's own remarks). This is narrow
+            // by construction: a source that is CORRECTLY reporting near-zero because the wheel genuinely
+            // isn't near its limit will have layer3RawMean near-zero too (both measure the same physical
+            // event), so the fallback does not engage for the overwhelmingly common "nothing is
+            // happening" case - only for the specific disagreement the diagnosis measured directly.
+            bool useFallback = mean < SourceLooksColdEpsilon && layer3RawMean >= MinRawForCalibrationObservation;
+            sourceFallbackActive = useFallback;
+            if (useFallback)
+            {
+                severity = scaleLearner.Rescale(gameId, carId, RawFallbackSourceIdentity, layer3RawMean);
+            }
+
             double s0, s1, s2, s3;
-            if (mean <= NoRawSignalEpsilon)
+            double proportionMean = useFallback ? layer3RawMean : mean;
+            double p0 = useFallback ? lw0 : w0, p1 = useFallback ? lw1 : w1, p2 = useFallback ? lw2 : w2, p3 = useFallback ? lw3 : w3;
+            if (proportionMean <= NoRawSignalEpsilon)
             {
                 // No per-wheel differentiation available from Raw at all - distribute the
                 // car-level severity evenly rather than favouring an arbitrary wheel.
@@ -585,8 +726,10 @@ namespace QAdvanceFeedback.Core.Normalized
                 // w_i/mean unchanged) - deliberately built from the RAW w0..w3/mean, not the calibrated
                 // ones, since calibration is a single shared scalar for this frame and therefore cancels
                 // out of the ratio exactly; using raw values here avoids a redundant Rescale call per
-                // wheel for a quantity that would come out identical either way.
-                s0 = w0 / mean; s1 = w1 / mean; s2 = w2 / mean; s3 = w3 / mean;
+                // wheel for a quantity that would come out identical either way. Uses the FALLBACK's own
+                // per-wheel values (not the configured source's near-zero/degenerate ones) whenever the
+                // fallback is active - the configured source's own proportions carry no real signal here.
+                s0 = p0 / proportionMean; s1 = p1 / proportionMean; s2 = p2 / proportionMean; s3 = p3 / proportionMean;
             }
 
             return new Corners(

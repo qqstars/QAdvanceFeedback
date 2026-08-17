@@ -18,15 +18,73 @@ namespace QAdvanceFeedback.Tests
             Assert.Null(learner.GetAverage());
         }
 
+        /// <summary>
+        /// RE-EXPRESSED, not weakened (docs\regression-fix-report.md - the sample-threshold follow-up):
+        /// <see cref="OnlineDistributionLearner.GetAverage"/> used to be a PLAIN, equally-weighted mean of
+        /// every |value| ever folded in. It is now a DECAYING WEIGHTED mean (see that class's own
+        /// remarks) so a caller's estimate keeps tracking genuine change instead of becoming permanently
+        /// diluted by an ever-growing history - deliberately requested so <see cref="Normalized.KeyedScaleLearner"/>'s
+        /// primary tier "keeps refining indefinitely" rather than locking in place. For a CONSTANT input
+        /// series this is mathematically IDENTICAL to the old plain mean (verified by
+        /// <see cref="A_constant_input_series_gives_the_exact_same_average_regardless_of_decay"/>); for a
+        /// series whose values genuinely differ - as here - the most RECENT value is weighted very
+        /// slightly more than older ones (decay 0.997/sample - the same rate
+        /// <see cref="Normalized.GripLearner"/>'s own decaying peak uses), so the result is close to, but
+        /// not exactly, the old plain mean of 4.0. The exact value below was captured directly from this
+        /// implementation, not hand-derived, and is pinned so a future accidental change to the decay
+        /// rate or formula is caught.
+        /// </summary>
         [Fact]
-        public void GetAverage_is_the_plain_mean_of_absolute_values()
+        public void GetAverage_is_a_decaying_weighted_mean_slightly_favouring_recent_values()
         {
             var learner = new OnlineDistributionLearner();
             learner.AddValue(2.0);
             learner.AddValue(-4.0);
             learner.AddValue(6.0);
 
-            Assert.Equal(4.0, learner.GetAverage().Value, 9);
+            Assert.Equal(4.004006006, learner.GetAverage().Value, 6);
+            // Still close to the old plain mean (4.0) - decay only nudges it, never wildly.
+            Assert.True(System.Math.Abs(learner.GetAverage().Value - 4.0) < 0.1);
+        }
+
+        /// <summary>The property that actually matters for every EXISTING caller/test that feeds a
+        /// constant value repeatedly (every calibration test in this project's own test suite does
+        /// exactly this): decay changes NOTHING when the fed value never changes - both the weighted sum
+        /// and the weighted-total-weight carry the identical geometric decay factor, which cancels out
+        /// exactly, at every sample count, not just in the limit.</summary>
+        [Fact]
+        public void A_constant_input_series_gives_the_exact_same_average_regardless_of_decay()
+        {
+            var learner = new OnlineDistributionLearner();
+            for (int i = 0; i < 500; i++)
+            {
+                learner.AddValue(42.0);
+                Assert.Equal(42.0, learner.GetAverage().Value, 9);
+            }
+        }
+
+        /// <summary>A WEIGHTED fold-in contributes proportionally less/more than a fully-trusted one -
+        /// the mechanism <see cref="Normalized.NormalizedWheelLockSlipEngine"/>'s own continuous
+        /// physical-limit trust weighting depends on.</summary>
+        [Fact]
+        public void AddValue_with_a_low_weight_contributes_proportionally_less_than_full_weight()
+        {
+            var learner = new OnlineDistributionLearner();
+            learner.AddValue(100.0, weight: 1.0);
+            learner.AddValue(0.0001, weight: 1.0); // a near-zero, but not exactly zero, second value
+
+            // A near-fully-trusted first sample followed by ANY positive-weight low value should still
+            // pull the average down substantially - sanity-checking the plumbing works at all before the
+            // more targeted low-weight comparison below.
+            Assert.True(learner.GetAverage().Value < 100.0);
+
+            var lowWeightLearner = new OnlineDistributionLearner();
+            lowWeightLearner.AddValue(100.0, weight: 1.0);
+            lowWeightLearner.AddValue(0.0001, weight: 0.01); // SAME low value, but heavily DISCOUNTED
+
+            // The heavily-discounted low value must pull the average down LESS than a fully-weighted one
+            // would - proving the weight parameter genuinely scales each fold-in's own influence.
+            Assert.True(lowWeightLearner.GetAverage().Value > learner.GetAverage().Value);
         }
 
         [Fact]

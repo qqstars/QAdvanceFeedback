@@ -41,7 +41,20 @@ namespace QAdvanceFeedback.Core.Runtime
         /// stated explicitly, so a future reader is not left wondering why no matching
         /// <c>LegacyRuntimeDocument</c>-style conversion exists for this bump the way one does for 1-&gt;2.
         /// </remarks>
-        public int Version = 3;
+        /// <remarks>
+        /// BUMPED AGAIN, 3 -&gt; 4 (docs\cold-start-and-timing-fix-report.md - the F1 25 car-switch/restart
+        /// regression): <see cref="LockPhysicalReference"/>/<see cref="SlipPhysicalReference"/> (the
+        /// shared, (game,car)-only physical-limit detector that now solely gates
+        /// <c>KeyedScaleLearner</c>'s PRIMARY tier - previously session-scoped only, flagged as a
+        /// candidate follow-up in the f1-normalization-fix-report and fixed here) and
+        /// <see cref="LockScaleCrossCarSeed"/>/<see cref="SlipScaleCrossCarSeed"/> (the new per-(game,
+        /// source) cold-start seed a brand-new car can start from instead of bare identity - see
+        /// <c>KeyedScaleLearner</c>'s own remarks) are NEW additions, exactly like the 2-&gt;3 bump before
+        /// it - no explicit one-time-import code needed, for the identical reason that bump's own remarks
+        /// give (a Version-3 file simply lacks these keys; Newtonsoft's field-initialiser-then-overwrite
+        /// convention already leaves them at their correct empty "nothing persisted yet" state).
+        /// </remarks>
+        public int Version = 4;
 
         /// <summary>Per (gameId, carId) Lock-channel learner state - key format matches
         /// <see cref="KeyedGripLearner.MakeKey"/>.</summary>
@@ -65,6 +78,21 @@ namespace QAdvanceFeedback.Core.Runtime
         /// genuinely supports loose-surface (grass/gravel) reporting - the one field this plugin's own
         /// audit found no <c>FeedbackCapabilities</c> flag covers at all.</summary>
         public Dictionary<string, bool> SurfaceSupportByGame = new Dictionary<string, bool>();
+
+        /// <summary>Version 4: the Lock channel's shared, (game,car)-only physical-limit detector - see
+        /// <c>NormalizedWheelLockSlipEngine.LockPhysicalReference</c>/<c>KeyedGripLearner.ExportAll</c>/
+        /// <c>ImportAll</c>.</summary>
+        public Dictionary<string, GripLearnerState> LockPhysicalReference = new Dictionary<string, GripLearnerState>();
+
+        /// <summary>The Slip channel's equivalent of <see cref="LockPhysicalReference"/>.</summary>
+        public Dictionary<string, GripLearnerState> SlipPhysicalReference = new Dictionary<string, GripLearnerState>();
+
+        /// <summary>Version 4: the Lock channel's per-(gameId,sourceIdentity) cross-car cold-start seed -
+        /// see <c>KeyedScaleLearner.ExportCrossCarSeeds</c>/<c>ImportCrossCarSeeds</c>.</summary>
+        public Dictionary<string, ScaleLearnerState> LockScaleCrossCarSeed = new Dictionary<string, ScaleLearnerState>();
+
+        /// <summary>The Slip channel's equivalent of <see cref="LockScaleCrossCarSeed"/>.</summary>
+        public Dictionary<string, ScaleLearnerState> SlipScaleCrossCarSeed = new Dictionary<string, ScaleLearnerState>();
     }
 
     /// <summary>

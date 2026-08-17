@@ -241,19 +241,19 @@
                   <TextBlock Grid.Row="3" Grid.Column="0" x:Name="LockLblSlightly" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="LockSlightlyRaw"/>
                   <mah:NumericUpDown Grid.Row="3" Grid.Column="2" x:Name="LockSlightlyOutput"/>
-                  <TextBlock Grid.Row="3" Grid.Column="3" x:Name="LockLiveSlightly"/>
+                  <TextBlock Grid.Row="3" Grid.Column="3" x:Name="LockLiveSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
                   <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="4" x:Name="LockDescSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="5" Grid.Column="0" x:Name="LockLblModerate" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="5" Grid.Column="1" x:Name="LockModerateRaw"/>
                   <mah:NumericUpDown Grid.Row="5" Grid.Column="2" x:Name="LockModerateOutput"/>
-                  <TextBlock Grid.Row="5" Grid.Column="3" x:Name="LockLiveModerate"/>
+                  <TextBlock Grid.Row="5" Grid.Column="3" x:Name="LockLiveModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
                   <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="4" x:Name="LockDescModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="7" Grid.Column="0" x:Name="LockLblCritical" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="7" Grid.Column="1" x:Name="LockCriticalRaw"/>
                   <mah:NumericUpDown Grid.Row="7" Grid.Column="2" x:Name="LockCriticalOutput"/>
-                  <TextBlock Grid.Row="7" Grid.Column="3" x:Name="LockLiveCritical"/>
+                  <TextBlock Grid.Row="7" Grid.Column="3" x:Name="LockLiveCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
                   <TextBlock Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="4" x:Name="LockDescCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="9" Grid.Column="0" x:Name="LockLblEnd" FontWeight="Bold"/>
@@ -430,19 +430,19 @@
                   <TextBlock Grid.Row="3" Grid.Column="0" x:Name="SlipLblSlightly" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="SlipSlightlyRaw"/>
                   <mah:NumericUpDown Grid.Row="3" Grid.Column="2" x:Name="SlipSlightlyOutput"/>
-                  <TextBlock Grid.Row="3" Grid.Column="3" x:Name="SlipLiveSlightly"/>
+                  <TextBlock Grid.Row="3" Grid.Column="3" x:Name="SlipLiveSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
                   <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="4" x:Name="SlipDescSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="5" Grid.Column="0" x:Name="SlipLblModerate" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="5" Grid.Column="1" x:Name="SlipModerateRaw"/>
                   <mah:NumericUpDown Grid.Row="5" Grid.Column="2" x:Name="SlipModerateOutput"/>
-                  <TextBlock Grid.Row="5" Grid.Column="3" x:Name="SlipLiveModerate"/>
+                  <TextBlock Grid.Row="5" Grid.Column="3" x:Name="SlipLiveModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
                   <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="4" x:Name="SlipDescModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="7" Grid.Column="0" x:Name="SlipLblCritical" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="7" Grid.Column="1" x:Name="SlipCriticalRaw"/>
                   <mah:NumericUpDown Grid.Row="7" Grid.Column="2" x:Name="SlipCriticalOutput"/>
-                  <TextBlock Grid.Row="7" Grid.Column="3" x:Name="SlipLiveCritical"/>
+                  <TextBlock Grid.Row="7" Grid.Column="3" x:Name="SlipLiveCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
                   <TextBlock Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="4" x:Name="SlipDescCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="9" Grid.Column="0" x:Name="SlipLblEnd" FontWeight="Bold"/>

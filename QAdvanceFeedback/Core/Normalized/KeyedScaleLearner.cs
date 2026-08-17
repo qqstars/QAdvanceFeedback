@@ -58,6 +58,42 @@ namespace QAdvanceFeedback.Core.Normalized
     /// example is not - ShakeIt's 60/80/90/100 is not a fixed ratio of 30/60/80/100), checkpoints away
     /// from the anchor will not converge as tightly as the anchor itself does. This was measured, not
     /// hidden - see the acceptance test and report.
+    /// <para/>
+    /// COLD-START CONTINUITY AND CROSS-CAR SEEDING (docs\cold-start-and-timing-fix-report.md - the F1 25
+    /// car-switch regression: with <c>NormalizedWheelLockSlipEngine</c>'s severity now
+    /// <c>calibratedMean</c> alone, THIS class's own calibration carries the entire live signal, so a
+    /// switch to a brand-new car - a brand-new (game,car,source) key - matters far more than it used to).
+    /// Two changes, both scoped to this class:
+    /// <list type="number">
+    /// <item><b>No more hard step at <see cref="MinPhysicalAnchorSamples"/>.</b> The primary tier used to
+    /// be ALL (once <see cref="MinPhysicalAnchorSamples"/> qualifying moments existed) or NOTHING (an
+    /// identity/cold-reference floor below it) - an instant jump the moment sample #20 arrived. It now
+    /// blends its own partial average toward that same trust continuously, using the SAME
+    /// dispersion-weighted <see cref="ColdWarmBlend"/> mechanism this class already uses for a persisted
+    /// COLD reference (a tight cluster of readings earns trust in a handful of samples; a scattered one
+    /// stays near the floor regardless of count) - "blending in as evidence accumulates, continuously, no
+    /// step", not a retuned threshold.</item>
+    /// <item><b>Cross-car seeding - GATED, NEVER-AMPLIFYING (revised, docs\regression-fix-report.md,
+    /// Regression 3)</b>. A brand-new (game,car,source) key with ZERO local evidence of its own falls
+    /// back to bare identity - no rescale at all - even when this EXACT source has already been
+    /// calibrated for a DIFFERENT car in the SAME game. This was tightened after an owner-reported
+    /// regression: the FIRST design let a brand-new car's very FIRST query borrow the OTHER car's seed
+    /// at FULL STRENGTH, uncapped - which could (and, on a lower-native-scale seed, WOULD) amplify a
+    /// perfectly ordinary reading into a false, full-strength cue on a driver's first corner ("a missed
+    /// cue is far better than a full-strength false alarm", this project's own established principle).
+    /// The seed now only ever nudges the ramp's OWN starting point (see
+    /// <see cref="LearnedCeilingForKey"/>'s own primary-tier branch) once THIS key has recorded at least
+    /// one physical-limit observation of its own, blended in by the SAME weight that governs how much
+    /// this key's own evidence is trusted overall - zero at zero evidence (identity, exactly), growing
+    /// only as this car's own evidence grows. It is also CAPPED at
+    /// <see cref="CanonicalAtLimitAnchor"/> so it can only ever REDUCE Rescale's factor, never amplify -
+    /// only this car's OWN fully-earned average (once trusted) may push the ceiling below the anchor,
+    /// which is a legitimate, evidence-based amplification the calibration exists to provide, never a
+    /// borrowed guess. Once any (game,*,source) key's primary tier earns meaningful trust, its ceiling is
+    /// still remembered per (game,source) - see <see cref="_crossCarSeed"/> - for exactly this narrow,
+    /// gated use. A source never seen before in this game at all (no seed either) still falls back to
+    /// plain identity.</item>
+    /// </list>
     /// </summary>
     public sealed class KeyedScaleLearner
     {
@@ -68,11 +104,34 @@ namespace QAdvanceFeedback.Core.Normalized
         /// headroom above this anchor.</summary>
         public const double CanonicalAtLimitAnchor = 75.0;
 
-        /// <summary>Minimum physically-at-the-limit MOMENTS (not frames in general - see this class's
-        /// own remarks) before the PRIMARY tier is trusted - deliberately small (these are inherently
-        /// rare events within a session, unlike the general population the secondary tier draws from).
-        /// Our own choice, documented, not a copy of any SimHub constant.</summary>
+        /// <summary>
+        /// A discrete "is this worth labelling isPrimaryTier for persistence" cutoff - see
+        /// <see cref="ExportAll"/>'s own use, the ONE place this still acts as a plain threshold (a
+        /// label on what gets persisted, not a live-output gate). Deliberately small (these are
+        /// inherently rare events within a session, unlike the general population the secondary tier
+        /// draws from). Our own choice, documented, not a copy of any SimHub constant. NOT used by the
+        /// live ramp's own confidence curve - see <see cref="CalibrationConfidenceScaleSamples"/> for
+        /// that.
+        /// </summary>
         public const int MinPhysicalAnchorSamples = 20;
+
+        /// <summary>
+        /// THE SOFT SCALE REFERENCE for the primary tier's own live, concave confidence curve
+        /// (<see cref="ColdWarmBlend.ConcaveHotWeight"/>) - docs\regression-fix-report.md, the owner's
+        /// own concrete blend specification and worked example ("10 samples (10/200=0.05)... 150 samples
+        /// (150/200=0.75)... &gt;=200 samples -&gt; weight 1.0"). Matches their own example literally.
+        /// NOT A REQUIREMENT (the owner's own explicit "no absolute-count gate" principle): the primary
+        /// tier already contributes from the very FIRST physically-at-the-limit moment, with low but
+        /// non-zero weight, long before this count is reached, and a title whose sessions never approach
+        /// it still earns a real, if modest, weight from whatever evidence it does accumulate - it simply
+        /// never needs to "unlock" anything. Deliberately a SEPARATE constant from
+        /// <see cref="MinPhysicalAnchorSamples"/> (20) even though they are both about "how much evidence
+        /// is enough" for the SAME tier - <see cref="MinPhysicalAnchorSamples"/> answers a discrete,
+        /// persistence-labelling question about a PLAIN COUNT of taught observations, while this answers
+        /// a continuous, curve-shaping question the owner's own example specifically anchors at 200 - conflating
+        /// the two would make an unrelated change to one silently retune the other.
+        /// </summary>
+        public const int CalibrationConfidenceScaleSamples = 200;
 
         private readonly Dictionary<string, OnlineDistributionLearner> _physicalAnchor = new Dictionary<string, OnlineDistributionLearner>(StringComparer.Ordinal);
         private readonly Dictionary<string, OnlineDistributionLearner> _generalDistribution = new Dictionary<string, OnlineDistributionLearner>(StringComparer.Ordinal);
@@ -90,17 +149,60 @@ namespace QAdvanceFeedback.Core.Normalized
         private readonly Dictionary<string, double> _coldCeiling = new Dictionary<string, double>(StringComparer.Ordinal);
         private readonly Dictionary<string, WelfordAccumulator> _hotDispersion = new Dictionary<string, WelfordAccumulator>(StringComparer.Ordinal);
 
+        /// <summary>CROSS-CAR SEEDING (GATED, NEVER-AMPLIFYING - see this class's own remarks) - the best
+        /// already-learned ceiling for (gameId, sourceIdentity), IGNORING carId, refreshed every time ANY
+        /// car's own primary tier earns meaningful trust (see <see cref="ObserveAtPhysicalLimit"/>). A
+        /// car with the SAME source, once IT ITSELF has recorded at least one physical-limit observation,
+        /// nudges its own ramp's starting point toward a CAPPED (never-amplifying) version of this seed -
+        /// never applied at zero local evidence, never uncapped - see
+        /// <see cref="LearnedCeilingForKey"/>'s own primary-tier branch.</summary>
+        private readonly Dictionary<string, ScaleLearnerState> _crossCarSeed = new Dictionary<string, ScaleLearnerState>(StringComparer.Ordinal);
+
+        /// <summary>Sample-count-and-dispersion weight (see <see cref="ColdWarmBlend.HotWeight"/>) at or
+        /// above which a key's own primary-tier evidence is trusted enough to become the (game,source)
+        /// cross-car seed other cars can start from - deliberately a real, but not maximal, bar (0.5): a
+        /// seed only needs to be a BETTER starting point than bare identity for a brand-new car, not a
+        /// fully-mature reference in its own right (the receiving car's own continuous blend still keeps
+        /// converging toward ITS OWN truth as its own evidence accumulates).</summary>
+        private const double CrossCarSeedTrustThreshold = 0.5;
+
+        private static string CrossCarKey(string gameId, string sourceIdentity)
+            => (gameId ?? string.Empty) + "|#|" + (sourceIdentity ?? string.Empty);
+
         /// <summary>PRIMARY tier - records this source's own raw reading at a moment independently
         /// detected (by the caller) as physically at this car's own learned grip limit.</summary>
-        public void ObserveAtPhysicalLimit(string gameId, string carId, string sourceIdentity, double rawValue)
+        /// <param name="observationWeight">
+        /// CONTINUOUS CONFIDENCE (docs\regression-fix-report.md - the owner's own follow-up after the
+        /// 200-&gt;60 sample-bar change): how much THIS specific observation should count toward the
+        /// primary tier's own decaying weighted average (see
+        /// <see cref="OnlineDistributionLearner.AddValue(double,double)"/>) - defaults to 1.0 (full
+        /// trust) so every pre-existing direct caller/test of THIS method (which always meant "a fully
+        /// trusted observation") keeps compiling and behaving exactly as before. The engine's own live
+        /// call site instead passes a CONTINUOUS, dispersion-weighted trust level
+        /// (<see cref="NormalizedWheelLockSlipEngine"/>'s shared physical-limit detector's own
+        /// <c>GripLearner.HotEvidenceWeight</c>) - 0 at zero evidence for that detector, growing
+        /// continuously, never gated by any absolute sample count. Distinct from this method's own local
+        /// <c>weight</c> below (<see cref="ColdWarmBlend.HotWeight"/> of THIS key's own accumulated
+        /// evidence) - two different, complementary continuous weightings, not the same number.</param>
+        public void ObserveAtPhysicalLimit(string gameId, string carId, string sourceIdentity, double rawValue, double observationWeight = 1.0)
         {
             if (!ClampMath.IsFinite(rawValue) || rawValue <= 0.0) return;
-            GetOrCreate(_physicalAnchor, gameId, carId, sourceIdentity).AddValue(rawValue);
+            if (!ClampMath.IsFinite(observationWeight) || observationWeight <= 0.0) return;
+            OnlineDistributionLearner primary = GetOrCreate(_physicalAnchor, gameId, carId, sourceIdentity);
+            primary.AddValue(rawValue, observationWeight);
 
             string key = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity);
             WelfordAccumulator dispersion = _hotDispersion.TryGetValue(key, out WelfordAccumulator existing) ? existing : WelfordAccumulator.Empty;
             dispersion.Observe(rawValue);
             _hotDispersion[key] = dispersion;
+
+            // CROSS-CAR SEEDING (this task) - see this class's own remarks and _crossCarSeed's.
+            double weight = ColdWarmBlend.HotWeight(primary.Count, dispersion.CoefficientOfVariation);
+            if (weight >= CrossCarSeedTrustThreshold && primary.GetAverage() is double average)
+            {
+                _crossCarSeed[CrossCarKey(gameId, sourceIdentity)] =
+                    new ScaleLearnerState { ColdCeiling = average, ColdIsPrimaryTier = true };
+            }
         }
 
         /// <summary>Seeds a persisted COLD ceiling for (gameId, carId, sourceIdentity) - called once, at
@@ -211,15 +313,21 @@ namespace QAdvanceFeedback.Core.Normalized
 
         private double? LearnedCeilingByKey(string key, out bool isPrimaryTier)
         {
-            OnlineDistributionLearner primary = Find(_physicalAnchor, key);
-            if (primary != null && primary.Count >= MinPhysicalAnchorSamples)
-            {
-                isPrimaryTier = true;
-                return primary.GetAverage();
-            }
-            OnlineDistributionLearner secondary = Find(_generalDistribution, key);
-            isPrimaryTier = false;
-            return secondary?.GetPercentile(99.0);
+            ParseKey(key, out string gameId, out string sourceIdentity);
+            return LearnedCeilingForKey(gameId, sourceIdentity, key, out isPrimaryTier);
+        }
+
+        /// <summary>Splits a composite key (see <see cref="KeyedGripLearner.MakeKey"/>) back into its
+        /// gameId/sourceIdentity segments - reliable because this class only ever builds keys itself via
+        /// that same method, never accepts one from outside. Used only to recover the (gameId,
+        /// sourceIdentity) pair <see cref="ExportAll"/>'s own by-key loop needs for cross-car lookups
+        /// (every other caller already has these split, via <see cref="LearnedCeiling"/>'s own
+        /// parameters).</summary>
+        private static void ParseKey(string key, out string gameId, out string sourceIdentity)
+        {
+            string[] parts = (key ?? string.Empty).Split(new[] { "|#|" }, StringSplitOptions.None);
+            gameId = parts.Length > 0 ? parts[0] : string.Empty;
+            sourceIdentity = parts.Length > 2 ? parts[2] : string.Empty;
         }
 
         private static OnlineDistributionLearner Find(Dictionary<string, OnlineDistributionLearner> store, string key)
@@ -242,17 +350,86 @@ namespace QAdvanceFeedback.Core.Normalized
         /// on a rig, per this task's own explicit request.</summary>
         public double? LearnedCeiling(string gameId, string carId, string sourceIdentity, out bool isPrimaryTier)
         {
-            OnlineDistributionLearner primary = Find(_physicalAnchor, gameId, carId, sourceIdentity);
-            if (primary != null && primary.Count >= MinPhysicalAnchorSamples)
+            string key = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity);
+            return LearnedCeilingForKey(gameId, sourceIdentity, key, out isPrimaryTier);
+        }
+
+        /// <summary>The actual mechanism behind both <see cref="LearnedCeiling"/> (the public,
+        /// gameId/carId/sourceIdentity-shaped entry point) and <see cref="LearnedCeilingByKey"/>
+        /// (<see cref="ExportAll"/>'s own by-composite-key loop) - see this class's own remarks
+        /// ("COLD-START CONTINUITY AND CROSS-CAR SEEDING") for the full derivation.</summary>
+        private double? LearnedCeilingForKey(string gameId, string sourceIdentity, string key, out bool isPrimaryTier)
+        {
+            OnlineDistributionLearner primary = Find(_physicalAnchor, key);
+            if (primary != null && primary.Count > 0)
             {
                 isPrimaryTier = true;
-                return primary.GetAverage();
+                // NO MORE HARD STEP at MinPhysicalAnchorSamples (this task) - the SAME dispersion-weighted
+                // blend PublishedCeiling already uses for a persisted cold reference, applied here to
+                // primary's OWN partial evidence: a tight cluster earns trust within a handful of samples,
+                // a scattered one stays near bare identity regardless of count - continuous, no step.
+                WelfordAccumulator dispersion = DispersionFor(key);
+                // CONCAVE, DISPERSION-WEIGHTED, NO HARD GATE (docs\regression-fix-report.md - the
+                // owner's own concrete blend specification): front-loaded so the first couple of
+                // physically-at-limit moments already move this ramp meaningfully, using
+                // CalibrationConfidenceScaleSamples purely as a SOFT SCALE reference for the curve's own
+                // shape - NOT a requirement (this ramp already contributes from the very first sample,
+                // weight>0 at primary.Count==2 once dispersion is defined - see WelfordAccumulator's own
+                // remarks).
+                double weight = ColdWarmBlend.ConcaveHotWeight(primary.Count, dispersion.CoefficientOfVariation, CalibrationConfidenceScaleSamples);
+
+                // CROSS-CAR SEED, GATED TO NEVER AMPLIFY A COLD READING (docs\regression-fix-report.md,
+                // Regression 3 - the owner's own explicit requirement after the hard-shake-on-first-brake
+                // report): the ramp's own "cold" starting point is bare IDENTITY
+                // (CanonicalAtLimitAnchor - Rescale's own factor is 1.0 there, see its remarks), blended
+                // toward a CAPPED cross-car seed by THIS SAME weight - i.e. the seed contributes NOTHING
+                // at weight 0 (zero local evidence for THIS EXACT key - plain identity, exactly the
+                // owner's own "the cold state before any local evidence must be identity, not a borrowed
+                // scale" rule) and only nudges the ramp's own starting point as THIS car's own local
+                // evidence begins accumulating - continuous, not a second step (composing two continuous
+                // blends stays continuous). Capped at CanonicalAtLimitAnchor so the BORROWED portion can
+                // only ever REDUCE Rescale's factor (anchor/ceiling &lt;= 1 whenever the anchor is >= 75),
+                // never amplify - only THIS car's own genuinely-earned <c>average</c> below (blended in by
+                // the SAME weight) may push the ceiling below 75 (a legitimate, evidence-based
+                // amplification exactly the F1 fix/Regression 2 calibration needs, never a borrowed
+                // guess). Deliberately never blended against a cross-car seed this SAME key is
+                // simultaneously WRITING (see ObserveAtPhysicalLimit) - self-referential contamination,
+                // not a genuine cross-car borrow (mirrors the reasoning this class always applied here).
+                //
+                // MUTATION EVIDENCE (docs\regression-fix-report.md): reverting this to the OLD
+                // "_crossCarSeed applies at full strength the instant primary.Count == 0" behaviour
+                // reproduces a >100%-of-source Rescale factor on a brand-new car's very first qualifying
+                // frame whenever a lower-native-scale seed exists - exactly the "hard shake on the first
+                // 1-2 braking events" the owner reported.
+                double anchor = CanonicalAtLimitAnchor;
+                if (_crossCarSeed.TryGetValue(CrossCarKey(gameId, sourceIdentity), out ScaleLearnerState seed))
+                {
+                    double cappedSeedCeiling = Math.Max(seed.ColdCeiling, CanonicalAtLimitAnchor);
+                    anchor = ColdWarmBlend.Blend(CanonicalAtLimitAnchor, cappedSeedCeiling, weight);
+                }
+
+                double average = primary.GetAverage() ?? anchor;
+                return ColdWarmBlend.Blend(anchor, average, weight);
             }
 
-            OnlineDistributionLearner secondary = Find(_generalDistribution, gameId, carId, sourceIdentity);
+            OnlineDistributionLearner secondary = Find(_generalDistribution, key);
             double? secondaryCeiling = secondary?.GetPercentile(99.0);
+            if (secondaryCeiling.HasValue)
+            {
+                isPrimaryTier = false;
+                return secondaryCeiling.Value;
+            }
+
+            // TRULY NOTHING OBSERVED for this exact key this session (primary.Count == 0, secondary not
+            // ready) - per the owner's own explicit cold-start rule (docs\regression-fix-report.md,
+            // Regression 3): the state before ANY local evidence for the CURRENT key must be plain
+            // IDENTITY, never a value borrowed from a different car - even a capped/non-amplifying one.
+            // Rescale's own null-check applies identity here (this method's null return). The cross-car
+            // seed is now consulted ONLY inside the primary-tier branch above, once this key has its OWN
+            // first genuine physical-limit observation (primary.Count > 0) - it no longer has a path to
+            // apply itself at zero local evidence.
             isPrimaryTier = false;
-            return secondaryCeiling;
+            return null;
         }
 
         /// <summary>
@@ -294,6 +471,26 @@ namespace QAdvanceFeedback.Core.Normalized
             _generalDistribution.Clear();
             _coldCeiling.Clear();
             _hotDispersion.Clear();
+            _crossCarSeed.Clear();
+        }
+
+        /// <summary>CROSS-CAR SEEDING persistence (this task, RuntimeDocument Version 4) - every
+        /// (gameId,sourceIdentity) seed worth carrying to the next restart, mirroring
+        /// <see cref="ExportAll"/>'s own convention. Called once per frame from the composition root.</summary>
+        public Dictionary<string, ScaleLearnerState> ExportCrossCarSeeds()
+            => new Dictionary<string, ScaleLearnerState>(_crossCarSeed, StringComparer.Ordinal);
+
+        /// <summary>Restores every previously persisted (gameId,sourceIdentity) cross-car seed - called
+        /// once at Init, mirroring <see cref="ImportAll"/>.</summary>
+        public void ImportCrossCarSeeds(IDictionary<string, ScaleLearnerState> data)
+        {
+            if (data == null) return;
+            foreach (KeyValuePair<string, ScaleLearnerState> pair in data)
+            {
+                if (string.IsNullOrEmpty(pair.Key) || pair.Value == null) continue;
+                if (!ClampMath.IsFinite(pair.Value.ColdCeiling) || pair.Value.ColdCeiling <= 0.0) continue;
+                _crossCarSeed[pair.Key] = pair.Value;
+            }
         }
     }
 

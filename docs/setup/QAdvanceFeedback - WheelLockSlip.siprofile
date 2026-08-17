@@ -50,8 +50,48 @@
       "IsEnabled": false,
       "MinimumForce": 10,
       "Threshold": 5,
-      "EffectToChannelsMapStore": {},
-      "GlobalChannelsSettings": {},
+      "EffectToChannelsMapStore": {
+        "CustomEffectContainerQ-WheelLock": {
+          "All": {
+            "MapsStore": "0;1;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;1;100;Back H.R.;;|7;1;100;Back H.L.;;"
+          }
+        },
+        "RPMContainer": {
+          "All": {
+            "MapsStore": "0;1;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;1;100;Back H.R.;;|7;1;100;Back H.L.;;"
+          }
+        },
+        "CustomEffectContainerTractionLost": {
+          "All": {
+            "MapsStore": "0;1;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;1;100;Back H.R.;;|7;1;100;Back H.L.;;"
+          }
+        },
+        "CustomEffectContainerQ-WheelSlip": {
+          "All": {
+            "MapsStore": "0;1;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;1;100;Back H.R.;;|7;1;100;Back H.L.;;"
+          }
+        },
+        "CustomEffectContainerClutch-40%": {
+          "All": {
+            "MapsStore": "0;1;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;1;100;Back H.R.;;|7;1;100;Back H.L.;;"
+          }
+        },
+        "ABSActiveEffectContainer": {
+          "All": {
+            "MapsStore": "0;1;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;1;100;Back H.R.;;|7;1;100;Back H.L.;;"
+          }
+        },
+        "TCActiveEffectContainer": {
+          "All": {
+            "MapsStore": "0;1;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;1;100;Back H.R.;;|7;1;100;Back H.L.;;"
+          }
+        }
+      },
+      "GlobalChannelsSettings": {
+        "Custom": {
+          "MapsStore": "0;1;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;1;100;Back H.R.;;|7;1;100;Back H.L.;;|8;0;100;;;|9;0;100;;;|10;0;100;;;|11;0;100;;;"
+        }
+      },
       "Name": "ForceFeel Pad / Next Level Racing HF8 Haptic Gaming Pad",
       "OutputId": "ForceFeel",
       "InstanceId": "d4b2c53e-31bb-4c4e-800a-2f96ab03a7b9",
@@ -231,10 +271,10 @@
           "ContainerId": "46da4bf4-31fa-4c99-9bca-b65ff3d85654",
           "AggregationMode": "Left/Right",
           "Filter": {
-            "GammaValue": 3.0,
-            "InputGain": 160.0,
+            "GammaValue": 4.0,
+            "InputGain": 120.0,
             "MinimumForce": 15,
-            "Threshold": 55,
+            "Threshold": 70,
             "FilterType": "GammaFilter"
           },
           "Output": {
@@ -251,10 +291,10 @@
           "ContainerId": "8feaf2c3-d893-4b9d-b7ee-3ad163ed930b",
           "AggregationMode": "Mono",
           "Filter": {
-            "GammaValue": 5.0,
-            "InputGain": 160.0,
+            "GammaValue": 4.0,
+            "InputGain": 120.0,
             "MinimumForce": 15,
-            "Threshold": 55,
+            "Threshold": 70,
             "FilterType": "GammaFilter"
           },
           "Output": {

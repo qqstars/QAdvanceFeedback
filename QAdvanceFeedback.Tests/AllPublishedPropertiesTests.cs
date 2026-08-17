@@ -84,6 +84,51 @@ namespace QAdvanceFeedback.Tests
             Assert.Contains("Diag.GForce.LearnedDecelMaxG", diag);
         }
 
+        /// <summary>
+        /// docs\shakeit-silence-diagnosis-report.md - the resolved (gameId, carId) every learner/scale
+        /// key is keyed under, added because no prior capture could carry this at all, making the
+        /// car-id-fragmentation question (the owner's own Parameters.json shows the same physical F1 25
+        /// car as BOTH "Sauber" and "F1 Generic") impossible to investigate directly from a session log.
+        /// </summary>
+        [Fact]
+        public void Diagnostic_names_include_the_resolved_game_and_car_id()
+        {
+            string[] diag = AllPublishedProperties.DiagnosticNames().ToArray();
+
+            Assert.Contains("Diag.GameId", diag);
+            Assert.Contains("Diag.CarId", diag);
+        }
+
+        [Fact]
+        public void Diagnostics_off_never_publishes_the_resolved_game_and_car_id()
+        {
+            string[] names = AllPublishedProperties.AllNames(diagnosticsEnabled: false).ToArray();
+            Assert.DoesNotContain("Diag.GameId", names);
+            Assert.DoesNotContain("Diag.CarId", names);
+        }
+
+        /// <summary>
+        /// SHAKEIT-SILENCE FALLBACK (docs\shakeit-silence-diagnosis-report.md) - the degraded-state
+        /// diagnostic that makes "the configured source went quiet, we substituted Raw" distinguishable
+        /// from "genuinely no lockup", per this task's own explicit requirement.
+        /// </summary>
+        [Fact]
+        public void Diagnostic_names_include_the_source_fallback_active_flags()
+        {
+            string[] diag = AllPublishedProperties.DiagnosticNames().ToArray();
+
+            Assert.Contains("Diag.Lock.SourceFallbackActive", diag);
+            Assert.Contains("Diag.Slip.SourceFallbackActive", diag);
+        }
+
+        [Fact]
+        public void Diagnostics_off_never_publishes_the_source_fallback_active_flags()
+        {
+            string[] names = AllPublishedProperties.AllNames(diagnosticsEnabled: false).ToArray();
+            Assert.DoesNotContain("Diag.Lock.SourceFallbackActive", names);
+            Assert.DoesNotContain("Diag.Slip.SourceFallbackActive", names);
+        }
+
         /// <summary>docs\branch-dispatch-and-source-keyed-learning-report.md - which of SimHub's own
         /// nine decompiled branches Layer 3 ran this frame, per channel, gated behind diagnostics exactly
         /// like every other internal-state name in this group.</summary>

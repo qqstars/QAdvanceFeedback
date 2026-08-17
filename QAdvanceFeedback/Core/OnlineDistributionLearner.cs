@@ -51,36 +51,81 @@ namespace QAdvanceFeedback.Core
         private double _sum;
         private int _count;
 
+        // ---- WEIGHTED, DECAYING AVERAGE (docs\regression-fix-report.md - the sample-threshold
+        // follow-up). Only <see cref="KeyedScaleLearner"/>'s PRIMARY (physically-anchored) tier
+        // (`_physicalAnchor`) ever calls the weighted overload of <see cref="AddValue"/> - the SECONDARY
+        // (percentile) tier still calls the unweighted one (weight 1.0), and neither `_histogram`/
+        // `_count` above nor <see cref="GetPercentile"/> are touched by any of this - they still answer
+        // exactly as before. `_decayedWeightedSum`/`_decayedWeight` track a DECAYING weighted mean (an
+        // exponential moving average, not a plain cumulative one): a NEW observation with its own trust
+        // WEIGHT (see <see cref="Normalized.GripLearner.HotEvidenceWeight"/>) always has a bounded,
+        // non-vanishing influence on <see cref="GetAverage"/>, so the estimate keeps refining - and
+        // keeps tracking a genuine change (different tyres, track evolution) - rather than becoming
+        // ever more resistant to new evidence the longer a session runs, which a plain unweighted mean
+        // over an unbounded history would do. For a CONSTANT input series (every existing test/caller
+        // that feeds the same value repeatedly), this is mathematically IDENTICAL to the old plain mean
+        // from the very first sample - both numerator and denominator carry the same geometric decay
+        // factor, which cancels out exactly - so this is a behaviour-preserving change for every
+        // pre-existing caller, and only visibly differs once the fed value actually changes over time.
+        private double _decayedWeightedSum;
+        private double _decayedWeight;
+
+        /// <summary>Decay applied to the WEIGHTED average (see above) on every
+        /// <see cref="AddValue(double,double)"/> call - deliberately the SAME rate
+        /// <see cref="Normalized.GripLearner"/>'s own decaying peak uses
+        /// (<c>GripLearner.ForgetPerSample</c>), for the same reason: slow enough that ordinary
+        /// per-braking-zone variance does not visibly wander the estimate, fast enough that a genuine,
+        /// sustained condition change is reflected within a handful of braking zones rather than never.</summary>
+        private const double WeightedAverageDecayPerSample = 0.997;
+
         /// <summary>Total qualifying samples folded in so far (used by the caller to decide whether to
         /// keep feeding this instance at all, mirroring SimHub's own <c>CalibrationPointsAdded &lt;=
         /// 7000</c> gate at the CALL site rather than inside <see cref="AddValue"/> - see
-        /// <c>RawCalculatorEngine</c>'s own feeding logic).</summary>
+        /// <c>RawCalculatorEngine</c>'s own feeding logic). A RAW count of every fold-in, regardless of
+        /// its own weight - the weight governs how much a value CONTRIBUTES to the average, not whether
+        /// it counts as "an observation happened" for this purpose or for <see cref="ColdWarmBlend.HotWeight"/>'s
+        /// own separate, downstream count term.</summary>
         public int Count => _count;
+
+        /// <summary>
+        /// Folds one FULLY-TRUSTED (weight 1.0) observation in - see
+        /// <see cref="AddValue(double,double)"/> for the weighted overload every pre-existing caller's
+        /// behaviour is unaffected by using.
+        /// </summary>
+        public void AddValue(double value) => AddValue(value, 1.0);
 
         /// <summary>
         /// Folds one observation in (SimHub's own convention: the DISTRIBUTION is built from the
         /// absolute value - see <c>CalibrationData.AddValue</c>'s own <c>Math.Abs</c>). Ignored outright
-        /// if non-finite. Values are rounded to 4 decimal places before bucketing (bounds the histogram's
-        /// own memory for a long session without materially changing any percentile a caller would
-        /// observe - verified in the same replay cited in this class's own remarks).
+        /// if non-finite, or if <paramref name="weight"/> is non-finite/non-positive (a caller bug, not
+        /// something worth corrupting the average over). Values are rounded to 4 decimal places before
+        /// bucketing (bounds the histogram's own memory for a long session without materially changing
+        /// any percentile a caller would observe - verified in the same replay cited in this class's own
+        /// remarks). <paramref name="weight"/> only affects <see cref="GetAverage"/>'s own decaying
+        /// weighted mean (see this class's own remarks) - the histogram/percentile path always counts a
+        /// fold-in as exactly one sample, regardless of its weight.
         /// </summary>
-        public void AddValue(double value)
+        public void AddValue(double value, double weight)
         {
             if (!ClampMath.IsFinite(value)) return;
+            if (!ClampMath.IsFinite(weight) || weight <= 0.0) return;
             double abs = Math.Abs(value);
             _sum += abs;
             _count++;
+
+            _decayedWeightedSum = _decayedWeightedSum * WeightedAverageDecayPerSample + weight * abs;
+            _decayedWeight = _decayedWeight * WeightedAverageDecayPerSample + weight;
 
             double bucket = Math.Round(abs, 4);
             _histogram.TryGetValue(bucket, out int existing);
             _histogram[bucket] = existing + 1;
         }
 
-        /// <summary>Plain mean of every |value| folded in so far - null before the first observation
-        /// (mirrors <c>CalibrationData.GetAverage</c>'s own <c>Count == 0 -&gt; null</c>, no minimum
-        /// sample requirement beyond that - <see cref="GetPercentile"/> is the one with a maturity
-        /// floor, not this).</summary>
-        public double? GetAverage() => _count == 0 ? (double?)null : _sum / _count;
+        /// <summary>Decaying WEIGHTED mean of every |value| folded in so far (see this class's own
+        /// remarks) - null before the first observation, mirroring the prior plain-mean behaviour's own
+        /// <c>Count == 0 -&gt; null</c> (<see cref="GetPercentile"/> is the one with a maturity floor,
+        /// not this).</summary>
+        public double? GetAverage() => _decayedWeight <= 1e-12 ? (double?)null : _decayedWeightedSum / _decayedWeight;
 
         /// <summary>
         /// Nearest-rank percentile (0-100) over every STRICTLY POSITIVE bucketed value observed so far
@@ -119,6 +164,8 @@ namespace QAdvanceFeedback.Core
             _histogram.Clear();
             _sum = 0.0;
             _count = 0;
+            _decayedWeightedSum = 0.0;
+            _decayedWeight = 0.0;
         }
     }
 }

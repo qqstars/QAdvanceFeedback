@@ -94,7 +94,17 @@ namespace QAdvanceFeedback.Core.Localization
             ["Curve.Preset.Custom"] = "Custom",
             ["Curve.Column.RawValue"] = "raw value",
             ["Curve.Column.OutputValue"] = "output value",
-            ["Curve.LiveOutputFormat"] = "at this input, the curve currently sends {0}",
+            // Replaces the old per-row LIVE readout ("at this input, the curve currently sends
+            // {0}") - redundant with the spinner textboxes right next to it, which already show the
+            // current values. Instead states the SHIPPED DEFAULT input->output mapping for this
+            // anchor, which the spinners cannot show once a driver has edited them. The live value is
+            // NOT dropped outright, though: Curve.Anchor.LiveDiffersFormat is appended alongside it
+            // whenever the curve's actual output at the driver's own typed input differs from what
+            // they typed (an anchor at/below Start, at/above End, or reordered past a neighbour gets
+            // dropped/clamped by OutputProjector - see its own remarks) - see
+            // docs\curve-help-text-report.md for why a silent restatement was rejected.
+            ["Curve.Anchor.DefaultFormat"] = "under default input value {0}, curve will return {1}",
+            ["Curve.Anchor.LiveDiffersFormat"] = "note: the curve actually returns {0} here, not what you typed - it may be clamped or dropped",
 
             ["Curve.StartPoint.Label"] = "Start value:",
             ["Curve.StartPoint.AlwaysZero"] = "(always 0)",
@@ -112,18 +122,18 @@ namespace QAdvanceFeedback.Core.Localization
             // locked/spinning. The anchor INPUT positions (30/60/80/100) are shared by both channels;
             // only the OUTPUT feel differs (Slip is gentler throughout, matching its own curve).
             ["Curve.Lock.AnchorNote"] = "Each row reads \"when the lock value reaches this raw value, send this output\". Curve (the default) sends 30 to 10, 60 to 30 and 80 to 80 - almost nothing during light braking, a clear buzz in the ideal zone, then a hard ramp as the tyre approaches lock.",
-            ["Curve.Lock.StartPoint.Desc"] = "Nothing below this point produces any output. Raise it if light braking buzzes more than you want.",
+            ["Curve.Lock.StartPoint.Desc"] = "Nothing below this point produces any output. Raise it if light braking buzzes more than you want. Ships at {0} by default.",
             ["Curve.Lock.Slightly.Desc"] = "You're just entering the tyre's working range - below this you still have margin, above this you're using real grip. Keep this low to feel nothing during ordinary, gentle braking.",
             ["Curve.Lock.Ideal.Desc"] = "You're at the edge of the ideal braking zone - maximum effective braking, right before the wheel starts to lock. This is the sweet spot: hold the brake here for the fastest stop.",
             ["Curve.Lock.Critical.Desc"] = "The wheel is right on the verge of locking - not locked yet, but only moments away. Ease off the brake immediately.",
-            ["Curve.Lock.EndPoint.Desc"] = "At and above this point the wheel is fully locked and sliding - the output is always full strength.",
+            ["Curve.Lock.EndPoint.Desc"] = "At and above this point the wheel is fully locked and sliding - the output is always full strength. Ships at {0} by default.",
 
             ["Curve.Slip.AnchorNote"] = "Each row reads \"when the slip value reaches this raw value, send this output\". Curve (the default) sends 30 to 8, 60 to 20 and 80 to 75 - the same band boundaries as the lock curve, but gentler throughout: almost nothing during gentle throttle, a clear cue in the ideal zone, then a hard ramp as the tyre approaches the traction limit.",
-            ["Curve.Slip.StartPoint.Desc"] = "Nothing below this point produces any output. Raise it if light throttle buzzes more than you want.",
+            ["Curve.Slip.StartPoint.Desc"] = "Nothing below this point produces any output. Raise it if light throttle buzzes more than you want. Ships at {0} by default.",
             ["Curve.Slip.Slightly.Desc"] = "The tyre is just starting to work under power - below this you still have margin, above this you're really putting power down. Keep this low to feel nothing under gentle, controlled throttle.",
             ["Curve.Slip.Ideal.Desc"] = "You're at the edge of the ideal traction zone - putting down maximum power, right before the tyre starts to spin. This is the sweet spot for the fastest exit without wheelspin.",
             ["Curve.Slip.Critical.Desc"] = "The wheel is right on the verge of spinning - not spinning yet, but only moments away. Ease off the throttle immediately.",
-            ["Curve.Slip.EndPoint.Desc"] = "At and above this point the wheel is fully spinning and drive is being wasted - the output is always full strength.",
+            ["Curve.Slip.EndPoint.Desc"] = "At and above this point the wheel is fully spinning and drive is being wasted - the output is always full strength. Ships at {0} by default.",
 
             // ---- Pulse ----
             ["Pulse.Enable"] = "Pulse instead of holding flat at maximum",

@@ -119,8 +119,8 @@ namespace QAdvanceFeedback.Core.Normalized
         /// surfaceBucket)'s own learned peak - see <see cref="GripLearner.Ratio"/>. Creates a fresh (or
         /// legacy-seeded) learner for a key seen for the very first time, mirroring
         /// <see cref="Observe"/>.</summary>
-        public double Ratio(string gameId, string carId, double magnitudeG, string sourceIdentity = "", string surfaceBucket = "")
-            => GetOrCreate(gameId, carId, sourceIdentity, surfaceBucket).Ratio(magnitudeG);
+        public double Ratio(string gameId, string carId, double magnitudeG, string sourceIdentity = "", string surfaceBucket = "", bool applyColdStartCeiling = true)
+            => GetOrCreate(gameId, carId, sourceIdentity, surfaceBucket).Ratio(magnitudeG, applyColdStartCeiling);
 
         /// <summary>Folds one qualifying observation into this (gameId, carId, sourceIdentity,
         /// surfaceBucket)'s own learner - see <see cref="GripLearner.Observe"/>.</summary>

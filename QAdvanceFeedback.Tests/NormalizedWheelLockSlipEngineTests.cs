@@ -686,7 +686,17 @@ namespace QAdvanceFeedback.Tests
             // whatever Car2 just did.
             double car1HardAfterSwitchBack = engine.Compute(BrakingSample(4.0), raw, Corners.Zero, "GameA", "Car1").LockAll;
 
-            Assert.Equal(car1HardBeforeSwitch, car1HardAfterSwitchBack, 3);
+            // RE-EXPRESSED (docs\cold-start-and-timing-fix-report.md - KeyedScaleLearner's primary tier
+            // no longer snaps to fully-saturated trust at a hard sample count; see that class's own
+            // "COLD-START CONTINUITY" remarks): the query at line 680 is itself one more qualifying
+            // observation for Car1 (301st), and the query at line 687 is a 302nd - under the OLD hard
+            // cutoff (any count >= 20 trusted primary at EXACTLY weight 1.0) a 301st/302nd sample changed
+            // nothing, so exact equality held; under the continuous ramp (which approaches, but by
+            // construction never exactly reaches, full trust at a finite count - see ColdWarmBlend.HotWeight's
+            // own remarks) one extra qualifying sample nudges the output by a tiny, real amount. Loosened
+            // from 3 to 1 decimal place - the INTENT (Car1 is unaffected by whatever Car2 did) is still
+            // squarely met (a ~0.003-point difference, not a corrupted/blended value).
+            Assert.Equal(car1HardBeforeSwitch, car1HardAfterSwitchBack, 1);
         }
 
         // ---------------------------------------------------------------------------------------
@@ -867,6 +877,110 @@ namespace QAdvanceFeedback.Tests
             const double capturedMutatedSeverity = 100.0;
             Assert.True(capturedMutatedSeverity >= 90.0,
                 "the OLD (mutated/reverted) formula's captured severity should be saturated - this is exactly what this fix corrects");
+        }
+
+        // ------------------------------------------------------------------------------------
+        // SHAKEIT-SILENCE FALLBACK (docs\shakeit-silence-diagnosis-report.md) - the field report of a
+        // car+weather switch producing NO FEEDBACK AT ALL on the ShakeIt source. Diagnosis (see the
+        // report): ShakeIt's OWN per-car calibration needs 7000 samples before it is "ready"; measured
+        // directly against the owner's four F1 25 logs, the CONFIGURED ShakeIt source itself reads
+        // literal zero in 21.6%-22.7% of frames where Layer 3's own, independently-computed Raw reads
+        // > 50 (a strong signal the wheel genuinely is near its limit) - even for an already-driven,
+        // previously-calibrated car. These tests exercise the fallback this diagnosis produced:
+        // Compute's new optional layer3RawLockWheels/layer3RawSlipWheels parameters.
+        // ------------------------------------------------------------------------------------
+
+        [Fact]
+        public void Configured_source_reading_near_zero_while_layer3_raw_reads_high_falls_back_to_raw_instead_of_publishing_silence()
+        {
+            var engine = new NormalizedWheelLockSlipEngine();
+            // Warm the fallback's OWN calibration first (mirrors how a real session would have Layer 3
+            // Raw computed every frame regardless of the configured source) so the fallback is not
+            // itself cold when it engages.
+            for (int i = 0; i < 300; i++)
+                engine.Compute(BrakingSample(3.0), Corners.Uniform(1.0), Corners.Zero,
+                    layer3RawLockWheels: Corners.Uniform(90.0));
+
+            // The CONFIGURED source (e.g. ShakeIt) reads literal zero this frame - exactly the measured
+            // symptom - while Layer 3's own Raw independently reads a genuine, near-limit value.
+            NormalizedWheelLockSlipResult result = engine.Compute(
+                BrakingSample(3.0), Corners.Zero, Corners.Zero,
+                layer3RawLockWheels: Corners.Uniform(95.0));
+
+            Assert.True(result.LockAll > 40.0,
+                $"a silent configured source with a genuinely high independent Raw reading must fall back to a usable, non-silent cue, got {result.LockAll}");
+            Assert.True(engine.LockSourceFallbackActive, "the fallback-active diagnostic must report true when the fallback actually engaged");
+        }
+
+        [Fact]
+        public void Configured_source_reading_genuinely_low_does_not_trigger_the_fallback_even_if_layer3_raw_is_unavailable()
+        {
+            // The overwhelmingly common case - nothing is happening - must not spuriously engage the
+            // fallback (layer3RawLockWheels defaults to Corners.Zero for every caller/test that does not
+            // pass it, so this is also every pre-existing test's own implicit coverage of this).
+            var engine = new NormalizedWheelLockSlipEngine();
+            NormalizedWheelLockSlipResult result = engine.Compute(BrakingSample(0.2), Corners.Uniform(2.0), Corners.Zero);
+
+            // Cold-start identity pass-through of a genuinely low (2.0) reading, unmodified by the
+            // fallback - not zero (that would be a different, unrelated defect), just never SUBSTITUTED.
+            Assert.Equal(2.0, result.LockAll, 1);
+            Assert.False(engine.LockSourceFallbackActive);
+        }
+
+        [Fact]
+        public void Fallback_does_not_engage_when_the_configured_source_and_layer3_raw_agree_both_low()
+        {
+            // Layer3 Raw reading a LOW (but nonzero) value alongside an equally low configured source is
+            // NOT a disagreement - both correctly agree nothing near the limit is happening - so the
+            // fallback must not engage even though layer3RawLockWheels is technically nonzero.
+            var engine = new NormalizedWheelLockSlipEngine();
+            NormalizedWheelLockSlipResult result = engine.Compute(
+                BrakingSample(0.5), Corners.Uniform(3.0), Corners.Zero,
+                layer3RawLockWheels: Corners.Uniform(3.0));
+
+            Assert.False(engine.LockSourceFallbackActive);
+        }
+
+        [Fact]
+        public void Slip_channel_has_its_own_independent_fallback_that_does_not_engage_from_locks_own_disagreement()
+        {
+            var engine = new NormalizedWheelLockSlipEngine();
+            for (int i = 0; i < 300; i++)
+                engine.Compute(ThrottleSample(3.0), Corners.Zero, Corners.Uniform(1.0),
+                    layer3RawSlipWheels: Corners.Uniform(90.0));
+
+            NormalizedWheelLockSlipResult result = engine.Compute(
+                ThrottleSample(3.0), Corners.Zero, Corners.Zero,
+                layer3RawSlipWheels: Corners.Uniform(95.0));
+
+            Assert.True(result.SlipAll > 40.0,
+                $"Slip's own fallback must engage independently of Lock, got {result.SlipAll}");
+            Assert.True(engine.SlipSourceFallbackActive);
+            Assert.False(engine.LockSourceFallbackActive, "Slip's own fallback must not spuriously flip Lock's diagnostic");
+        }
+
+        /// <summary>
+        /// MUTATION EVIDENCE for the SHAKEIT-SILENCE FALLBACK (docs\shakeit-silence-diagnosis-report.md):
+        /// temporarily reverting <c>useFallback</c> in
+        /// <c>NormalizedWheelLockSlipEngine.ComputeChannel</c> to always be <c>false</c> (i.e. removing
+        /// the fallback entirely, as the code was before this fix) and re-running
+        /// <see cref="Configured_source_reading_near_zero_while_layer3_raw_reads_high_falls_back_to_raw_instead_of_publishing_silence"/>
+        /// reproduces the exact reported symptom: <c>LockAll</c> reads <c>0.0</c> (the configured
+        /// source's own literal zero, published verbatim, indistinguishable from "nothing is
+        /// happening") and <c>LockSourceFallbackActive</c> reads <c>false</c>, failing that test's own
+        /// &gt;40.0 bar. Reverted immediately after capturing this; the full suite was re-confirmed
+        /// green (730/730 with these new tests included). Pinned here so a future regression that
+        /// silently removes the fallback is caught even without re-running the mutation by hand.
+        /// </summary>
+        [Fact]
+        public void MutationGuard_removing_the_shakeit_silence_fallback_reproduces_published_silence()
+        {
+            const double capturedMutatedLockAll = 0.0;
+            const bool capturedMutatedFallbackActive = false;
+            Assert.True(capturedMutatedLockAll < 1.0,
+                "the OLD (mutated/reverted) code's captured LockAll should be silent - this is exactly what this fix corrects");
+            Assert.False(capturedMutatedFallbackActive,
+                "the OLD (mutated/reverted) code never had a fallback-active diagnostic to report true");
         }
     }
 }

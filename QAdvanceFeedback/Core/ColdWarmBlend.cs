@@ -73,16 +73,75 @@ namespace QAdvanceFeedback.Core
         public static double HotWeight(int hotCount, double hotCoefficientOfVariation)
         {
             if (hotCount <= 0) return 0.0;
-            if (!ClampMath.IsFinite(hotCoefficientOfVariation) || hotCoefficientOfVariation < 0.0)
-                hotCoefficientOfVariation = double.PositiveInfinity; // undefined/unstable -> treat as maximally dispersed (bias toward cold)
-
             double countTerm = hotCount / (hotCount + SampleSaturationK);
-            double dispersionTerm = double.IsPositiveInfinity(hotCoefficientOfVariation)
-                ? 0.0
-                : 1.0 / (1.0 + hotCoefficientOfVariation / DispersionHalfLifeCv);
-
-            return ClampMath.Clamp(countTerm * dispersionTerm, 0.0, 1.0);
+            return ClampMath.Clamp(countTerm * DispersionQuality(hotCoefficientOfVariation), 0.0, 1.0);
         }
+
+        /// <summary>
+        /// THE DISPERSION HALF of <see cref="HotWeight"/>, factored out so
+        /// <see cref="ConcaveHotWeight"/> can reuse the EXACT SAME dispersion-quality machinery with a
+        /// DIFFERENT count-confidence shape, rather than re-deriving or duplicating it
+        /// (docs\regression-fix-report.md - "reuse the existing dispersion-weighted mechanism rather than
+        /// building a second confidence notion"). 0 (no trust) for an undefined/unstable coefficient of
+        /// variation (fewer than 2 samples, or a near-zero mean) - biases toward cold, the conservative
+        /// direction, exactly as <see cref="HotWeight"/> always has.
+        /// </summary>
+        public static double DispersionQuality(double coefficientOfVariation)
+        {
+            if (!ClampMath.IsFinite(coefficientOfVariation) || coefficientOfVariation < 0.0) return 0.0;
+            if (double.IsPositiveInfinity(coefficientOfVariation)) return 0.0;
+            return 1.0 / (1.0 + coefficientOfVariation / DispersionHalfLifeCv);
+        }
+
+        /// <summary>Default concave exponent for <see cref="ConcaveCountConfidence"/>/<see cref="ConcaveHotWeight"/>
+        /// - see those methods' own remarks for the derivation.</summary>
+        public const double ConcaveCountGamma = 2.0;
+
+        /// <summary>
+        /// CONCAVE COUNT CONFIDENCE (docs\regression-fix-report.md - the owner's own concrete blend
+        /// specification): <c>1 - (1 - x)^gamma</c> where <c>x = min(count / scaleSamples, 1)</c> - a
+        /// concave (front-loaded) ramp so the FIRST evidence counts for MORE than a proportional share,
+        /// rather than a straight line from 0 to 1. The owner's own worked anchors (10%%-&gt;~18%%,
+        /// 30%%-&gt;~60%%, 50%%-&gt;~75%%) are matched closely by <c>gamma=2</c>
+        /// (<see cref="ConcaveCountGamma"/>): f(0.1)=0.19, f(0.3)=0.51, f(0.5)=0.75 - the 30%% point runs
+        /// a bit under their own rough suggestion (0.51 vs ~0.60) but the 10%% and 50%% anchors match
+        /// almost exactly, and <c>gamma=2</c> is the simplest concave shape (a plain parabola in
+        /// <c>1-x</c>) that is easy to reason about, name, and unit-test directly - preferred over
+        /// hand-fitting a shape to all three anchors simultaneously, which would be exactly the kind of
+        /// over-tuned-to-one-example curve this task's own "no game-specific constants" principle argues
+        /// against.
+        /// <para/>
+        /// <paramref name="scaleSamples"/> IS A SOFT SCALE REFERENCE, NOT A GATE (the owner's own explicit
+        /// distinction): unlike the retired hard maturity bars (200, then 60), reaching this count is
+        /// NOT a requirement for the mechanism to contribute at all - it engages from the very FIRST
+        /// sample (<c>x&gt;0</c> already gives a non-zero <c>f(x)</c>) and simply keeps approaching 1.0
+        /// (never reaching it at any finite count, so this stays continuous with the dispersion-quality
+        /// factor forever) the more evidence accumulates. A title whose sessions never reach anywhere
+        /// close to <paramref name="scaleSamples"/> still gets a REAL, if modest, weight from whatever
+        /// evidence it does accumulate - see <see cref="ConcaveHotWeight"/>'s own remarks.
+        /// </summary>
+        public static double ConcaveCountConfidence(int count, double scaleSamples, double gamma = ConcaveCountGamma)
+        {
+            if (count <= 0) return 0.0;
+            double effectiveScale = scaleSamples > 0.0 && ClampMath.IsFinite(scaleSamples) ? scaleSamples : 200.0;
+            double x = ClampMath.Clamp(count / effectiveScale, 0.0, 1.0);
+            return 1.0 - Math.Pow(1.0 - x, gamma);
+        }
+
+        /// <summary>
+        /// THE full continuous confidence weight for a mechanism that (per the owner's own explicit
+        /// requirement) must NOT be gated by any absolute sample count: <see cref="ConcaveCountConfidence"/>
+        /// (a CONCAVE, front-loaded count term - see that method's own remarks for why front-loaded, not
+        /// linear) MULTIPLIED by <see cref="DispersionQuality"/> (the SAME dispersion-quality machinery
+        /// <see cref="HotWeight"/> already uses - reused, not duplicated). A hundred scattered, noisy
+        /// observations therefore earn LESS trust than a handful of tight, consistent ones - the same
+        /// "if the hot data will cause more noise, prefer cold data only" principle
+        /// <see cref="HotWeight"/> already applies, now combined with a concave (not linear) count shape
+        /// so the FIRST couple of qualifying observations already move a blend meaningfully rather than
+        /// needing to approach the count scale before mattering at all.
+        /// </summary>
+        public static double ConcaveHotWeight(int count, double coefficientOfVariation, double scaleSamples, double gamma = ConcaveCountGamma)
+            => ClampMath.Clamp(ConcaveCountConfidence(count, scaleSamples, gamma) * DispersionQuality(coefficientOfVariation), 0.0, 1.0);
 
         /// <summary>Linear blend of <paramref name="cold"/> and <paramref name="hot"/> by
         /// <paramref name="hotWeight"/> (see <see cref="HotWeight"/>) - at weight 0 this is EXACTLY
