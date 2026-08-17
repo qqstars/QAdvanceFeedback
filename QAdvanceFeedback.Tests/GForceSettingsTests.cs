@@ -208,7 +208,7 @@ namespace QAdvanceFeedback.Tests
             var settings = new GForceSettings();
             Assert.Equal(0.15, settings.SustainTimeConstantSeconds, 6);
             Assert.Equal(0.08, settings.TransientTimeConstantSeconds, 6);
-            Assert.Equal(1.5, settings.TransientGain, 6);
+            Assert.Equal(1.2, settings.TransientGain, 6);
         }
 
         [Fact]
@@ -238,19 +238,22 @@ namespace QAdvanceFeedback.Tests
         // ---------------------------------------------------------------------------------------
 
         [Fact]
-        public void Shake_settings_now_default_to_on_3Hz_and_scale_1_5()
+        public void Shake_settings_now_default_to_on_10Hz_and_scale_1_5()
         {
-            // Floor 5->1 Hz, default 5->3 Hz, and both scale defaults 1.0->1.5 (docs\shake-tuning-report.md)
-            // are legitimate default/floor CHANGES per driver feedback, not weakened assertions.
-            // IntegrateWheelLockAndSlip itself later flipped OFF->ON (docs\integrate-default-report.md) -
-            // also a legitimate, deliberate default change: the owner wants a fresh install to feel this
-            // without hunting for the toggle. It stays behaviourally inert with no lock/slip signal wired
-            // up (amplitude is gForceValue * (wheelValue/100) * scale, so wheelValue=0 gives a zero-width
-            // band) - see GForceEngineShakeTests' "Wheel_value_of_zero..." coverage for that guarantee.
+            // Floor 5->1 Hz, default 5->3 Hz (docs\shake-tuning-report.md), then 3->10 Hz
+            // (docs\shake-frequency-default-report.md - the owner tried 3 Hz on real hardware and
+            // reports 10 Hz feels much better; the 1-20 Hz bounds themselves are unchanged), and both
+            // scale defaults 1.0->1.5 (docs\shake-tuning-report.md) are legitimate default/floor
+            // CHANGES per driver feedback, not weakened assertions. IntegrateWheelLockAndSlip itself
+            // later flipped OFF->ON (docs\integrate-default-report.md) - also a legitimate, deliberate
+            // default change: the owner wants a fresh install to feel this without hunting for the
+            // toggle. It stays behaviourally inert with no lock/slip signal wired up (amplitude is
+            // gForceValue * (wheelValue/100) * scale, so wheelValue=0 gives a zero-width band) - see
+            // GForceEngineShakeTests' "Wheel_value_of_zero..." coverage for that guarantee.
             var settings = new GForceSettings();
 
             Assert.True(settings.IntegrateWheelLockAndSlip);
-            Assert.Equal(3.0, settings.ShakeFrequencyHz, 6);
+            Assert.Equal(10.0, settings.ShakeFrequencyHz, 6);
             Assert.Equal(1.5, settings.WheelLockShakeScale, 6);
             Assert.Equal(1.5, settings.WheelSlipShakeScale, 6);
         }

@@ -6,6 +6,7 @@ using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.GForce;
 using QAdvanceFeedback.Core.Projection;
 using QAdvanceFeedback.Core.Normalized;
+using QAdvanceFeedback.Core.RawCalculator;
 using QAdvanceFeedback.Settings;
 using SimHub.Plugins;
 
@@ -42,15 +43,10 @@ namespace QAdvanceFeedback
 
         private QAdvanceFeedbackSettings _settings;
 
-        // Layers 2/3 are resolved at RUNTIME, not constructed directly: this repository withholds its
-        // own concrete SimHub telemetry adapter and legacy-algorithm implementations under
-        // ..\Private\QAdvanceFeedback\ (gitignored - see ..\Private\README.md), so a fresh open-source
-        // clone still compiles and runs, just with these two channels inert (see AlgorithmFactory's
-        // own remarks and InertTelemetryAdapter/InertLegacyWheelLockSlipEngine) until a third party
-        // supplies their own Private\QAdvanceFeedback\ implementation. Everything else in this class
-        // is unaffected.
-        private readonly ITelemetryAdapter _adapter = AlgorithmFactory.CreateTelemetryAdapter();
-        private readonly ILegacyWheelLockSlipEngine _legacyEngine = AlgorithmFactory.CreateLegacyEngine();
+        // Layer 2 (SimHub telemetry adapter) and Layer 3 (Raw calculator engine) - see
+        // docs\architecture.md for the full layer model.
+        private readonly ITelemetryAdapter _adapter = new SimHubTelemetryAdapter();
+        private readonly ILegacyWheelLockSlipEngine _legacyEngine = new RawCalculatorEngine();
         private readonly NormalizedWheelLockSlipEngine _normalizedEngine = new NormalizedWheelLockSlipEngine();
         private readonly GForceEngine _gforceEngine = new GForceEngine();
         private readonly WheelSourceResolver _sourceResolver = new WheelSourceResolver();
@@ -90,19 +86,50 @@ namespace QAdvanceFeedback
             string legacyParametersPath = pluginManager.GetCommonStoragePath(LegacyParametersFileName);
             _runtimeStore = new RuntimeStore(parametersPath, legacyParametersPath, logInfo: LogInfo, logWarning: LogWarning);
 
-            // Per-(game,car) keyed Lock/Slip learned parameters (see KeyedGripLearner) - load
-            // whatever was already persisted for every key, then seed the pre-per-car legacy global
-            // value (if any) as the cold-start default for the first brand-new key each channel
-            // encounters, rather than discarding it outright.
+            // Per-(game,car,source) keyed Lock/Slip learned parameters (see KeyedGripLearner,
+            // docs\branch-dispatch-and-source-keyed-learning-report.md "Part 2") - load whatever was
+            // already persisted for every key, MIGRATING any pre-source-keying (game,car)-only key to
+            // the new (game,car,source) shape first (GripLearnerKeyMigration - never discards a stint's
+            // worth of learning silently), then seed the pre-per-car legacy global value (if any) as
+            // the cold-start default for the first brand-new key each channel encounters.
             _runtimeStore.LoadLockLearners(out var lockLearnerData);
-            _normalizedEngine.LockLearners.ImportAll(lockLearnerData);
+            _normalizedEngine.LockLearners.ImportAll(GripLearnerKeyMigration.MigrateLegacyKeys(lockLearnerData));
             _runtimeStore.LoadSlipLearners(out var slipLearnerData);
-            _normalizedEngine.SlipLearners.ImportAll(slipLearnerData);
+            _normalizedEngine.SlipLearners.ImportAll(GripLearnerKeyMigration.MigrateLegacyKeys(slipLearnerData));
 
             if (_runtimeStore.TryGetLegacyLockSeed(out double legacyLockPeak, out int legacyLockSamples))
                 _normalizedEngine.LockLearners.SeedLegacy(legacyLockPeak, legacyLockSamples);
             if (_runtimeStore.TryGetLegacySlipSeed(out double legacySlipPeak, out int legacySlipSamples))
                 _normalizedEngine.SlipLearners.SeedLegacy(legacySlipPeak, legacySlipSamples);
+
+            // COLD/WARM PERSISTENCE (telemetry-integrity pass, item 3, RuntimeDocument Version 3) - the
+            // Raw-side per-source calibration learner's cold ceilings. ImportAll seeds each key's COLD
+            // reference; this session's own hot evidence (dispersion-weighted) then blends with it live -
+            // see KeyedScaleLearner.PublishedCeiling/PersistedCeiling's own remarks.
+            _runtimeStore.LoadLockScaleLearners(out var lockScaleData);
+            _normalizedEngine.LockScaleLearner.ImportAll(lockScaleData);
+            _runtimeStore.LoadSlipScaleLearners(out var slipScaleData);
+            _normalizedEngine.SlipScaleLearner.ImportAll(slipScaleData);
+
+            // COLD-START CONTINUITY AND CROSS-CAR SEEDING (RuntimeDocument Version 4,
+            // docs\cold-start-and-timing-fix-report.md) - the shared, (game,car)-only physical-limit
+            // detector that now solely gates KeyedScaleLearner's PRIMARY tier, and the per-(game,source)
+            // cross-car cold-start seed a brand-new car can start from - both previously session-scoped
+            // only (flagged, not fixed, in the f1-normalization-fix-report's own Concerns).
+            _runtimeStore.LoadLockPhysicalReference(out var lockPhysicalReferenceData);
+            _normalizedEngine.LockPhysicalReference.ImportAll(lockPhysicalReferenceData);
+            _runtimeStore.LoadSlipPhysicalReference(out var slipPhysicalReferenceData);
+            _normalizedEngine.SlipPhysicalReference.ImportAll(slipPhysicalReferenceData);
+            _runtimeStore.LoadLockScaleCrossCarSeed(out var lockScaleCrossCarSeedData);
+            _normalizedEngine.LockScaleLearner.ImportCrossCarSeeds(lockScaleCrossCarSeedData);
+            _runtimeStore.LoadSlipScaleCrossCarSeed(out var slipScaleCrossCarSeedData);
+            _normalizedEngine.SlipScaleLearner.ImportCrossCarSeeds(slipScaleCrossCarSeedData);
+
+            // PER-GAME TELEMETRY SUPPORT DETECTION (item 2, RuntimeDocument Version 3) - a title already
+            // proven (in a PREVIOUS session) to support loose-surface reporting is trusted from frame one
+            // of this one too, before this session has observed anything itself.
+            _runtimeStore.LoadSurfaceSupport(out var surfaceSupportData);
+            _normalizedEngine.SurfaceSupport.ImportAll(surfaceSupportData);
 
             _runtimeStore.LoadGForceLearners(out var accelMaxima, out var decelMaxima);
             _settings.GForce.ImportLearnedMaxima(accelMaxima, decelMaxima);
@@ -143,6 +170,17 @@ namespace QAdvanceFeedback
 
                 TelemetrySample sample = _adapter.Read(data);
 
+                // Diag.Telemetry.*/Diag.Capabilities.* (docs\telemetry-diagnostics-report.md) -
+                // diagnostics-only raw per-wheel/car-level telemetry and FeedbackCapabilities capture,
+                // added so a future capture can fit SimHub's own three candidate WheelRPS/WheelSpeed
+                // Lock branches against real numbers instead of guessing a fourth time (see
+                // docs\raw-match-rootcause-report.md §2d). Never read by anything below this line -
+                // computed unconditionally (same "always computed, gate only affects who SEES it"
+                // philosophy already used for Diag.Direction/Diag.MotionLevel/etc. further down) so it
+                // is present in the CSV export even when EnableDiagnostics itself is off.
+                RawWheelTelemetrySnapshot rawTelemetry = _adapter.CaptureRawTelemetry(data, pluginManager);
+                _publisher.UpdateRawTelemetry(sample.New, rawTelemetry);
+
                 // ---- Layer 3: legacy RPM/speed algorithm - published as-is, unaffected by any
                 // user-configured Layer 4 source below. Pedal thresholds are owner-configurable
                 // (deliberate deviation from SimHub's own hard-coded Brake>20/Throttle>40 - see
@@ -161,7 +199,9 @@ namespace QAdvanceFeedback
                 AggregationWeights lockAggregation = _settings.Lock.ToAggregationWeights();
                 AggregationWeights slipAggregation = _settings.Slip.ToAggregationWeights();
 
-                LegacyWheelLockSlipResult legacy = _legacyEngine.Compute(sample, thresholds, lockAggregation, slipAggregation);
+                // rawTelemetry (captured just above) drives the branch dispatch this frame - see
+                // WheelSlipBranchSelector/RawCalculatorEngine's own remarks.
+                LegacyWheelLockSlipResult legacy = _legacyEngine.Compute(sample, thresholds, lockAggregation, slipAggregation, rawTelemetry);
                 _publisher.UpdateRaw(legacy);
 
                 // ---- Layer 4 input selection: each of the four wheels, per channel, resolves either
@@ -187,14 +227,45 @@ namespace QAdvanceFeedback
                 // report had to, for lack of this diagnostic).
                 _publisher.UpdateSource(lockSources, slipSources, lockAggregation, slipAggregation);
 
+                // SOURCE-KEYED LEARNING (docs\branch-dispatch-and-source-keyed-learning-report.md,
+                // "Part 2"): derive each channel's own current source identity from its four per-wheel
+                // Source/ScriptType fields (SourceIdentity - a plain property name kept verbatim, an
+                // expression hashed) so KeyedGripLearner isolates a genuinely different signal's own
+                // learning session rather than silently reusing whatever was learned for a previous,
+                // differently-scaled source under the same (game,car).
+                string lockSourceIdentity = SourceIdentity.Compute(
+                    _settings.Lock.SourceFrontLeft, _settings.Lock.ScriptTypeFrontLeft.ToString(),
+                    _settings.Lock.SourceFrontRight, _settings.Lock.ScriptTypeFrontRight.ToString(),
+                    _settings.Lock.SourceRearLeft, _settings.Lock.ScriptTypeRearLeft.ToString(),
+                    _settings.Lock.SourceRearRight, _settings.Lock.ScriptTypeRearRight.ToString());
+                string slipSourceIdentity = SourceIdentity.Compute(
+                    _settings.Slip.SourceFrontLeft, _settings.Slip.ScriptTypeFrontLeft.ToString(),
+                    _settings.Slip.SourceFrontRight, _settings.Slip.ScriptTypeFrontRight.ToString(),
+                    _settings.Slip.SourceRearLeft, _settings.Slip.ScriptTypeRearLeft.ToString(),
+                    _settings.Slip.SourceRearRight, _settings.Slip.ScriptTypeRearRight.ToString());
+
                 // TRIGGER THRESHOLD (owner-requested restructure - docs\lock-and-animation-report.md):
                 // the SAME thresholds gate Layer 3's Raw (above) AND Layer 4's Normalized (here) - the
                 // whole channel, not just the algorithm's own per-wheel term. The SAME aggregation
                 // weights apply too (docs\aggregation-report.md) - Layer 4 aggregates its OWN per-wheel
                 // output with the same formula/weights Layer 3 used, "inheriting" the scheme.
+                // SHAKEIT-SILENCE FALLBACK (docs\shakeit-silence-diagnosis-report.md) - legacy.LockWheels/
+                // SlipWheels is Layer 3's OWN Raw, ALWAYS computed above regardless of which source is
+                // actually configured (see UpdateRaw just above) - passed through as the independent
+                // "is the wheel genuinely near its limit" measurement the Normalized engine can fall back
+                // to if the configured source (lockSources/slipSources) goes quiet. See
+                // NormalizedWheelLockSlipEngine's own remarks for the full mechanism.
                 NormalizedWheelLockSlipResult normalized = _normalizedEngine.Compute(
-                    sample, lockSources, slipSources, gameId, carId, thresholds, lockAggregation, slipAggregation);
+                    sample, lockSources, slipSources, gameId, carId, thresholds, lockAggregation, slipAggregation,
+                    lockSourceIdentity, slipSourceIdentity, legacy.LockWheels, legacy.SlipWheels);
                 _publisher.UpdateNormalized(normalized);
+                _publisher.UpdateSourceScaleCalibration(
+                    _normalizedEngine.LockScaleCeiling, _normalizedEngine.LockScaleCeilingIsPrimaryTier,
+                    _normalizedEngine.SlipScaleCeiling, _normalizedEngine.SlipScaleCeilingIsPrimaryTier);
+                _publisher.UpdateSourceFallback(
+                    _normalizedEngine.LockSourceFallbackActive, _normalizedEngine.SlipSourceFallbackActive);
+                _publisher.UpdateSurfaceLearning(
+                    _normalizedEngine.SurfaceEverReportedLoose, _normalizedEngine.LockLooseFraction, _normalizedEngine.SlipLooseFraction);
 
                 double dtSeconds = sample.Dt.HasValue && sample.Dt.Value.TotalSeconds > 0 ? sample.Dt.Value.TotalSeconds : 0.0;
                 ProjectedWheelLockSlipResult projected = _projectedEngine.Compute(normalized, dtSeconds);
@@ -250,16 +321,31 @@ namespace QAdvanceFeedback
                 // remarks) - the background timer/Flush is what actually reaches disk.
                 _runtimeStore.SaveLockLearners(_normalizedEngine.LockLearners.ExportAll());
                 _runtimeStore.SaveSlipLearners(_normalizedEngine.SlipLearners.ExportAll());
+                // COLD/WARM (item 3): ExportAll itself protects an already-persisted cold ceiling from a
+                // noisy session - see KeyedScaleLearner.PersistedCeiling's own remarks.
+                _runtimeStore.SaveLockScaleLearners(_normalizedEngine.LockScaleLearner.ExportAll());
+                _runtimeStore.SaveSlipScaleLearners(_normalizedEngine.SlipScaleLearner.ExportAll());
+                // Per-game telemetry support (item 2).
+                _runtimeStore.SaveSurfaceSupport(_normalizedEngine.SurfaceSupport.ExportAll());
+                // COLD-START CONTINUITY AND CROSS-CAR SEEDING (RuntimeDocument Version 4) - see Init's
+                // own remarks.
+                _runtimeStore.SaveLockPhysicalReference(_normalizedEngine.LockPhysicalReference.ExportAll());
+                _runtimeStore.SaveSlipPhysicalReference(_normalizedEngine.SlipPhysicalReference.ExportAll());
+                _runtimeStore.SaveLockScaleCrossCarSeed(_normalizedEngine.LockScaleLearner.ExportCrossCarSeeds());
+                _runtimeStore.SaveSlipScaleCrossCarSeed(_normalizedEngine.SlipScaleLearner.ExportCrossCarSeeds());
                 _settings.GForce.ExportLearnedMaxima(out var accelSnapshot, out var decelSnapshot);
                 _runtimeStore.SaveGForceLearners(accelSnapshot, decelSnapshot);
 
                 // ---- Diagnostics (always computed; SimHub only sees them if EnableDiagnostics was on
                 // at Init - see PropertyPublisher.Register).
                 AchievedMotion.Result motion = AchievedMotion.Resolve(sample);
+                // Diag.Lock/Slip.LearnedPeakG: the actual COLD/WARM BLENDED reference (item 3) this
+                // frame's Ratio() call divides by - see GripLearner.PublishedPeakG's own remarks.
+                _publisher.UpdateIdentity(gameId, carId);
                 _publisher.UpdateDiagnostics(
                     _normalizedEngine.CurrentDirection, motion.Level, motion.MagnitudeG,
-                    _normalizedEngine.LockLearners.LearnedPeakG(gameId, carId), _normalizedEngine.LockLearners.Confidence(gameId, carId),
-                    _normalizedEngine.SlipLearners.LearnedPeakG(gameId, carId), _normalizedEngine.SlipLearners.Confidence(gameId, carId),
+                    _normalizedEngine.LockLearners.PublishedPeakG(gameId, carId, lockSourceIdentity), _normalizedEngine.LockLearners.Confidence(gameId, carId, lockSourceIdentity),
+                    _normalizedEngine.SlipLearners.PublishedPeakG(gameId, carId, slipSourceIdentity), _normalizedEngine.SlipLearners.Confidence(gameId, carId, slipSourceIdentity),
                     _settings.GForce.CurrentLearnedAccelMaxG, _settings.GForce.CurrentLearnedDecelMaxG);
 
                 UpdateCsvExport(pluginManager);

@@ -38,18 +38,20 @@ namespace QAdvanceFeedback.Tests
         }
 
         // ---------------------------------------------------------------------------------------
-        // Settings-level clamps (1-20 Hz floor/ceiling, default 3 Hz off the floor; non-negative
+        // Settings-level clamps (1-20 Hz floor/ceiling, default 10 Hz off the floor; non-negative
         // scales, default 1.5) - enforced in the SETTER, not only a UI spinner range. Floor/default
         // LOWERED/RAISED respectively (docs\shake-tuning-report.md) per driver feedback that 5 Hz was
         // not obvious enough and the shake was not pronounced enough by default - this is a legitimate
-        // default/floor change, not a weakened assertion.
+        // default/floor change, not a weakened assertion. The default was later raised again, 3->10 Hz
+        // (docs\shake-frequency-default-report.md), after the owner tried 3 Hz on real hardware and
+        // reported 10 Hz feels much better; the 1-20 Hz bounds themselves are unchanged by that change.
         // ---------------------------------------------------------------------------------------
 
         [Fact]
-        public void ShakeFrequencyHz_defaults_to_3_and_is_clamped_to_1_20_in_the_setter()
+        public void ShakeFrequencyHz_defaults_to_10_and_is_clamped_to_1_20_in_the_setter()
         {
             var engine = new GForceEngine();
-            Assert.Equal(3.0, engine.ShakeFrequencyHz, 6);
+            Assert.Equal(10.0, engine.ShakeFrequencyHz, 6);
 
             engine.ShakeFrequencyHz = 0.1; // below floor
             Assert.Equal(1.0, engine.ShakeFrequencyHz, 6);
@@ -101,8 +103,11 @@ namespace QAdvanceFeedback.Tests
         /// (<see cref="Settings.GForceSettings.IntegrateWheelLockAndSlip"/>) is now ON, and
         /// <c>GForceSettings.ApplyTo</c> pushes that value onto this property at Init and on every
         /// settings Apply - so the two defaults disagreeing here is intentional, not drift. See
-        /// <c>GForceSettingsTests.Shake_settings_now_default_to_on_3Hz_and_scale_1_5</c> for the
-        /// settings-layer counterpart.
+        /// <c>GForceSettingsTests.Shake_settings_now_default_to_on_10Hz_and_scale_1_5</c> for the
+        /// settings-layer counterpart. Contrast <see cref="ShakeFrequencyHz"/>, whose bare-engine
+        /// default is deliberately kept IN SYNC with the settings-layer default instead (see that
+        /// property's own remarks) - not every settings/engine pair in this class follows the same
+        /// split-vs-parity pattern, so each is documented on its own terms.
         /// </summary>
         [Fact]
         public void IntegrateWheelLockAndSlip_defaults_to_off_on_the_bare_engine_itself()

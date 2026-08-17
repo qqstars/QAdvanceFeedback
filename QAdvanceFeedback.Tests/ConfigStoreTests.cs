@@ -166,7 +166,7 @@ namespace QAdvanceFeedback.Tests
             // default change, not a weakened assertion: the owner wants a fresh install to feel this
             // without hunting for the toggle.
             Assert.True(loaded.GForce.IntegrateWheelLockAndSlip);
-            Assert.Equal(3.0, loaded.GForce.ShakeFrequencyHz, 6);
+            Assert.Equal(10.0, loaded.GForce.ShakeFrequencyHz, 6);
             Assert.Equal(1.5, loaded.GForce.WheelLockShakeScale, 6);
             Assert.Equal(1.5, loaded.GForce.WheelSlipShakeScale, 6);
         }

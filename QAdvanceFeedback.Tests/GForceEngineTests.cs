@@ -21,7 +21,8 @@ namespace QAdvanceFeedback.Tests
     /// transient's own contribution, without needing to hand-compute the washout filter cascade.
     /// <para/>
     /// Defaults used throughout unless a test overrides them: SustainTimeConstantSeconds=0.30,
-    /// TransientTimeConstantSeconds=0.15, TransientGain=1.5, all four sustain fractions=0.5,
+    /// TransientTimeConstantSeconds=0.15, TransientGain=1.2 (changed from 1.5 - owner's own hardware
+    /// testing, see <see cref="GForceEngine.TransientGain"/>'s remarks), all four sustain fractions=0.5,
     /// LateralReferenceG=1.6, LateralBiasGain=0.5, LateralDirection=Normal. Default maxima:
     /// accelMaxG=0.9, decelMaxG=2.0.
     /// <para/>

@@ -1,12 +1,9 @@
 namespace QAdvanceFeedback.Core
 {
     /// <summary>
-    /// PUBLIC CONTRACT for Layer 3 - the withheld "legacy iRacing algorithm" implementation. This
-    /// interface, this file, and everything else outside <c>Private\QAdvanceFeedback\</c> ship in the
-    /// open-source repository; the concrete implementation that actually reproduces SimHub's
-    /// decompiled <c>WheelSlipEffect.GetRpmSpeedSlipLegacy</c> arithmetic lives in
-    /// <c>Private\QAdvanceFeedback\</c>, which is gitignored (see <c>..\Private\README.md</c> for what
-    /// a third party must supply to restore real output).
+    /// PUBLIC CONTRACT for Layer 3 - the Raw-layer engine that implements SimHub's "legacy iRacing
+    /// algorithm" toggle's behaviour (see <c>QAdvanceFeedback.Core.RawCalculator.RawCalculatorEngine</c>
+    /// for the concrete implementation).
     /// <para/>
     /// CONTRACT:
     /// <list type="bullet">
@@ -36,12 +33,6 @@ namespace QAdvanceFeedback.Core
     /// every other channel's own per-frame work (Layers 4/5, G-force) into dropped frames too, so a
     /// well-behaved implementation should not rely on that outer catch as its own error handling.</item>
     /// </list>
-    /// <para/>
-    /// Resolved at runtime by <c>AlgorithmFactory.CreateLegacyEngine</c>, which looks for the Private
-    /// implementation by type name via reflection and falls back to
-    /// <see cref="InertLegacyWheelLockSlipEngine"/> (logging once) when it is absent - see that
-    /// factory's own remarks for why a compile-time reference to the concrete type is impossible by
-    /// design.
     /// </summary>
     public interface ILegacyWheelLockSlipEngine
     {
@@ -60,8 +51,17 @@ namespace QAdvanceFeedback.Core
         /// <param name="slipAggregation">Wheel Slip's own <see cref="Aggregator"/> weights - see
         /// <paramref name="lockAggregation"/>'s own remarks. Null (the default) means
         /// <see cref="AggregationWeights.SlipDefaults"/>.</param>
+        /// <param name="rawTelemetry">
+        /// The per-wheel telemetry + capability snapshot (<c>ITelemetryAdapter.CaptureRawTelemetry</c>)
+        /// a real implementation uses to select which signal shape this title actually supports this
+        /// frame (<see cref="WheelSlipBranchSelector"/> is the public selection logic). Null (the
+        /// default) means "no snapshot was supplied" - every pre-existing caller/test that predates this
+        /// parameter keeps compiling and behaving EXACTLY as before (a real implementation must fall
+        /// back to its own pre-dispatch fixed behaviour in this case, never throw or silently zero out -
+        /// see <c>QAdvanceFeedback.Core.RawCalculator.RawCalculatorEngine</c>'s own remarks).</param>
         LegacyWheelLockSlipResult Compute(
             ITelemetrySample sample, LegacyThresholds? thresholds = null,
-            AggregationWeights? lockAggregation = null, AggregationWeights? slipAggregation = null);
+            AggregationWeights? lockAggregation = null, AggregationWeights? slipAggregation = null,
+            RawWheelTelemetrySnapshot rawTelemetry = null);
     }
 }

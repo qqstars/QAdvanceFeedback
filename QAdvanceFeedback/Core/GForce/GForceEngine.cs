@@ -95,14 +95,18 @@ namespace QAdvanceFeedback.Core.GForce
         public double TransientTimeConstantSeconds { get; set; } = 0.08;
 
         /// <summary>
-        /// REPURPOSED from the previous pass's "transient gain" (same property name and default) - now
-        /// the gain converting the observed/latched delta-driven rate into stage-progress advancement
-        /// per second, capped at <see cref="MaxStageProgressPerSecond"/> - see
-        /// <see cref="AdvanceStageProgress"/>'s own remarks for the full derivation and the mutation
+        /// REPURPOSED from the previous pass's "transient gain" (same property name, default now
+        /// re-tuned) - now the gain converting the observed/latched delta-driven rate into
+        /// stage-progress advancement per second, capped at <see cref="MaxStageProgressPerSecond"/> -
+        /// see <see cref="AdvanceStageProgress"/>'s own remarks for the full derivation and the mutation
         /// this constant is specifically evidenced against (driving the animation from magnitude instead
-        /// of delta must fail the large-vs-small-delta test).
+        /// of delta must fail the large-vs-small-delta test). DEFAULT changed from 1.5 to 1.2
+        /// (owner's own hardware testing: the animation reads more clearly at 1.2). Raising this gain
+        /// LOWERS the observed rate at which the sweep saturates against
+        /// <see cref="MaxStageProgressPerSecond"/> (at 1.2, that's ~4.2/s), shrinking the felt distinction
+        /// between a gentle and a violent input beyond that point.
         /// </summary>
-        public double TransientGain { get; set; } = 1.5;
+        public double TransientGain { get; set; } = 1.2;
 
         /// <summary>See <see cref="GForceEngine"/>'s class remarks (braking's MIDDLE pad, Bottom Rear) -
         /// UNCHANGED meaning/default from the previous pass, now doubling as the staged model's own MID
@@ -154,13 +158,19 @@ namespace QAdvanceFeedback.Core.GForce
         // pre-settings-applied value.
         public bool IntegrateWheelLockAndSlip { get; set; } = false;
 
-        private double _shakeFrequencyHz = 3.0;
+        private double _shakeFrequencyHz = 10.0;
 
         /// <summary>Hz, clamped to [<see cref="GForceShake.MinFrequencyHz"/> (1),
-        /// <see cref="GForceShake.MaxFrequencyHz"/> (20)]. Default 3 Hz - see
-        /// <see cref="Settings.GForceSettings.ShakeFrequencyHz"/>'s remarks for the full rationale.
-        /// NOT the Layer 5 pulse's own separate, UNCHANGED 200 ms (5 Hz) floor
-        /// (<see cref="Projection.PulseSettings.MinGapMs"/>).</summary>
+        /// <see cref="GForceShake.MaxFrequencyHz"/> (20)]. Default 10 Hz (raised from an earlier 3 Hz -
+        /// see <see cref="Settings.GForceSettings.ShakeFrequencyHz"/>'s remarks for the full rationale).
+        /// UNLIKE <see cref="IntegrateWheelLockAndSlip"/>'s bare-constructor default (deliberately kept
+        /// OFF while the settings-layer default is ON - see that property's own remarks), this
+        /// bare-engine default is kept IN SYNC with the settings-layer default rather than split from
+        /// it - the two have always carried the same numeric value here (there is no "inert unless
+        /// configured" reason for a frequency to differ the way there is for the on/off switch), and
+        /// <see cref="Settings.GForceSettings.ApplyTo"/> pushes the settings value onto this property at
+        /// Init and on every settings Apply regardless. NOT the Layer 5 pulse's own separate, UNCHANGED
+        /// 200 ms (5 Hz) floor (<see cref="Projection.PulseSettings.MinGapMs"/>).</summary>
         public double ShakeFrequencyHz
         {
             get => _shakeFrequencyHz;

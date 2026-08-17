@@ -1,9 +1,0 @@
-# This folder (and everything under it) holds withheld source files - see README.md in this same
-# folder for the full explanation of what is withheld, why, and the contract a third party must
-# implement to restore real functionality. Every *.cs file anywhere under here (this applies
-# recursively, so it covers Private\QAdvanceFeedback\*.cs and Private\QAdvanceFeedback.Tests\*.cs
-# alike) is ignored - that is the whole point: withheld implementation/test code must never be
-# committed to the public repository. This .gitignore and README.md themselves are explicitly kept.
-*.cs
-!.gitignore
-!README.md

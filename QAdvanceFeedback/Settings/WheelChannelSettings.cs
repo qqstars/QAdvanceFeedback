@@ -1,6 +1,6 @@
 using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.Projection;
-using QAdvanceFeedback.Core.ShakeIt;
+using QAdvanceFeedback.Core.MotorsExport;
 
 namespace QAdvanceFeedback.Settings
 {
@@ -46,12 +46,12 @@ namespace QAdvanceFeedback.Settings
         /// <summary>
         /// Manual (this channel's four Source*/ScriptType* fields above, pointed at Layer 3's own Raw
         /// property) vs. ShakeIt (SimHub's own ShakeIt Motors export - see
-        /// <see cref="ShakeItPropertyNames"/>).
+        /// <see cref="MotorsExportPropertyNames"/>).
         /// <para/>
         /// DEFAULT IS <see cref="Settings.SourceMode.ShakeIt"/> - per the owner's explicit instruction
         /// ("Default, globally: ShakeIt Plugin Output Properties"), NOT Manual. A fresh install (and
         /// "Restore all default settings") therefore ships both channels already pointed at the four
-        /// confirmed ShakeIt Motors export names (see <see cref="ApplyShakeItDefaults"/>) - the settings
+        /// confirmed ShakeIt Motors export names (see <see cref="ApplyMotorsExportDefaults"/>) - the settings
         /// UI always shows the toggle and, when the export is not yet configured, an inline note
         /// explaining how to produce it (see <c>docs\shakeit-export-guide.md</c>); the plugin never
         /// silently reads a missing export as 0 either way (see <see cref="WheelSourceResolver"/>'s
@@ -218,7 +218,7 @@ namespace QAdvanceFeedback.Settings
             var settings = new WheelChannelSettings();
             // Global shipped default is ShakeIt (see SourceMode's own remarks) - NOT
             // ResetSourcesToDefault (which would force Manual/Raw).
-            settings.ApplyShakeItDefaults(isLockChannel);
+            settings.ApplyMotorsExportDefaults(isLockChannel);
             settings.Projector.ApplyPreset(
                 ProjectorPreset.Curve,
                 isLockChannel ? ProjectionChannel.Lock : ProjectionChannel.Slip);
@@ -236,7 +236,16 @@ namespace QAdvanceFeedback.Settings
             }
             else
             {
-                settings.BrakeThresholdPercent = 100.0;   // effectively off - throttle-only by default
+                // 100.0 - the owner's explicit, deliberate instruction ("by default, set the break
+                // pedal presses as 100%, which means only throttle pedal pressed will trigger
+                // wheelSlip"), confirmed after driving it ("feels good, reasonable - you can remain the
+                // current WheelSlip"). A previous pass changed this to 20.0, reasoning that SimHub's own
+                // decompiled GetRpmSpeedSlipLegacy has no IsLock-conditional branch at all (Lock and Slip
+                // get the identical Brake>20 gate) - that finding is real (see
+                // docs\raw-match-rootcause-report.md) but does NOT justify overriding the owner's own
+                // explicit choice; it was reverted back to 100.0. A driver who wants SimHub's real,
+                // brake-responsive Slip can still lower this to 20 (matching Lock) themselves.
+                settings.BrakeThresholdPercent = 100.0;
                 settings.ThrottleThresholdPercent = 40.0;
             }
 
@@ -275,7 +284,7 @@ namespace QAdvanceFeedback.Settings
 
         /// <summary>Switches this channel to <see cref="Settings.SourceMode.ShakeIt"/> and points all
         /// four source fields at SimHub's own ShakeIt Motors export names
-        /// (<see cref="ShakeItPropertyNames"/>), forcing <see cref="ScriptType.Plain"/> on all four
+        /// (<see cref="MotorsExportPropertyNames"/>), forcing <see cref="ScriptType.Plain"/> on all four
         /// (a ShakeIt export is always read as a plain property, never scripted).
         /// <para/>
         /// This does NOT check availability, and never has to: the settings UI's toggle is ALWAYS
@@ -286,12 +295,12 @@ namespace QAdvanceFeedback.Settings
         /// steps instead of hiding anything. Either way, <see cref="WheelSourceResolver"/>'s existing
         /// per-source fallback to this channel's own Raw value keeps the plugin's output safe whenever
         /// a configured source (ShakeIt or otherwise) fails to resolve.</summary>
-        public void ApplyShakeItDefaults(bool isLockChannel)
+        public void ApplyMotorsExportDefaults(bool isLockChannel)
         {
-            SourceFrontLeft = ShakeItPropertyNames.GetWheelPropertyName(isLockChannel, ShakeItPropertyNames.FrontLeft);
-            SourceFrontRight = ShakeItPropertyNames.GetWheelPropertyName(isLockChannel, ShakeItPropertyNames.FrontRight);
-            SourceRearLeft = ShakeItPropertyNames.GetWheelPropertyName(isLockChannel, ShakeItPropertyNames.RearLeft);
-            SourceRearRight = ShakeItPropertyNames.GetWheelPropertyName(isLockChannel, ShakeItPropertyNames.RearRight);
+            SourceFrontLeft = MotorsExportPropertyNames.GetWheelPropertyName(isLockChannel, MotorsExportPropertyNames.FrontLeft);
+            SourceFrontRight = MotorsExportPropertyNames.GetWheelPropertyName(isLockChannel, MotorsExportPropertyNames.FrontRight);
+            SourceRearLeft = MotorsExportPropertyNames.GetWheelPropertyName(isLockChannel, MotorsExportPropertyNames.RearLeft);
+            SourceRearRight = MotorsExportPropertyNames.GetWheelPropertyName(isLockChannel, MotorsExportPropertyNames.RearRight);
 
             ScriptTypeFrontLeft = ScriptType.Plain;
             ScriptTypeFrontRight = ScriptType.Plain;
@@ -316,7 +325,7 @@ namespace QAdvanceFeedback.Settings
         /// </summary>
         public void ResetSourcesForCurrentMode(bool isLockChannel)
         {
-            if (SourceMode == SourceMode.ShakeIt) ApplyShakeItDefaults(isLockChannel);
+            if (SourceMode == SourceMode.ShakeIt) ApplyMotorsExportDefaults(isLockChannel);
             else ResetSourcesToDefault(isLockChannel);
         }
     }

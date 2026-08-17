@@ -189,5 +189,22 @@ namespace QAdvanceFeedback.Core.Projection
         }
 
         private static double ClampedOrZero(double v) => ClampMath.IsFinite(v) ? ClampMath.To0100(v) : 0.0;
+
+        /// <summary>
+        /// A fresh <see cref="ProjectorSettings"/> stamped with this channel's own SHIPPED default
+        /// curve (the <see cref="ProjectorPreset.Curve"/> preset - what a brand new install, or
+        /// "Restore all default settings", actually ships - see <see cref="Settings.WheelChannelSettings.CreateDefaults"/>,
+        /// which calls this exact preset). Exists so the settings UI's help text can quote the real
+        /// shipped numbers by reading them from THIS single source of truth rather than re-typing them
+        /// a second time - the defaults have drifted more than once during this project (see
+        /// docs\refinements-report.md, docs\curve-help-text-report.md), and a hand-copied number in a
+        /// help string cannot be caught by the compiler when that happens again.
+        /// </summary>
+        public static ProjectorSettings CreateShippedDefault(ProjectionChannel channel)
+        {
+            var settings = new ProjectorSettings();
+            settings.ApplyPreset(ProjectorPreset.Curve, channel);
+            return settings;
+        }
     }
 }

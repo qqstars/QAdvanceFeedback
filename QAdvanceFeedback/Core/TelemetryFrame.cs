@@ -23,6 +23,11 @@ namespace QAdvanceFeedback.Core
         public bool? IsReplay { get; }
         public bool? IsSessionRestart { get; }
 
+        public bool? WheelOnLooseSurfaceFrontLeft { get; }
+        public bool? WheelOnLooseSurfaceFrontRight { get; }
+        public bool? WheelOnLooseSurfaceRearLeft { get; }
+        public bool? WheelOnLooseSurfaceRearRight { get; }
+
         /// <summary>A frame with every reading absent - the honest "no data" default, not a frame of
         /// zeros pretending to be real readings.</summary>
         public static readonly TelemetryFrame Empty = new TelemetryFrame();
@@ -41,7 +46,11 @@ namespace QAdvanceFeedback.Core
             double? lateralG = null,
             bool? isInPit = null,
             bool? isReplay = null,
-            bool? isSessionRestart = null)
+            bool? isSessionRestart = null,
+            bool? wheelOnLooseSurfaceFrontLeft = null,
+            bool? wheelOnLooseSurfaceFrontRight = null,
+            bool? wheelOnLooseSurfaceRearLeft = null,
+            bool? wheelOnLooseSurfaceRearRight = null)
         {
             GroundSpeedKmh = groundSpeedKmh;
             SpeedKmh = speedKmh;
@@ -57,6 +66,10 @@ namespace QAdvanceFeedback.Core
             IsInPit = isInPit;
             IsReplay = isReplay;
             IsSessionRestart = isSessionRestart;
+            WheelOnLooseSurfaceFrontLeft = wheelOnLooseSurfaceFrontLeft;
+            WheelOnLooseSurfaceFrontRight = wheelOnLooseSurfaceFrontRight;
+            WheelOnLooseSurfaceRearLeft = wheelOnLooseSurfaceRearLeft;
+            WheelOnLooseSurfaceRearRight = wheelOnLooseSurfaceRearRight;
         }
     }
 }

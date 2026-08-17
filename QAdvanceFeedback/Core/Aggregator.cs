@@ -45,7 +45,7 @@ namespace QAdvanceFeedback.Core
     /// through strongly at the car level without any floor. Lock-ups from this engine's own algorithm
     /// are also car-level/axle-symmetric far more often than power slip is (an open diff spins ONE
     /// wheel routinely; the "Braking vs speed" branch this plugin's Lock channel uses has no per-wheel
-    /// term at all - see <c>LegacyWheelLockSlipEngine</c>'s own remarks - so in practice all four wheels
+    /// term at all - see <c>RawCalculatorEngine</c>'s own remarks - so in practice all four wheels
     /// already read the same value and a floor would be a no-op most of the time). The mechanism is
     /// still generic and available (a driver could set Lock's own floor factor above 0 if their own car
     /// disagrees), it simply ships at 0.
@@ -126,5 +126,89 @@ namespace QAdvanceFeedback.Core
             => Math.Max(value, participatingMax * weights.SlipFloorFactor);
 
         private static double Max4(double a, double b, double c, double d) => Math.Max(Math.Max(a, b), Math.Max(c, d));
+
+        /// <summary>
+        /// ABSENT-VS-ZERO AGGREGATION (telemetry-integrity pass, item 1): the per-wheel equivalent of
+        /// <see cref="Compute"/>, but taking each wheel as a NULLABLE reading (null = this wheel reported
+        /// nothing usable this frame - see <c>RawCalculatorEngine</c>'s own per-branch signal-availability
+        /// check) and combining only the wheels that actually reported, rather than treating a missing
+        /// wheel as a real zero. THE DEFECT THIS FIXES: a wheel with no telemetry this frame is
+        /// indistinguishable from a fully-unlocked (Lock) or non-spinning (Slip) wheel if its absence is
+        /// silently coalesced to 0.0 before blending - two genuinely-reporting wheels would then be
+        /// diluted by two SILENT zeros exactly as if all four had reported a real "nothing happening"
+        /// reading, understating a real event by up to half. This method instead RENORMALISES each
+        /// pairwise blend (axle, side, car) down to whichever of its own two participants actually has a
+        /// reading: both present blends exactly as <see cref="Compute"/> already does; exactly one
+        /// present passes that ONE wheel's own reading straight through (weight 1, not diluted by the
+        /// other wheel's absent-as-zero); neither present leaves the result absent too (propagated, not
+        /// invented). <paramref name="hasValue"/> reports, in <see cref="PublishedPropertyNames.Targets"/>
+        /// order (FrontLeft, FrontRight, RearLeft, RearRight, Front, Rear, Left, Right, All) with the
+        /// first four copied straight from the inputs, whether each of the 9 published values actually has
+        /// something to say this frame.
+        /// </summary>
+        public static WheelAggregate ComputeAvailable(
+            double? frontLeft, double? frontRight, double? rearLeft, double? rearRight, AggregationWeights weights,
+            out bool[] hasValue)
+        {
+            double? fl = frontLeft.HasValue ? ClampMath.To0100(frontLeft.Value) : (double?)null;
+            double? fr = frontRight.HasValue ? ClampMath.To0100(frontRight.Value) : (double?)null;
+            double? rl = rearLeft.HasValue ? ClampMath.To0100(rearLeft.Value) : (double?)null;
+            double? rr = rearRight.HasValue ? ClampMath.To0100(rearRight.Value) : (double?)null;
+
+            double? front = BlendPair(fl, fr, (a, b) => Math.Max(a, b) * weights.WMax + Math.Min(a, b) * weights.WMin);
+            double? rear = BlendPair(rl, rr, (a, b) => Math.Max(a, b) * weights.WMax + Math.Min(a, b) * weights.WMin);
+            double? left = BlendPair(fl, rl, (a, b) => a * weights.WFront + b * weights.WRear);
+            double? right = BlendPair(fr, rr, (a, b) => a * weights.WFront + b * weights.WRear);
+            double? all = BlendPair(front, rear, (a, b) => a * weights.WFront + b * weights.WRear);
+
+            if (weights.SlipFloorFactor > 0.0)
+            {
+                front = ApplyFloorAvailable(front, MaxOfPresent(fl, fr), weights);
+                rear = ApplyFloorAvailable(rear, MaxOfPresent(rl, rr), weights);
+                left = ApplyFloorAvailable(left, MaxOfPresent(fl, rl), weights);
+                right = ApplyFloorAvailable(right, MaxOfPresent(fr, rr), weights);
+                all = ApplyFloorAvailable(all, MaxOfPresent(fl, fr, rl, rr), weights);
+            }
+
+            hasValue = new[]
+            {
+                fl.HasValue, fr.HasValue, rl.HasValue, rr.HasValue,
+                front.HasValue, rear.HasValue, left.HasValue, right.HasValue, all.HasValue
+            };
+
+            return new WheelAggregate(
+                ClampMath.To0100(front ?? 0.0), ClampMath.To0100(rear ?? 0.0),
+                ClampMath.To0100(left ?? 0.0), ClampMath.To0100(right ?? 0.0), ClampMath.To0100(all ?? 0.0));
+        }
+
+        /// <summary>Both present: the ordinary blend. Exactly one present: that wheel's own reading,
+        /// unchanged (not diluted by treating the missing one as zero). Neither present: absent.</summary>
+        private static double? BlendPair(double? a, double? b, Func<double, double, double> bothPresent)
+        {
+            if (a.HasValue && b.HasValue) return bothPresent(a.Value, b.Value);
+            if (a.HasValue) return a.Value;
+            if (b.HasValue) return b.Value;
+            return null;
+        }
+
+        private static double? ApplyFloorAvailable(double? value, double? participatingMax, AggregationWeights weights)
+        {
+            if (!value.HasValue) return null; // nothing to floor
+            if (!participatingMax.HasValue) return value; // should not happen (value present implies a participant was too), defensive
+            return Math.Max(value.Value, participatingMax.Value * weights.SlipFloorFactor);
+        }
+
+        private static double? MaxOfPresent(double? a, double? b)
+        {
+            if (a.HasValue && b.HasValue) return Math.Max(a.Value, b.Value);
+            return a ?? b;
+        }
+
+        private static double? MaxOfPresent(double? a, double? b, double? c, double? d)
+        {
+            double? ab = MaxOfPresent(a, b);
+            double? cd = MaxOfPresent(c, d);
+            return MaxOfPresent(ab, cd);
+        }
     }
 }

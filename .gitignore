@@ -12,9 +12,3 @@ lib/
 .simhub-refs-work/
 .claude/
 .github/
-
-# Decompiled SimHub source used as the implementation reference. NEVER commit this: it is Wotever's
-# own code verbatim, not ours, and publishing it would be a far more direct problem than publishing
-# our derived implementation. Regenerate locally with ilspycmd against lib/SimHub.Plugins.dll if
-# needed - see docs/reference/README.md.
-docs/reference/*.cs

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using QAdvanceFeedback.Core.GForce;
+using QAdvanceFeedback.Core.MotorsExport;
 
 namespace QAdvanceFeedback.Core
 {
@@ -71,6 +72,31 @@ namespace QAdvanceFeedback.Core
         public const string ProjectedSlipWithoutPulsePrefix = "WheelSlip.ProjectedWithoutPulse.";
 
         /// <summary>
+        /// DIAGNOSTIC prefix (docs\telemetry-diagnostics-report.md) - the raw per-wheel
+        /// <c>WheelRPS</c>/<c>WheelSpeed</c>/<c>WheelSlip</c> telemetry SimHub's own decompiled
+        /// <c>WheelSlipEffect</c> candidate Lock branches (<c>LockFromWheelsRPSAndDummyRadius</c>/
+        /// <c>GetRpsLock</c>/<c>GetLockFromWheelSpeed</c>) consume, added so a future capture can fit
+        /// each branch's formula directly against real numbers instead of guessing again (see
+        /// <c>docs\raw-match-rootcause-report.md</c> §2d). Only four wheels - no Front/Rear/Left/Right/
+        /// All aggregate makes sense for a raw per-wheel physical reading the way it does for this
+        /// plugin's own computed Lock/Slip channels.
+        /// </summary>
+        public const string TelemetryWheelRpsPrefix = "Diag.Telemetry.WheelRPS.";
+
+        /// <summary>See <see cref="TelemetryWheelRpsPrefix"/>.</summary>
+        public const string TelemetryWheelSpeedPrefix = "Diag.Telemetry.WheelSpeed.";
+
+        /// <summary>See <see cref="TelemetryWheelRpsPrefix"/> - the raw per-wheel slip RATIO from
+        /// <c>FeedbackData.WheelSlip</c> (deliberately named "WheelSlipRatio", not "WheelSlip", so it
+        /// is never confused with this plugin's own already-computed <c>WheelSlip.*</c> channel).</summary>
+        public const string TelemetryWheelSlipRatioPrefix = "Diag.Telemetry.WheelSlipRatio.";
+
+        /// <summary>See <see cref="TelemetryWheelRpsPrefix"/> - the raw per-wheel loose-surface
+        /// (grass/gravel) indicator, surface-keyed learning's own input
+        /// (docs\branch-dispatch-and-source-keyed-learning-report.md).</summary>
+        public const string TelemetryWheelOnLooseSurfacePrefix = "Diag.Telemetry.WheelOnLooseSurface.";
+
+        /// <summary>
         /// The 54 Raw/Normalized/Projected names (9 targets x 3 tiers x 2 channels) plus the 8
         /// G-force names - 62 total, always published regardless of the diagnostics toggle. Order:
         /// Lock Raw, Slip Raw, Lock Normalized, Slip Normalized, Lock Projected, Slip Projected, then
@@ -100,9 +126,46 @@ namespace QAdvanceFeedback.Core
         /// </summary>
         public static IEnumerable<string> DiagnosticNames()
         {
+            // Diag.GameId/Diag.CarId (docs\shakeit-silence-diagnosis-report.md) - the resolved (gameId,
+            // carId) every learner/scale-calibration key this frame is actually keyed under, so a
+            // captured session can settle whether a car id is genuinely stable (vs. changing
+            // frame-to-frame, or empty) - previously uncapturable at all.
+            yield return "Diag.GameId";
+            yield return "Diag.CarId";
             yield return "Diag.Direction";
             yield return "Diag.MotionLevel";
             yield return "Diag.MotionMagnitudeG";
+            // Which of SimHub's own nine decompiled WheelSlipEffect.GetEffectValue branches Layer 3
+            // actually ran this frame (docs\branch-dispatch-and-source-keyed-learning-report.md) - see
+            // WheelSlipBranchNames/WheelSlipBranchSelector. Lets a driver confirm on ANY game which
+            // branch is live and whether it matches what SimHub's own ShakeIt effect UI shows.
+            yield return "Diag.SelectedBranch.Lock";
+            yield return "Diag.SelectedBranch.Slip";
+
+            // Per-source input calibration (docs\branch-dispatch-and-source-keyed-learning-report.md) -
+            // the currently-configured source's own learned near-the-limit ceiling (native units, null
+            // until calibrated) plus which tier produced it, per channel - so a driver can confirm on a
+            // rig that a differently-scaled source really is being rescaled, not silently ignored.
+            yield return "Diag.Lock.SourceScaleCeiling";
+            yield return "Diag.Lock.SourceScaleCeilingIsPrimaryTier";
+            yield return "Diag.Slip.SourceScaleCeiling";
+            yield return "Diag.Slip.SourceScaleCeilingIsPrimaryTier";
+
+            // SHAKEIT-SILENCE FALLBACK (docs\shakeit-silence-diagnosis-report.md) - whether the most
+            // recent frame substituted Layer 3's own Raw for the configured source because the
+            // configured source read near-zero while Raw independently read a genuine, well-above-floor
+            // value (see NormalizedWheelLockSlipEngine's own remarks). Makes a degraded upstream source
+            // (e.g. ShakeIt's own per-car calibration not yet mature) VISIBLE rather than indistinguishable
+            // from "genuinely no lockup".
+            yield return "Diag.Lock.SourceFallbackActive";
+            yield return "Diag.Slip.SourceFallbackActive";
+
+            // Surface-keyed learning (docs\branch-dispatch-and-source-keyed-learning-report.md) - each
+            // channel's own current smoothed loose fraction (the per-wheel raw reading and the
+            // "ever reported loose" latch are grouped further below, alongside the other
+            // Diag.Telemetry.*/Diag.Capabilities.* names they belong with).
+            yield return "Diag.Lock.SurfaceLooseFraction";
+            yield return "Diag.Slip.SurfaceLooseFraction";
             yield return "Diag.Lock.LearnedPeakG";
             yield return "Diag.Lock.LearnerConfidence";
             yield return "Diag.Slip.LearnedPeakG";
@@ -115,6 +178,48 @@ namespace QAdvanceFeedback.Core
 
             foreach (string t in PublishedPropertyNames.Targets) yield return ProjectedLockWithoutPulsePrefix + t;
             foreach (string t in PublishedPropertyNames.Targets) yield return ProjectedSlipWithoutPulsePrefix + t;
+
+            // Diag.Telemetry.*/Diag.Capabilities.* (docs\telemetry-diagnostics-report.md) - raw
+            // per-wheel/car-level telemetry inputs to SimHub's three candidate Lock branches, plus the
+            // FeedbackCapabilities flags that pick which branch actually fires for the running title.
+            // Diagnostics-only: never consumed by this plugin's own algorithm, never affects any
+            // product-tier value. MUTATION EVIDENCE for this group is in
+            // RawWheelTelemetryDiagnosticsTests (publishing these unconditionally, outside this gate,
+            // is exactly the mutation exercised there).
+            yield return "Diag.Telemetry.GroundSpeedKmh";
+            yield return "Diag.Telemetry.SpeedKmh";
+            yield return "Diag.Telemetry.GroundSpeedMps";
+            yield return "Diag.Telemetry.Rpm";
+            yield return "Diag.Telemetry.Gear";
+            yield return "Diag.Telemetry.BrakePercent";
+            yield return "Diag.Telemetry.ThrottlePercent";
+            yield return "Diag.Telemetry.ClutchPercent";
+            yield return "Diag.Telemetry.LateralLocalVelocity";
+            yield return "Diag.Telemetry.LongitudinalG";
+            yield return "Diag.Telemetry.LateralG";
+
+            foreach (string w in MotorsExportPropertyNames.WheelSuffixes) yield return TelemetryWheelRpsPrefix + w;
+            foreach (string w in MotorsExportPropertyNames.WheelSuffixes) yield return TelemetryWheelSpeedPrefix + w;
+            foreach (string w in MotorsExportPropertyNames.WheelSuffixes) yield return TelemetryWheelSlipRatioPrefix + w;
+            // Surface-keyed learning (docs\branch-dispatch-and-source-keyed-learning-report.md) - the
+            // raw per-wheel loose-surface reading (FeedbackData.WheelInGrassOrGravel) plus whether a
+            // genuine loose reading has EVER been observed this session (a latched observed-evidence
+            // diagnostic, not a FeedbackCapabilities flag - none exists for this field, confirmed by
+            // decompilation).
+            foreach (string w in MotorsExportPropertyNames.WheelSuffixes) yield return TelemetryWheelOnLooseSurfacePrefix + w;
+            yield return "Diag.Capabilities.SurfaceEverReportedLoose";
+
+            yield return "Diag.Capabilities.WheelsSlip";
+            yield return "Diag.Capabilities.WheelsRPS";
+            yield return "Diag.Capabilities.WheelsSpeed";
+            yield return "Diag.Capabilities.WheelsSlipDirectMode";
+            yield return "Diag.Capabilities.WheelSlipUseSimpleBraking";
+            yield return "Diag.Capabilities.DetectLockFromWheelsSpeed";
+            yield return "Diag.Capabilities.DetectLockFromWheelsRPSAndDummyRadius";
+            yield return "Diag.Capabilities.Speed";
+            yield return "Diag.Capabilities.Rpm";
+            yield return "Diag.Capabilities.GameFamily";
+            yield return "Diag.Capabilities.WheelSlipCalibrationProviderSlipScale";
         }
 
         /// <summary>

@@ -25,8 +25,8 @@
          included, not a re-implementation. -->
     <Compile Include="..\QAdvanceFeedback\Settings\WheelChannelSettings.cs" LinkBase="Settings" />
     <Compile Include="..\QAdvanceFeedback\Settings\ScriptType.cs" LinkBase="Settings" />
-    <!-- SourceMode (the Manual/ShakeIt toggle, owner-requested) - WheelChannelSettings.cs (above)
-         now references this enum. Core\ShakeIt\*.cs already arrives via the Core\**\*.cs wildcard. -->
+    <!-- SourceMode (the Manual/ShakeIt-Motors-export toggle) - WheelChannelSettings.cs (above) now
+         references this enum. Core\MotorsExport\*.cs already arrives via the Core\**\*.cs wildcard. -->
     <Compile Include="..\QAdvanceFeedback\Settings\SourceMode.cs" LinkBase="Settings" />
     <Compile Include="..\QAdvanceFeedback\Settings\DefaultWheelSources.cs" LinkBase="Settings" />
     <Compile Include="..\QAdvanceFeedback\Settings\QAdvanceFeedbackSettings.cs" LinkBase="Settings" />
@@ -41,43 +41,19 @@
     <!-- AllPublishedProperties.cs and Core\Localization\*.cs already arrive via the Core\**\*.cs
          wildcard above - no separate Include needed (and would be a duplicate-Compile-item error). -->
     <Compile Include="..\QAdvanceFeedback\CsvExportWriter.cs" LinkBase="Adapters" />
-  </ItemGroup>
-  <ItemGroup>
-    <!-- The plugin's withheld Layer 2/3 implementations (see ..\Private\README.md) now live in a
-         single top-level ..\Private\QAdvanceFeedback\ folder beside the .sln (mirroring the
-         plugin's own project name) instead of a Private\ folder inside the plugin's project
-         directory. This project link-compiles the two SimHub-free algorithm files directly (NOT
-         SimHubTelemetryAdapter.cs, which needs GameReaderCommon/SimHub types this test project
-         deliberately does not reference) so its own withheld fidelity tests, immediately below,
-         can exercise the real concrete classes without a ProjectReference to the plugin.
-         Named explicitly (not a Private\QAdvanceFeedback\**\*.cs wildcard) because only these two
-         of the three files there are safe to compile into this SimHub-free assembly; each is
-         still individually Exists()-guarded so a clean clone with the folder absent still builds
-         this test project (0 errors) with just those two Compile items contributing nothing. -->
-    <Compile Include="..\Private\QAdvanceFeedback\LegacySlipAlgorithm.cs" LinkBase="Core"
-             Condition="Exists('..\Private\QAdvanceFeedback\LegacySlipAlgorithm.cs')" />
-    <Compile Include="..\Private\QAdvanceFeedback\LegacyWheelLockSlipEngine.cs" LinkBase="Core"
-             Condition="Exists('..\Private\QAdvanceFeedback\LegacyWheelLockSlipEngine.cs')" />
-    <!-- Lock-and-animation task's own addition (docs\lock-and-animation-report.md) - the Wheel Lock
-         channel's corrected Layer 3 algorithm (SimHub's "Braking vs speed" branch, faithfully ported,
-         plus the documented low-speed fix). Same Exists()-guard convention as the two files above. -->
-    <Compile Include="..\Private\QAdvanceFeedback\SimpleBrakingLockAlgorithm.cs" LinkBase="Core"
-             Condition="Exists('..\Private\QAdvanceFeedback\SimpleBrakingLockAlgorithm.cs')" />
-  </ItemGroup>
-  <ItemGroup>
-    <!-- This project's OWN withheld fidelity tests (see ..\Private\README.md) now live in a
-         single top-level ..\Private\QAdvanceFeedback.Tests\ folder beside the .sln, instead of a
-         Private\ folder inside this project's own directory. Because it is now OUTSIDE this
-         project's directory, the SDK's default `**\*.cs` glob no longer finds it automatically
-         (it used to, when Private\ was nested inside this project), so it needs this explicit
-         Include - the equivalent of the plugin project's own Include above. This wildcard
-         evaluates to an empty item list (not a build error) when
-         ..\Private\QAdvanceFeedback.Tests\ is completely absent - the state of a fresh clone - so
-         every other test in this project still builds and passes without it. `Link` re-parents
-         the files under a virtual "Private" folder in Solution Explorer instead of flattening
-         them at the project root. -->
-    <Compile Include="..\Private\QAdvanceFeedback.Tests\**\*.cs"
-             Link="Private\%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- SimHub-free half of PropertyPublisher (docs\regression-fix-report.md, CSV-header-only
+         regression) - fields/Update*/Snapshot*/SnapshotAllValuesForCsv, split out specifically so the
+         CSV-row-building code can be link-compiled and tested here against the REAL class; the
+         sibling PropertyPublisher.cs (Register/AttachTier, SimHub-dependent) is intentionally NOT
+         included, for the same "would break test discovery for the whole assembly" reason
+         PropertyPublisherStructureTests.cs already documents. -->
+    <Compile Include="..\QAdvanceFeedback\PropertyPublisher.State.cs" LinkBase="Adapters" />
+
+    <!-- Apply-button dirty-tracking task's own addition (docs\apply-dirty-and-screenshots-report.md) -
+         ApplyDirtyState.cs is the one part of that feature with no WPF/SimHub dependency at all, so it
+         is the only part actually unit-tested; see ApplyDirtyStateTests.cs's own remarks for why the
+         rest (SettingsControl.xaml.cs's control wiring) is not. -->
+    <Compile Include="..\QAdvanceFeedback\Settings\ApplyDirtyState.cs" LinkBase="Settings" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />

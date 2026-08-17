@@ -90,15 +90,90 @@ namespace QAdvanceFeedback.Core.Normalized
         /// </summary>
         public const int MinPersistSamples = 30;
 
-        private const double ForgetPerSample = 0.9995;
+        /// <summary>
+        /// DECAY RATE - SPED UP (docs\branch-dispatch-and-source-keyed-learning-report.md, "settling
+        /// speed" check the owner asked for): a decaying maximum is asymmetric by construction - a
+        /// harder event raises it INSTANTLY (see <see cref="Observe"/>'s own <c>RaiseAlpha</c> term),
+        /// but a genuinely lower new condition (the owner's own example: a dry-established reference
+        /// carried into a wet session) only falls at this rate, sample by sample. A too-high carried-
+        /// over reference UNDER-reports severity - exactly backwards, and quietest exactly when a wet
+        /// track most needs the channel to speak up.
+        /// <para/>
+        /// MEASURED (not assumed): the OLD rate (0.9995) needed ~861 QUALIFYING samples (this class's
+        /// own <see cref="Observe"/> calls, already gated by the engine's pedal-commitment/learning-
+        /// validity filters upstream - roughly 15-25 per ordinary braking zone) to fall 35% from a
+        /// carried-over peak - 30-plus braking zones, unreasonably slow for the owner's own stated bar
+        /// ("settle within the first few braking zones of a session"). This rate (0.997) reaches the
+        /// SAME 35% reduction in ~143 qualifying samples (roughly 3-7 braking zones) - see
+        /// <c>GripLearnerTests.Learned_peak_settles_to_a_lower_condition_within_a_few_braking_zones</c>
+        /// for the pinned regression check.
+        /// <para/>
+        /// NOT FASTER STILL, DELIBERATELY: a single ordinarily-softer braking zone (~40 qualifying
+        /// samples, comfortably within realistic lap-to-lap variance, not a real condition change) drops
+        /// the peak by only ~11% at this rate - self-corrected on the very next hard zone by the
+        /// instant-rise mechanism. A materially faster decay would start to make the reference visibly
+        /// WANDER between ordinary zones (exactly the inconsistency the owner does NOT want) rather than
+        /// settling only for a genuine, sustained condition change.
+        /// </summary>
+        private const double ForgetPerSample = 0.997;
         private const double RaiseAlpha = 0.15;
         private const double MinPeakFloor = 0.1;
 
         private double _learnedPeakG = SeedPeakG;
         private int _samples;
 
+        // ---- COLD/WARM PERSISTENCE (telemetry-integrity pass, item 3). _learnedPeakG/_samples above
+        // remain exactly what they always were - THIS session's own decaying-maximum "hot" state,
+        // unconditionally updated by Observe, unconditionally used by Confidence/the cold-start ceiling.
+        // _coldPeakG is a SEPARATE, persisted-from-a-PREVIOUS-session reference, set only by Load - see
+        // that method's own remarks. _hasCold distinguishes "no persisted value was ever loaded" (every
+        // pre-existing caller/test, and a genuinely brand-new key) from "a real cold reference exists" -
+        // only in the latter case does PublishedPeakG/Ratio blend at all; otherwise this class behaves
+        // EXACTLY as it always has (this task's own explicit "cold start with no persisted value behaves
+        // as today" requirement, satisfied by construction rather than by a special-cased branch).
+        private double _coldPeakG;
+        private bool _hasCold;
+        private WelfordAccumulator _hotSession;
+
         public double LearnedPeakG => _learnedPeakG;
         public int Samples => _samples;
+
+        /// <summary>
+        /// THE PUBLISHED REFERENCE <see cref="Ratio"/> actually divides by: a continuous blend of the
+        /// persisted COLD reference and this session's own HOT decaying maximum, weighted by HOT's own
+        /// dispersion (see <see cref="ColdWarmBlend"/>) - NOT sample count alone, per the owner's own
+        /// "if the hot data will cause more noise, we'd prefer cold data only" constraint. Identical to
+        /// <see cref="LearnedPeakG"/> whenever no cold reference was ever loaded (see this class's own
+        /// remarks on <see cref="_hasCold"/>).
+        /// </summary>
+        public double PublishedPeakG
+        {
+            get
+            {
+                if (!_hasCold) return _learnedPeakG;
+                double weight = ColdWarmBlend.HotWeight(_hotSession.Count, _hotSession.CoefficientOfVariation);
+                return ColdWarmBlend.Blend(_coldPeakG, _learnedPeakG, weight);
+            }
+        }
+
+        /// <summary>
+        /// What SHOULD be written back to persistence for this key right now: the persisted COLD value,
+        /// UNCHANGED, unless this session's own HOT evidence clears BOTH bars of
+        /// <see cref="ColdWarmBlend.ShouldPersist"/> (minimum samples AND low dispersion) - "HOT must not
+        /// corrupt COLD" (the owner's own requirement): a noisy session, however long, never overwrites a
+        /// good persisted profile; a short session, however clean, does not either. When no cold
+        /// reference was ever loaded at all (a brand-new key, or any pre-existing caller that never calls
+        /// <see cref="Load"/>), there is nothing to protect yet - HOT itself becomes the value persisted,
+        /// exactly as this class always did before this task.
+        /// </summary>
+        public double PersistedPeakG
+        {
+            get
+            {
+                if (!_hasCold) return _learnedPeakG;
+                return ColdWarmBlend.ShouldPersist(_hotSession.Count, _hotSession.CoefficientOfVariation) ? PublishedPeakG : _coldPeakG;
+            }
+        }
 
         /// <summary>The LEARNING-path reject ceiling actually used by THIS instance - defaults to
         /// <see cref="MaxPlausibleG"/>, but a channel-specific instance (see the constructor) may use
@@ -116,8 +191,15 @@ namespace QAdvanceFeedback.Core.Normalized
             LearnCapG = learnCapG > 0.0 && ClampMath.IsFinite(learnCapG) ? learnCapG : MaxPlausibleG;
         }
 
-        /// <summary>0..1 maturity of the learned peak - 1.0 once <see cref="MaturitySamples"/>
-        /// qualifying observations have been folded in.</summary>
+        /// <summary>0..1 maturity of the learned peak - 1.0 once <see cref="MaturitySamples"/> qualifying
+        /// observations have been folded in. NOTE (docs\regression-fix-report.md - the sample-threshold
+        /// follow-up): this LINEAR, absolute-count-based notion is kept for the diagnostic-only readout
+        /// (<c>Diag.Lock/Slip.LearnerConfidence</c>) but is deliberately NOT what gates the live
+        /// physical-limit detector's own ratio comparison any more (see <see cref="Ratio"/>'s own
+        /// <c>applyColdStartCeiling</c> parameter) - the ONE continuous, dispersion-weighted confidence
+        /// that gates live calibration now lives entirely in
+        /// <see cref="Normalized.KeyedScaleLearner"/>'s own ramp (<see cref="ColdWarmBlend.ConcaveHotWeight"/>),
+        /// not duplicated here, precisely so there is a single confidence notion, not two.</summary>
         public double Confidence => ClampMath.To01(ClampMath.SafeDiv(_samples, MaturitySamples, 0.0));
 
         /// <summary>
@@ -143,6 +225,7 @@ namespace QAdvanceFeedback.Core.Normalized
             if (_learnedPeakG < MinPeakFloor) _learnedPeakG = MinPeakFloor;
 
             _samples++;
+            _hotSession.Observe(magnitudeG);
         }
 
         /// <summary>
@@ -158,10 +241,18 @@ namespace QAdvanceFeedback.Core.Normalized
         /// being dropped - dropping it would freeze the published severity at its last value instead
         /// of producing a real (saturated) reading for that frame and recovering immediately after.
         /// </summary>
-        public double Ratio(double magnitudeG)
+        /// <param name="applyColdStartCeiling">Defaults to <c>true</c> (every pre-existing caller/test
+        /// keeps its exact behaviour). The ONE caller that now passes <c>false</c>
+        /// (<see cref="NormalizedWheelLockSlipEngine"/>'s shared physical-limit detector) relies entirely
+        /// on <see cref="Normalized.KeyedScaleLearner"/>'s OWN continuous, dispersion-weighted confidence
+        /// (see that class's own remarks) to decide how much a taught observation ultimately matters -
+        /// keeping THIS ceiling active too would be exactly the "second confidence notion" the owner's
+        /// own follow-up asked to avoid (docs\regression-fix-report.md).</param>
+        public double Ratio(double magnitudeG, bool applyColdStartCeiling = true)
         {
             double clamped = ClampMath.Clamp(magnitudeG, 0.0, LiveClampG);
-            double raw = ClampMath.SafeDiv(clamped, _learnedPeakG, 0.0);
+            double raw = ClampMath.SafeDiv(clamped, PublishedPeakG, 0.0);
+            if (!applyColdStartCeiling) return raw;
 
             double confidence = Confidence;
             if (confidence >= 1.0) return raw;
@@ -170,17 +261,29 @@ namespace QAdvanceFeedback.Core.Normalized
             return raw < ceiling ? raw : ceiling;
         }
 
-        /// <summary>Seeds this learner from previously persisted state (<c>RuntimeStore</c>) -
-        /// called once at Init. Atomic: a non-positive/non-finite peak OR a non-positive sample
-        /// count means "nothing usable was stored", and BOTH fields are left at their fresh-seed
-        /// values - adopting one half of a corrupt pair (e.g. a valid sample count paired with a
-        /// NaN peak) would leave the learner in a state it could never reach through
-        /// <see cref="Observe"/> alone.</summary>
+        /// <summary>
+        /// Seeds this learner from previously persisted state (<c>RuntimeStore</c>) - called once at
+        /// Init. Atomic: a non-positive/non-finite peak OR a non-positive sample count means "nothing
+        /// usable was stored", and BOTH fields are left at their fresh-seed values - adopting one half of
+        /// a corrupt pair (e.g. a valid sample count paired with a NaN peak) would leave the learner in a
+        /// state it could never reach through <see cref="Observe"/> alone.
+        /// <para/>
+        /// COLD/WARM (item 3): also seeds <see cref="_hasCold"/>/the persisted COLD reference itself -
+        /// from this point on, <see cref="PublishedPeakG"/>/<see cref="Ratio"/> blend COLD with however
+        /// this SESSION's own HOT evidence (reset fresh here, this call marking "a new session started
+        /// from this cold reference") develops, rather than trusting the seeded hot state outright from
+        /// the first frame - see <see cref="PublishedPeakG"/>'s own remarks. At zero new observations the
+        /// blend is EXACTLY cold (weight 0), so "restart with no new driving reproduces the previous
+        /// mapping" holds immediately after this call, before <see cref="Observe"/> is ever invoked again.
+        /// </summary>
         public void Load(double learnedPeakG, int samples)
         {
             if (!ClampMath.IsFinite(learnedPeakG) || learnedPeakG <= 0.0 || samples <= 0) return;
             _learnedPeakG = learnedPeakG;
             _samples = samples;
+            _coldPeakG = learnedPeakG;
+            _hasCold = true;
+            _hotSession = WelfordAccumulator.Empty;
         }
     }
 }

@@ -1,20 +1,14 @@
 using GameReaderCommon;
 using QAdvanceFeedback.Core;
+using SimHub.Plugins;
 
 namespace QAdvanceFeedback
 {
     /// <summary>
-    /// PUBLIC CONTRACT for Layer 2 - the withheld telemetry adapter. This interface ships in the
-    /// open-source repository; the concrete implementation that actually reads SimHub's own
-    /// <see cref="GameData"/> shape lives in <c>Private\QAdvanceFeedback\SimHubTelemetryAdapter.cs</c>,
-    /// which is gitignored (see <c>..\Private\README.md</c>).
-    /// <para/>
-    /// Note this interface itself is allowed to name <see cref="GameData"/> - the constraint isn't
-    /// "no SimHub types anywhere outside Private", it is "no code outside Private references the
-    /// WITHHELD CONCRETE TYPE by name" (see <c>AlgorithmFactory</c>). <see cref="GameData"/> comes from
-    /// <c>GameReaderCommon.dll</c>, which every build of this plugin already references (it is not
-    /// part of what is being withheld) - only the mapping logic from it onto Layer 1's
-    /// <see cref="TelemetrySample"/> is.
+    /// PUBLIC CONTRACT for Layer 2 - the SimHub telemetry adapter
+    /// (<see cref="SimHubTelemetryAdapter"/> is the concrete implementation). Kept as an interface so
+    /// Layer 3 (<c>Core\</c>) and everything above it depends only on this game-agnostic shape, never
+    /// on <see cref="SimHubTelemetryAdapter"/> by name.
     /// <para/>
     /// CONTRACT:
     /// <list type="bullet">
@@ -33,5 +27,20 @@ namespace QAdvanceFeedback
         void Reset();
 
         TelemetrySample Read(GameData data);
+
+        /// <summary>
+        /// DIAGNOSTICS ONLY - never consumed by Layer 3's own Lock/Slip algorithm and never affects any
+        /// product-tier published property. Captures the raw per-wheel wheel-rotation/wheel-speed/
+        /// slip-ratio arrays SimHub's own telemetry holds this frame, gated against real zero vs "not
+        /// supplied" by the matching capability flag (see <see cref="RawWheelTelemetryBuilder"/>), plus
+        /// the capability flags themselves - the single most direct signal for which Raw-layer branch
+        /// the running title actually supports.
+        /// <para/>
+        /// <paramref name="pluginManager"/> is needed ONLY to reach the live capability object - there
+        /// is no path to it from <see cref="GameData"/> alone. Must never throw - same contract as
+        /// <see cref="Read"/>: on any missing/unreachable input, return a snapshot with the affected
+        /// readings absent (null), never a fabricated zero.
+        /// </summary>
+        RawWheelTelemetrySnapshot CaptureRawTelemetry(GameData data, PluginManager pluginManager);
     }
 }

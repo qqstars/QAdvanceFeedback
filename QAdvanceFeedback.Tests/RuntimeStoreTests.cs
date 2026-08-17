@@ -287,6 +287,89 @@ namespace QAdvanceFeedback.Tests
             Assert.Empty(decel);
         }
 
+        // ---------------------------------------------------------------------------------------
+        // RuntimeDocument Version 4 (docs\cold-start-and-timing-fix-report.md) - the shared,
+        // (game,car)-only physical-limit detector (NormalizedWheelLockSlipEngine.LockPhysicalReference/
+        // SlipPhysicalReference) and the per-(game,source) cross-car cold-start seed
+        // (KeyedScaleLearner.ExportCrossCarSeeds/ImportCrossCarSeeds) - both previously session-scoped
+        // only, so a restart re-cold-started calibration every time (flagged, not fixed, in
+        // docs\f1-normalization-fix-report.md's own Concerns).
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void Physical_reference_learners_survive_a_restart_independently_of_the_source_keyed_learners()
+        {
+            _store = new RuntimeStore(_path, flushInterval: NoAutoFlush);
+            _store.SaveLockPhysicalReference(OneLearner("F12025|#|Sauber|#||#|Sealed", 3.4, 220));
+            _store.SaveSlipPhysicalReference(OneLearner("F12025|#|Sauber|#||#|Sealed", 2.1, 180));
+            _store.Flush();
+
+            using (var reopened = new RuntimeStore(_path, flushInterval: NoAutoFlush))
+            {
+                reopened.LoadLockPhysicalReference(out var lockData);
+                Assert.Equal(3.4, lockData["F12025|#|Sauber|#||#|Sealed"].PeakG, 6);
+                Assert.Equal(220, lockData["F12025|#|Sauber|#||#|Sealed"].Samples);
+
+                reopened.LoadSlipPhysicalReference(out var slipData);
+                Assert.Equal(2.1, slipData["F12025|#|Sauber|#||#|Sealed"].PeakG, 6);
+                Assert.Equal(180, slipData["F12025|#|Sauber|#||#|Sealed"].Samples);
+            }
+        }
+
+        [Fact]
+        public void A_missing_runtime_file_yields_empty_physical_reference_dictionaries()
+        {
+            _store = new RuntimeStore(_path, flushInterval: NoAutoFlush);
+            _store.LoadLockPhysicalReference(out var lockData);
+            _store.LoadSlipPhysicalReference(out var slipData);
+
+            Assert.Empty(lockData);
+            Assert.Empty(slipData);
+        }
+
+        [Fact]
+        public void A_version_3_file_with_no_physical_reference_key_at_all_still_loads_cleanly()
+        {
+            // A file written before this task's Version-4 bump - simulates the "upgrading past this
+            // change" path (docs\cold-start-and-timing-fix-report.md, mirroring the 2->3 bump's own
+            // precedent: no explicit migration code needed).
+            File.WriteAllText(_path, "{ \"Version\": 3, \"LockLearners\": {}, \"SlipLearners\": {} }");
+
+            var exception = Record.Exception(() => _store = new RuntimeStore(_path, flushInterval: NoAutoFlush));
+            Assert.Null(exception);
+
+            _store.LoadLockPhysicalReference(out var lockData);
+            _store.LoadLockScaleCrossCarSeed(out var crossCarData);
+            Assert.Empty(lockData);
+            Assert.Empty(crossCarData);
+        }
+
+        [Fact]
+        public void Cross_car_scale_seeds_are_persisted_independently_per_channel()
+        {
+            _store = new RuntimeStore(_path, flushInterval: NoAutoFlush);
+            _store.SaveLockScaleCrossCarSeed(new Dictionary<string, ScaleLearnerState>
+            {
+                ["F12025|#|ShakeIt"] = new ScaleLearnerState { ColdCeiling = 88.0, ColdIsPrimaryTier = true },
+            });
+            _store.SaveSlipScaleCrossCarSeed(new Dictionary<string, ScaleLearnerState>
+            {
+                ["F12025|#|ShakeIt"] = new ScaleLearnerState { ColdCeiling = 62.0, ColdIsPrimaryTier = false },
+            });
+            _store.Flush();
+
+            using (var reopened = new RuntimeStore(_path, flushInterval: NoAutoFlush))
+            {
+                reopened.LoadLockScaleCrossCarSeed(out var lockData);
+                Assert.Equal(88.0, lockData["F12025|#|ShakeIt"].ColdCeiling, 6);
+                Assert.True(lockData["F12025|#|ShakeIt"].ColdIsPrimaryTier);
+
+                reopened.LoadSlipScaleCrossCarSeed(out var slipData);
+                Assert.Equal(62.0, slipData["F12025|#|ShakeIt"].ColdCeiling, 6);
+                Assert.False(slipData["F12025|#|ShakeIt"].ColdIsPrimaryTier);
+            }
+        }
+
         private static bool SpinWaitForFile(string path, TimeSpan timeout)
         {
             DateTime deadline = DateTime.UtcNow + timeout;

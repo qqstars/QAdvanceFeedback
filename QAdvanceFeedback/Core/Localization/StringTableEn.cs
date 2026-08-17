@@ -67,7 +67,7 @@ namespace QAdvanceFeedback.Core.Localization
             ["Sources.Threshold.SlipBrake"] = "Brake pedal threshold (%)",
             ["Sources.Threshold.SlipThrottle"] = "Throttle pedal threshold (%)",
             ["Sources.Threshold.Lock.Note"] = "Below this brake percentage, Wheel Lock is not active at all - both the Raw and Normalized values read 0, whichever Source below is selected. Default 20% (matches SimHub's own built-in value). If Source is set to ShakeIt Plugin Output Properties, note that ShakeIt already applies its OWN internal gate before publishing its value - this threshold can only make the channel MORE restrictive than ShakeIt's own, never less; lowering it below ShakeIt's own gate will not make ShakeIt's values appear any earlier.",
-            ["Sources.Threshold.Slip.Note"] = "Slip checks the brake threshold FIRST: if the brake pedal is pressed past its own threshold, that takes priority and slip reads the same braking value Lock does. Only if brake is below its threshold is throttle checked against its own threshold (and only while the clutch is under 5%, SimHub's own fixed rule). Below whichever threshold applies, Wheel Slip is not active at all - both Raw and Normalized read 0, whichever Source below is selected (see Wheel Lock's own note above on the ShakeIt composition caveat). Defaults: brake 100% (so brake practically never wins and slip is throttle-only, as intended) and throttle 40% (matches SimHub's own built-in value).",
+            ["Sources.Threshold.Slip.Note"] = "Slip checks the brake threshold FIRST: if the brake pedal is pressed past its own threshold, that takes priority and slip reads the same braking value Lock does. Only if brake is below its threshold is throttle checked against its own threshold (and only while the clutch is under 5%, SimHub's own fixed rule). Below whichever threshold applies, Wheel Slip is not active at all - both Raw and Normalized read 0, whichever Source below is selected (see Wheel Lock's own note above on the ShakeIt composition caveat). Default: brake pedal pressed 100% (which means only throttle pedal pressed, checked against its own 40% default, will trigger Wheel Slip) - a deliberate choice so Slip is throttle-only out of the box, even though SimHub's own built-in legacy algorithm applies the identical brake gate to Slip as it does to Lock. Lower the brake threshold toward 20% (matching Wheel Lock's own default) if you prefer Slip to respond to braking the same way SimHub's own algorithm and Wheel Lock do.",
             ["Sources.Threshold.LockSensibility"] = "Lock sensitivity",
             ["Sources.Threshold.LockSensibility.Note"] = "Matches SimHub's own \"Lock sensitivity\" setting exactly (0-100, default 50). Higher values respond sooner to a firm brake, but also cap how strong the reading can ever get - only the default (50) can reach a genuine full-strength reading; values above 50 trade top-end strength for an earlier response.",
 
@@ -94,7 +94,17 @@ namespace QAdvanceFeedback.Core.Localization
             ["Curve.Preset.Custom"] = "Custom",
             ["Curve.Column.RawValue"] = "raw value",
             ["Curve.Column.OutputValue"] = "output value",
-            ["Curve.LiveOutputFormat"] = "at this input, the curve currently sends {0}",
+            // Replaces the old per-row LIVE readout ("at this input, the curve currently sends
+            // {0}") - redundant with the spinner textboxes right next to it, which already show the
+            // current values. Instead states the SHIPPED DEFAULT input->output mapping for this
+            // anchor, which the spinners cannot show once a driver has edited them. The live value is
+            // NOT dropped outright, though: Curve.Anchor.LiveDiffersFormat is appended alongside it
+            // whenever the curve's actual output at the driver's own typed input differs from what
+            // they typed (an anchor at/below Start, at/above End, or reordered past a neighbour gets
+            // dropped/clamped by OutputProjector - see its own remarks) - see
+            // docs\curve-help-text-report.md for why a silent restatement was rejected.
+            ["Curve.Anchor.DefaultFormat"] = "under default input value {0}, curve will return {1}",
+            ["Curve.Anchor.LiveDiffersFormat"] = "note: the curve actually returns {0} here, not what you typed - it may be clamped or dropped",
 
             ["Curve.StartPoint.Label"] = "Start value:",
             ["Curve.StartPoint.AlwaysZero"] = "(always 0)",
@@ -112,18 +122,18 @@ namespace QAdvanceFeedback.Core.Localization
             // locked/spinning. The anchor INPUT positions (30/60/80/100) are shared by both channels;
             // only the OUTPUT feel differs (Slip is gentler throughout, matching its own curve).
             ["Curve.Lock.AnchorNote"] = "Each row reads \"when the lock value reaches this raw value, send this output\". Curve (the default) sends 30 to 10, 60 to 30 and 80 to 80 - almost nothing during light braking, a clear buzz in the ideal zone, then a hard ramp as the tyre approaches lock.",
-            ["Curve.Lock.StartPoint.Desc"] = "Nothing below this point produces any output. Raise it if light braking buzzes more than you want.",
+            ["Curve.Lock.StartPoint.Desc"] = "Nothing below this point produces any output. Raise it if light braking buzzes more than you want. Ships at {0} by default.",
             ["Curve.Lock.Slightly.Desc"] = "You're just entering the tyre's working range - below this you still have margin, above this you're using real grip. Keep this low to feel nothing during ordinary, gentle braking.",
             ["Curve.Lock.Ideal.Desc"] = "You're at the edge of the ideal braking zone - maximum effective braking, right before the wheel starts to lock. This is the sweet spot: hold the brake here for the fastest stop.",
             ["Curve.Lock.Critical.Desc"] = "The wheel is right on the verge of locking - not locked yet, but only moments away. Ease off the brake immediately.",
-            ["Curve.Lock.EndPoint.Desc"] = "At and above this point the wheel is fully locked and sliding - the output is always full strength.",
+            ["Curve.Lock.EndPoint.Desc"] = "At and above this point the wheel is fully locked and sliding - the output is always full strength. Ships at {0} by default.",
 
             ["Curve.Slip.AnchorNote"] = "Each row reads \"when the slip value reaches this raw value, send this output\". Curve (the default) sends 30 to 8, 60 to 20 and 80 to 75 - the same band boundaries as the lock curve, but gentler throughout: almost nothing during gentle throttle, a clear cue in the ideal zone, then a hard ramp as the tyre approaches the traction limit.",
-            ["Curve.Slip.StartPoint.Desc"] = "Nothing below this point produces any output. Raise it if light throttle buzzes more than you want.",
+            ["Curve.Slip.StartPoint.Desc"] = "Nothing below this point produces any output. Raise it if light throttle buzzes more than you want. Ships at {0} by default.",
             ["Curve.Slip.Slightly.Desc"] = "The tyre is just starting to work under power - below this you still have margin, above this you're really putting power down. Keep this low to feel nothing under gentle, controlled throttle.",
             ["Curve.Slip.Ideal.Desc"] = "You're at the edge of the ideal traction zone - putting down maximum power, right before the tyre starts to spin. This is the sweet spot for the fastest exit without wheelspin.",
             ["Curve.Slip.Critical.Desc"] = "The wheel is right on the verge of spinning - not spinning yet, but only moments away. Ease off the throttle immediately.",
-            ["Curve.Slip.EndPoint.Desc"] = "At and above this point the wheel is fully spinning and drive is being wasted - the output is always full strength.",
+            ["Curve.Slip.EndPoint.Desc"] = "At and above this point the wheel is fully spinning and drive is being wasted - the output is always full strength. Ships at {0} by default.",
 
             // ---- Pulse ----
             ["Pulse.Enable"] = "Pulse instead of holding flat at maximum",
@@ -141,7 +151,7 @@ namespace QAdvanceFeedback.Core.Localization
             ["GForce.RecommendedHz.Note"] = "Recommended pad frequency for configuring your ShakeIt channels: {0:0} Hz at value 0, down to {1:0} Hz at value 100.",
 
             ["GForce.Sustain.Note"] = "Under sustained hard braking or acceleration, the trailing pads keep a weaker vibration instead of fading to nothing, so the feel stays continuous. Defaults are derived from this engine's own model, not arbitrary numbers - 0% reproduces the old fade-to-nothing behaviour.",
-            ["GForce.Motion.Note"] = "Braking/acceleration feedback travels through three stages (far pad, then middle pad, then the pad closest to the direction of force) before settling - a hard stamp on the pedal sweeps through quickly and strongly, a gentle change sweeps slowly and gently. The STEADY level you're holding (how far each pad settles) is separate from this travel. These three numbers control the feel - a higher level response time feels slower/smoother once settled, a higher sweep speed makes a sudden change travel faster. To make the sweep feel slower, lower Sweep speed (it travels more gradually across the pads) and raise Sweep smoothing time (it eases in rather than snaps). Sweep speed is capped internally, so past a point turning it up further won't make the sweep any faster.",
+            ["GForce.Motion.Note"] = "Braking/acceleration feedback travels through three stages (far pad, then middle pad, then the pad closest to the direction of force) before settling - a hard stamp on the pedal sweeps through quickly and strongly, a gentle change sweeps slowly and gently. The STEADY level you're holding (how far each pad settles) is separate from this travel. These three numbers control the feel - a higher level response time feels slower/smoother once settled, a higher sweep speed makes a sudden change travel faster. To make the sweep feel slower, lower Sweep speed (it travels more gradually across the pads) and raise Sweep smoothing time (it eases in rather than snaps). Sweep speed is capped internally, so past a point turning it up further won't make the sweep any faster. Raising Sweep speed also lowers the input rate at which that cap kicks in, so above that point gentle and violent changes start to feel more alike.",
             ["GForce.SustainTau.Label"] = "Level response time (s)",
             ["GForce.TransientTau.Label"] = "Sweep smoothing time (s)",
             ["GForce.TransientGain.Label"] = "Sweep speed",
