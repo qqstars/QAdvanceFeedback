@@ -29,16 +29,22 @@ namespace QAdvanceFeedback.Core.Projection
             }
         }
 
+        /// <summary>
+        /// PRE-RELEASE ADDITION: Start/End used to be hard-fixed at 0/100 (this method returned those
+        /// literal numbers regardless of the settings object) - both are now driver-editable via
+        /// <see cref="ProjectorSettings.StartOutput"/>/<see cref="ProjectorSettings.EndOutput"/>, so
+        /// this reads the real configured value like every other slot.
+        /// </summary>
         public static double GetOutput(ProjectorSettings settings, AnchorSlot slot)
         {
             if (settings == null) throw new ArgumentNullException(nameof(settings));
             switch (slot)
             {
-                case AnchorSlot.Start: return 0.0;
+                case AnchorSlot.Start: return settings.StartOutput;
                 case AnchorSlot.Slightly: return settings.SlightlyOutput;
                 case AnchorSlot.Moderate: return settings.ModerateOutput;
                 case AnchorSlot.Critical: return settings.CriticalOutput;
-                case AnchorSlot.End: return 100.0;
+                case AnchorSlot.End: return settings.EndOutput;
                 default: return 0.0;
             }
         }
@@ -59,17 +65,25 @@ namespace QAdvanceFeedback.Core.Projection
             settings.Preset = ProjectorPreset.Custom;
         }
 
+        /// <summary>
+        /// PRE-RELEASE ADDITION: Start/End are no longer rejected here (they used to be, since both
+        /// were hard-fixed at 0/100 and not driver-editable) - editing either now behaves exactly like
+        /// editing any other cell, including switching the preset to Custom, so a driver's own
+        /// Start/End output choice is not silently overwritten the next time Linear/Curve is
+        /// reselected.
+        /// </summary>
         public static void SetOutput(ProjectorSettings settings, AnchorSlot slot, double? value)
         {
             if (settings == null) throw new ArgumentNullException(nameof(settings));
             if (value == null) return;
-            if (slot == AnchorSlot.Start || slot == AnchorSlot.End) return;
 
             switch (slot)
             {
+                case AnchorSlot.Start: settings.StartOutput = value.Value; break;
                 case AnchorSlot.Slightly: settings.SlightlyOutput = value.Value; break;
                 case AnchorSlot.Moderate: settings.ModerateOutput = value.Value; break;
                 case AnchorSlot.Critical: settings.CriticalOutput = value.Value; break;
+                case AnchorSlot.End: settings.EndOutput = value.Value; break;
             }
             settings.Preset = ProjectorPreset.Custom;
         }

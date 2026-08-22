@@ -24,16 +24,50 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(learner.LearnedPeakG, learner.PersistedPeakG, 12);
         }
 
+        /// <summary>
+        /// RE-EXPRESSED, not weakened (docs\stability-confidence-fix-report.md): "reproduces the
+        /// previous mapping exactly" now also requires the persisted SETTLING streak
+        /// (<see cref="GripLearner.QuietStreak"/>), not merely the persisted peak/sample count - a
+        /// RETURNING car whose reference was genuinely already settled in the prior session carries
+        /// that forward via the REAL production round trip
+        /// (<see cref="KeyedGripLearner.ExportAll"/>/<see cref="KeyedGripLearner.ImportAll"/> - see
+        /// <see cref="A_settled_quiet_streak_round_trips_through_KeyedGripLearner_reproducing_full_trust_immediately"/>
+        /// for that end-to-end proof); simulated directly here via the full 9-arg
+        /// <see cref="GripLearner.Load(double,int,double,double,double,int,double,int,double)"/>
+        /// overload with a representative, comfortably-above-scale quiet streak. A bare 2-arg
+        /// <see cref="GripLearner.Load(double,int)"/> restore (no carried settledness signal at all) is
+        /// now, correctly, conservative until this session earns it back - see
+        /// <see cref="A_restart_via_the_bare_2_arg_Load_with_no_carried_settledness_stays_ceilinged_until_re_earned"/>.
+        /// </summary>
         [Fact]
         public void A_restart_with_no_new_driving_reproduces_the_previous_mapping_exactly()
         {
             var learner = new GripLearner();
-            learner.Load(2.4, 500);
+            learner.Load(2.4, 500, 2.4, 0.0, 0.0, 0, 0.0, 0, GripLearner.StabilityScaleSamples * 4);
 
             // Zero new observations this session - the published (blended) reference must equal the
             // persisted cold value EXACTLY, not merely approximately.
             Assert.Equal(2.4, learner.PublishedPeakG, 12);
             Assert.Equal(1.0, learner.Ratio(2.4), 6); // matches Ratio's own mature, no-ceiling behaviour
+        }
+
+        /// <summary>
+        /// THE NEW, INTENDED CONTRACT, directly (docs\stability-confidence-fix-report.md): a restore
+        /// that carries the peak/sample count forward but NOT any settling evidence (the bare 2-arg
+        /// <see cref="GripLearner.Load(double,int)"/> overload - e.g. a brand-new source/surface bucket
+        /// seeded from a DIFFERENT, migrated bucket, where settledness genuinely should not transfer)
+        /// must stay conservatively ceilinged immediately after restore, exactly like a true cold start -
+        /// the whole point of the fix (sample count alone must never again be sufficient for full
+        /// trust).
+        /// </summary>
+        [Fact]
+        public void A_restart_via_the_bare_2_arg_Load_with_no_carried_settledness_stays_ceilinged_until_re_earned()
+        {
+            var learner = new GripLearner();
+            learner.Load(2.4, 500);
+
+            double ratio = learner.Ratio(2.4);
+            Assert.Equal(GripLearner.ColdStartCeilingRatio, ratio, 6);
         }
 
         [Fact]

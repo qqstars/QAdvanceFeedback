@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Reflection;
 using QAdvanceFeedback.Core;
+using QAdvanceFeedback.Core.Health;
 using QAdvanceFeedback.Settings;
 
 namespace QAdvanceFeedback
@@ -89,6 +90,8 @@ namespace QAdvanceFeedback
             {
                 _available = false;
                 LogOnce("expression evaluation failed, configured sources will fall back to plain property names - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.ExpressionEvaluator, HealthSeverity.Degraded,
+                    "Health.Impact.ExpressionEvaluator", e.ToString());
                 return false;
             }
         }
@@ -124,6 +127,8 @@ namespace QAdvanceFeedback
             {
                 _available = false;
                 LogOnce("expression engine unavailable, configured sources will only accept plain property names - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.ExpressionEvaluator, HealthSeverity.Degraded,
+                    "Health.Impact.ExpressionEvaluator", e.ToString(), isSimHubCompatibilityIssue: true);
             }
         }
 

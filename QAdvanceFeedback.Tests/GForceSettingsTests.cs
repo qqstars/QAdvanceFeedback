@@ -14,38 +14,59 @@ namespace QAdvanceFeedback.Tests
     /// </summary>
     public class GForceSettingsTests
     {
+        private static DateTime T0 => new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        /// <summary>Feeds <paramref name="count"/> qualifying acceleration observations 5ms apart,
+        /// starting at <paramref name="start"/> - the volume the NEW estimator (200-sample minimum,
+        /// 2-minute window) actually needs to mature, replacing the old 2-observation "confirm"
+        /// idiom.</summary>
+        private static void ObserveManyAccel(GForceSettings s, string game, string car, double value, int count, DateTime start, double stepMs = 5.0)
+        {
+            for (int i = 0; i < count; i++) s.ObserveAccelG(game, car, value, start.AddMilliseconds(i * stepMs));
+        }
+
+        private static void ObserveManyDecel(GForceSettings s, string game, string car, double value, int count, DateTime start, double stepMs = 5.0)
+        {
+            for (int i = 0; i < count; i++) s.ObserveDecelG(game, car, value, start.AddMilliseconds(i * stepMs));
+        }
+
+        /// <summary>A timestamp comfortably past BOTH the 200-sample crossing and the subsequent 2-second
+        /// ramp, for tests that want the fully-settled effective value rather than a mid-ramp one.</summary>
+        private static DateTime FullyRampedAt(DateTime lastObservationTime) => lastObservationTime.AddSeconds(5.0);
+
         [Fact]
-        public void Fixed_mode_ignores_learned_values_even_when_a_higher_max_was_confirmed()
+        public void Fixed_mode_ignores_learned_values_even_when_a_higher_max_was_learned()
         {
             var settings = new GForceSettings { AccelMaxMode = GMaxMode.Fixed, FixedAccelMaxG = 0.9 };
 
-            // Confirm (two consecutive similar frames) a learned value well above the fixed one.
-            settings.ObserveAccelG("Game", "Car", 5.0);
-            settings.ObserveAccelG("Game", "Car", 5.0);
-            Assert.Equal(5.0, settings.GetLearnedAccelMaxG("Game", "Car"), 6); // learner itself did learn it...
+            ObserveManyAccel(settings, "Game", "Car", 5.0, 200, T0);
+            Assert.Equal(5.0, settings.GetLearnedAccelMaxG("Game", "Car"), 2); // learner itself did learn it...
 
             // ...but FIXED mode must not use it.
-            Assert.Equal(0.9, settings.EffectiveAccelMaxG("Game", "Car"), 9);
+            Assert.Equal(0.9, settings.EffectiveAccelMaxG("Game", "Car", FullyRampedAt(T0)), 9);
         }
 
         [Fact]
         public void Fixed_mode_ignores_learned_values_for_deceleration_too()
         {
             var settings = new GForceSettings { DecelMaxMode = GMaxMode.Fixed, FixedDecelMaxG = 2.0 };
-            settings.ObserveDecelG("Game", "Car", 19.9);
-            settings.ObserveDecelG("Game", "Car", 19.9);
+            ObserveManyDecel(settings, "Game", "Car", 5.0, 200, T0);
 
-            Assert.Equal(2.0, settings.EffectiveDecelMaxG("Game", "Car"), 9);
+            Assert.Equal(2.0, settings.EffectiveDecelMaxG("Game", "Car", FullyRampedAt(T0)), 9);
         }
 
         [Fact]
-        public void Auto_mode_uses_the_learned_value_once_confirmed()
+        public void Auto_mode_uses_the_learned_value_once_matured_and_fully_ramped_in()
         {
             var settings = new GForceSettings { AccelMaxMode = GMaxMode.Auto, FixedAccelMaxG = 0.9 };
-            settings.ObserveAccelG("Game", "Car", 1.3);
-            settings.ObserveAccelG("Game", "Car", 1.3);
+            ObserveManyAccel(settings, "Game", "Car", 1.3, 200, T0);
+            DateTime lastObservation = T0.AddMilliseconds(199 * 5);
 
-            Assert.Equal(1.3, settings.EffectiveAccelMaxG("Game", "Car"), 9);
+            // The ramp's own clock only advances when this is actually queried (mirroring the real,
+            // once-per-frame call site) - query once right at maturity to start the ramp, then again
+            // once it has had time to complete.
+            settings.EffectiveAccelMaxG("Game", "Car", lastObservation);
+            Assert.Equal(1.3, settings.EffectiveAccelMaxG("Game", "Car", FullyRampedAt(lastObservation)), 2);
         }
 
         [Fact]
@@ -57,38 +78,56 @@ namespace QAdvanceFeedback.Tests
         }
 
         [Fact]
-        public void Auto_mode_rejects_a_single_spike_exactly_like_the_underlying_learner()
+        public void Auto_mode_stays_close_to_a_representative_band_despite_an_occasional_high_reading()
         {
+            // The robust estimator's own outlier-resistance (see GForceMaxLearnerTests for the dedicated
+            // unit coverage) wired through GForceSettings: a consistent band of real braking plus one
+            // occasional high-but-plausible reading must not drag the effective value toward the spike.
             var settings = new GForceSettings { DecelMaxMode = GMaxMode.Auto, FixedDecelMaxG = 2.0 };
-            settings.ObserveDecelG("Game", "Car", 1.5);
-            settings.ObserveDecelG("Game", "Car", 1.5);
-            settings.ObserveDecelG("Game", "Car", 19.9); // single collision-spike frame
-            settings.ObserveDecelG("Game", "Car", 1.5);
+            DateTime t = T0;
+            int i = 0;
+            for (; i < 195; i++) { settings.ObserveDecelG("Game", "Car", 1.5, t.AddMilliseconds(i * 5)); }
+            for (; i < 200; i++) { settings.ObserveDecelG("Game", "Car", 6.5, t.AddMilliseconds(i * 5)); } // rare, high
+            DateTime lastObservation = t.AddMilliseconds(199 * 5);
 
-            Assert.Equal(1.5, settings.EffectiveDecelMaxG("Game", "Car"), 9);
+            settings.EffectiveDecelMaxG("Game", "Car", lastObservation); // starts the ramp
+            double effective = settings.EffectiveDecelMaxG("Game", "Car", FullyRampedAt(lastObservation));
+            Assert.True(effective < 2.5, $"effective {effective} should stay close to the representative 1.5g band, not the rare 6.5g reading");
         }
 
         [Fact]
         public void Learned_maxima_do_not_bleed_between_different_cars_in_the_same_game()
         {
             var settings = new GForceSettings { AccelMaxMode = GMaxMode.Auto, FixedAccelMaxG = 0.9 };
-            settings.ObserveAccelG("RaceGame", "RoadCar", 0.6);
-            settings.ObserveAccelG("RaceGame", "RoadCar", 0.6);
-            settings.ObserveAccelG("RaceGame", "GT3Car", 1.4);
-            settings.ObserveAccelG("RaceGame", "GT3Car", 1.4);
+            settings.ImportLearnedMaxima(
+                new Dictionary<string, double>
+                {
+                    [GForceMaxLearner.MakeKey("RaceGame", "RoadCar")] = 0.6,
+                    [GForceMaxLearner.MakeKey("RaceGame", "GT3Car")] = 1.4,
+                },
+                new Dictionary<string, double>());
 
-            Assert.Equal(0.6, settings.EffectiveAccelMaxG("RaceGame", "RoadCar"), 9);
-            Assert.Equal(1.4, settings.EffectiveAccelMaxG("RaceGame", "GT3Car"), 9);
+            // The RAW learned value is available immediately (GetLearnedAccelMaxG, used by the UI
+            // readout) - the EFFECTIVE (engine-fed) value may still ramp toward it if the jump from the
+            // fixed default exceeds the step-trigger fraction (see EffectiveAccelMaxG's own remarks), so
+            // query well past the 2-second ramp for a settled comparison here.
+            Assert.Equal(0.6, settings.GetLearnedAccelMaxG("RaceGame", "RoadCar"), 9);
+            Assert.Equal(1.4, settings.GetLearnedAccelMaxG("RaceGame", "GT3Car"), 9);
+
+            DateTime t0 = T0;
+            settings.EffectiveAccelMaxG("RaceGame", "RoadCar", t0); // starts the ramp, if any
+            settings.EffectiveAccelMaxG("RaceGame", "GT3Car", t0);
+            Assert.Equal(0.6, settings.EffectiveAccelMaxG("RaceGame", "RoadCar", FullyRampedAt(t0)), 9);
+            Assert.Equal(1.4, settings.EffectiveAccelMaxG("RaceGame", "GT3Car", FullyRampedAt(t0)), 9);
         }
 
         [Fact]
         public void Current_game_and_car_context_drives_the_no_arg_learned_properties()
         {
             var settings = new GForceSettings();
-            settings.ObserveAccelG("GameX", "CarX", 1.1);
-            settings.ObserveAccelG("GameX", "CarX", 1.1);
-            settings.ObserveDecelG("GameX", "CarX", 1.8);
-            settings.ObserveDecelG("GameX", "CarX", 1.8);
+            settings.ImportLearnedMaxima(
+                new Dictionary<string, double> { [GForceMaxLearner.MakeKey("GameX", "CarX")] = 1.1 },
+                new Dictionary<string, double> { [GForceMaxLearner.MakeKey("GameX", "CarX")] = 1.8 });
 
             settings.SetCurrentGameAndCar("GameX", "CarX");
             Assert.Equal(1.1, settings.CurrentLearnedAccelMaxG, 9);
@@ -319,14 +358,89 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(3.0, engine.WheelSlipShakeScale, 6);
         }
 
+        // ---------------------------------------------------------------------------------------
+        // MODE-DEPENDENT TRANSITION SCALING (docs\robust-auto-gforce-report.md) - REPLACES the single
+        // TransitionAnimationScale setting with two, blended continuously (never stepped) by the SAME
+        // ramp weight EffectiveAccelMaxG/EffectiveDecelMaxG themselves use.
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void Transition_scale_defaults_are_owner_specified_1_2_auto_and_1_5_fixed()
+        {
+            var settings = new GForceSettings();
+            Assert.Equal(1.2, settings.AutoTransitionAnimationScale, 6);
+            Assert.Equal(1.5, settings.FixedTransitionAnimationScale, 6);
+        }
+
+        [Fact]
+        public void Both_transition_scales_are_clamped_to_0_and_the_engines_configured_upper_bound()
+        {
+            var settings = new GForceSettings { AutoTransitionAnimationScale = -1.0, FixedTransitionAnimationScale = 999.0 };
+            Assert.Equal(0.0, settings.AutoTransitionAnimationScale, 6);
+            Assert.Equal(GForceEngine.MaxTransitionAnimationScale, settings.FixedTransitionAnimationScale, 6);
+
+            settings.AutoTransitionAnimationScale = 2.5;
+            Assert.Equal(2.5, settings.AutoTransitionAnimationScale, 6);
+        }
+
+        [Fact]
+        public void Fixed_mode_transition_scale_is_always_the_fixed_setting()
+        {
+            var settings = new GForceSettings
+            {
+                AccelMaxMode = GMaxMode.Fixed, DecelMaxMode = GMaxMode.Fixed,
+                AutoTransitionAnimationScale = 1.2, FixedTransitionAnimationScale = 1.5,
+            };
+            Assert.Equal(1.5, settings.EffectiveAccelTransitionScale("Game", "Car"), 9);
+            Assert.Equal(1.5, settings.EffectiveDecelTransitionScale("Game", "Car"), 9);
+        }
+
+        [Fact]
+        public void Auto_mode_below_the_sample_threshold_uses_the_fixed_transition_scale_not_the_auto_one()
+        {
+            // The EDGE CASE the brief calls out explicitly: below 200 samples the effective max IS the
+            // fixed default, so the transition scale must ALSO read as the fixed one (1.5, not 1.2) -
+            // otherwise the two settings would disagree about what "using the default" means.
+            var settings = new GForceSettings { AccelMaxMode = GMaxMode.Auto };
+            Assert.Equal(settings.FixedTransitionAnimationScale, settings.EffectiveAccelTransitionScale("Game", "Car"), 9);
+        }
+
+        [Fact]
+        public void The_transition_scale_ramps_continuously_alongside_the_max_no_step_at_the_threshold()
+        {
+            var settings = new GForceSettings
+            {
+                AccelMaxMode = GMaxMode.Auto, FixedAccelMaxG = 0.75,
+                AutoTransitionAnimationScale = 1.2, FixedTransitionAnimationScale = 1.5,
+            };
+            ObserveManyAccel(settings, "Game", "Car", 2.0, 200, T0);
+            DateTime lastObservation = T0.AddMilliseconds(199 * 5);
+
+            double justBefore = settings.EffectiveAccelTransitionScale("Game", "Car", lastObservation.AddMilliseconds(-1));
+            double atCrossing = settings.EffectiveAccelTransitionScale("Game", "Car", lastObservation);
+            Assert.True(Math.Abs(atCrossing - justBefore) < 0.01,
+                $"transition scale must not step at the sample threshold: {justBefore} -> {atCrossing}");
+
+            double fullyRamped = settings.EffectiveAccelTransitionScale("Game", "Car", FullyRampedAt(lastObservation));
+            Assert.Equal(1.2, fullyRamped, 2);
+        }
+
+        [Fact]
+        public void Fixed_maxima_default_to_the_revised_075_and_15_values()
+        {
+            // REVISED defaults (docs\gforce-transition-scale-report.md): 0.9->0.75 (accel), 2.0->1.5
+            // (decel) - a legitimate default change, not a weakened assertion.
+            var settings = new GForceSettings();
+            Assert.Equal(0.75, settings.FixedAccelMaxG, 6);
+            Assert.Equal(1.5, settings.FixedDecelMaxG, 6);
+        }
+
         [Fact]
         public void Learned_maxima_export_import_round_trips_through_a_plain_dictionary()
         {
             var settings = new GForceSettings { AccelMaxMode = GMaxMode.Auto, DecelMaxMode = GMaxMode.Auto };
-            settings.ObserveAccelG("Game", "Car", 1.2);
-            settings.ObserveAccelG("Game", "Car", 1.2);
-            settings.ObserveDecelG("Game", "Car", 2.4);
-            settings.ObserveDecelG("Game", "Car", 2.4);
+            ObserveManyAccel(settings, "Game", "Car", 1.2, 200, T0);
+            ObserveManyDecel(settings, "Game", "Car", 2.4, 200, T0);
 
             settings.ExportLearnedMaxima(out Dictionary<string, double> accel, out Dictionary<string, double> decel);
             Assert.True(accel.Count > 0);
@@ -335,8 +449,129 @@ namespace QAdvanceFeedback.Tests
             var restored = new GForceSettings { AccelMaxMode = GMaxMode.Auto, DecelMaxMode = GMaxMode.Auto };
             restored.ImportLearnedMaxima(accel, decel);
 
-            Assert.Equal(1.2, restored.GetLearnedAccelMaxG("Game", "Car"), 6);
-            Assert.Equal(2.4, restored.GetLearnedDecelMaxG("Game", "Car"), 6);
+            Assert.Equal(1.2, restored.GetLearnedAccelMaxG("Game", "Car"), 2);
+            Assert.Equal(2.4, restored.GetLearnedDecelMaxG("Game", "Car"), 2);
+            // The RAW value round-trips immediately (the owner's explicit "switching cars mid-session/
+            // restart picks up that car's own value" requirement, satisfied by GetLearned*MaxG above) -
+            // the EFFECTIVE (engine-fed) value settles to it too, once past any ramp the jump from the
+            // fixed default might trigger.
+            restored.EffectiveAccelMaxG("Game", "Car", T0);
+            restored.EffectiveDecelMaxG("Game", "Car", T0);
+            Assert.Equal(1.2, restored.EffectiveAccelMaxG("Game", "Car", FullyRampedAt(T0)), 2);
+            Assert.Equal(2.4, restored.EffectiveDecelMaxG("Game", "Car", FullyRampedAt(T0)), 2);
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // DEFAULT MODE -> AUTO (docs\robust-auto-gforce-report.md, verification item 6) - AUTO's worst
+        // case (no evidence) must be bit-for-bit identical to FIXED.
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void Accel_and_decel_max_mode_default_to_Auto()
+        {
+            var settings = new GForceSettings();
+            Assert.Equal(GMaxMode.Auto, settings.AccelMaxMode);
+            Assert.Equal(GMaxMode.Auto, settings.DecelMaxMode);
+        }
+
+        [Fact]
+        public void Autos_worst_case_with_no_evidence_is_bit_for_bit_identical_to_fixed()
+        {
+            var auto = new GForceSettings { AccelMaxMode = GMaxMode.Auto, DecelMaxMode = GMaxMode.Auto, FixedAccelMaxG = 0.75, FixedDecelMaxG = 1.5 };
+            var fixedOnly = new GForceSettings { AccelMaxMode = GMaxMode.Fixed, DecelMaxMode = GMaxMode.Fixed, FixedAccelMaxG = 0.75, FixedDecelMaxG = 1.5 };
+
+            Assert.Equal(fixedOnly.EffectiveAccelMaxG("Game", "Car"), auto.EffectiveAccelMaxG("Game", "Car"), 9);
+            Assert.Equal(fixedOnly.EffectiveDecelMaxG("Game", "Car"), auto.EffectiveDecelMaxG("Game", "Car"), 9);
+            Assert.Equal(fixedOnly.EffectiveAccelTransitionScale("Game", "Car"), auto.EffectiveAccelTransitionScale("Game", "Car"), 9);
+            Assert.Equal(fixedOnly.EffectiveDecelTransitionScale("Game", "Car"), auto.EffectiveDecelTransitionScale("Game", "Car"), 9);
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // RAMP-IN WHEN AUTO ENGAGES (owner's explicit spec) - the worked examples: fixed=1.5, current
+        // rises to 5.5g then 6.0g. 0.5s -> 2.5, 1.5s -> 4.5, 1.0s(current=6.0) -> 3.75.
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void Ramp_matches_the_owners_own_worked_examples()
+        {
+            var settings = new GForceSettings { DecelMaxMode = GMaxMode.Auto, FixedDecelMaxG = 1.5 };
+            ObserveManyDecel(settings, "Game", "Car", 5.5, 200, T0);
+            DateTime crossing = T0.AddMilliseconds(199 * 5);
+
+            settings.EffectiveDecelMaxG("Game", "Car", crossing); // starts the ramp at `crossing`
+
+            Assert.Equal(2.5, settings.EffectiveDecelMaxG("Game", "Car", crossing.AddSeconds(0.5)), 2);
+            Assert.Equal(4.5, settings.EffectiveDecelMaxG("Game", "Car", crossing.AddSeconds(1.5)), 2);
+
+            // Before the 1.0s checkpoint, the underlying auto value rises to 6.0g (re-read LIVE each
+            // query, not frozen at ramp start - the owner's own explicit requirement) - the trimmed
+            // band's own top decile is homogeneous 6.0 once enough new readings arrive, regardless of
+            // the earlier 5.5g cluster still sitting lower in the (still-unaged) window.
+            ObserveManyDecel(settings, "Game", "Car", 6.0, 200, crossing.AddMilliseconds(1), stepMs: 3.0);
+
+            // At exactly 1.0s elapsed since the ramp started, weight = 0.5 - applied to the NOW-live 6.0g
+            // current value: 1.5 + 0.5*(6.0-1.5) = 3.75.
+            Assert.Equal(3.75, settings.EffectiveDecelMaxG("Game", "Car", crossing.AddSeconds(1.0)), 1);
+        }
+
+        [Fact]
+        public void Ramp_is_continuous_across_a_sweep_of_elapsed_time_no_step_anywhere()
+        {
+            var settings = new GForceSettings { DecelMaxMode = GMaxMode.Auto, FixedDecelMaxG = 1.5 };
+            ObserveManyDecel(settings, "Game", "Car", 5.0, 200, T0);
+            DateTime crossing = T0.AddMilliseconds(199 * 5);
+            settings.EffectiveDecelMaxG("Game", "Car", crossing);
+
+            double previous = settings.EffectiveDecelMaxG("Game", "Car", crossing);
+            for (double t = 0.05; t <= 2.5; t += 0.05)
+            {
+                double current = settings.EffectiveDecelMaxG("Game", "Car", crossing.AddSeconds(t));
+                Assert.True(Math.Abs(current - previous) < 0.2,
+                    $"ramp stepped between t={t - 0.05:0.00}s and t={t:0.00}s: {previous} -> {current}");
+                previous = current;
+            }
+        }
+
+        [Fact]
+        public void Ramp_restarts_for_a_brand_new_car_key()
+        {
+            var settings = new GForceSettings { DecelMaxMode = GMaxMode.Auto, FixedDecelMaxG = 1.5 };
+            ObserveManyDecel(settings, "Game", "CarA", 4.0, 200, T0);
+            DateTime crossing = T0.AddMilliseconds(199 * 5);
+            settings.EffectiveDecelMaxG("Game", "CarA", crossing);
+            Assert.Equal(4.0, settings.EffectiveDecelMaxG("Game", "CarA", FullyRampedAt(crossing)), 2);
+
+            // A brand-new key (different car) has never had a ramp started - its effective value is
+            // exactly the fixed default, immediately, regardless of what CarA's own ramp is doing.
+            Assert.Equal(1.5, settings.EffectiveDecelMaxG("Game", "CarB", crossing), 9);
+        }
+
+        [Fact]
+        public void A_large_drop_in_the_learned_value_is_ramped_not_stepped()
+        {
+            // No sample-count threshold to lose any more (the owner's revised, no-gate design) - what
+            // now triggers a ramp in EITHER direction is simply the SIZE of the change in the learner's
+            // own current estimate, e.g. a genuine surface/condition change once the old cluster ages out
+            // of the 2-minute window and is replaced by a much lower one.
+            var settings = new GForceSettings { DecelMaxMode = GMaxMode.Auto, FixedDecelMaxG = 1.5 };
+            ObserveManyDecel(settings, "Game", "Car", 4.0, 200, T0, stepMs: 500.0); // spans 0..99.5s
+            DateTime crossing = T0.AddSeconds(99.5);
+            settings.EffectiveDecelMaxG("Game", "Car", crossing);
+            Assert.Equal(4.0, settings.EffectiveDecelMaxG("Game", "Car", FullyRampedAt(crossing)), 2);
+
+            // Condition change: feed a new, much lower cluster far enough past the 2-minute window that
+            // the old 4.0g cluster fully ages out first.
+            DateTime t1 = crossing.AddMinutes(2).AddSeconds(1);
+            ObserveManyDecel(settings, "Game", "Car", 1.6, 200, t1, stepMs: 5.0);
+            DateTime lastNew = t1.AddMilliseconds(199 * 5);
+
+            // The INSTANT the new, much-lower value is detected, the published effective value must not
+            // step straight down to it.
+            double justAfter = settings.EffectiveDecelMaxG("Game", "Car", lastNew);
+            Assert.Equal(4.0, justAfter, 1);
+
+            double fullySettled = settings.EffectiveDecelMaxG("Game", "Car", FullyRampedAt(lastNew));
+            Assert.Equal(1.6, fullySettled, 1);
         }
 
         // ---------------------------------------------------------------------------------------
@@ -401,10 +636,9 @@ namespace QAdvanceFeedback.Tests
             // F1 braking peaks around 5-6g - comfortably under the 8g decel cap. A cap set too tight
             // would silently learn nothing and look identical to the plugin doing nothing at all.
             var settings = new GForceSettings { DecelMaxMode = GMaxMode.Auto };
-            settings.ObserveDecelG("Game", "Car", 5.0);
-            settings.ObserveDecelG("Game", "Car", 5.0);
+            ObserveManyDecel(settings, "Game", "Car", 5.0, 200, T0);
 
-            Assert.Equal(5.0, settings.EffectiveDecelMaxG("Game", "Car"), 6);
+            Assert.Equal(5.0, settings.GetLearnedDecelMaxG("Game", "Car"), 2);
         }
 
         [Fact]
@@ -412,10 +646,9 @@ namespace QAdvanceFeedback.Tests
         {
             // A top-fuel drag launch peaks around 4-5g - comfortably under the 6g accel cap.
             var settings = new GForceSettings { AccelMaxMode = GMaxMode.Auto };
-            settings.ObserveAccelG("Game", "Car", 4.5);
-            settings.ObserveAccelG("Game", "Car", 4.5);
+            ObserveManyAccel(settings, "Game", "Car", 4.5, 200, T0);
 
-            Assert.Equal(4.5, settings.EffectiveAccelMaxG("Game", "Car"), 6);
+            Assert.Equal(4.5, settings.GetLearnedAccelMaxG("Game", "Car"), 2);
         }
 
         [Fact]
@@ -439,13 +672,11 @@ namespace QAdvanceFeedback.Tests
         {
             // 7.0g sits ABOVE the 6g accel cap but BELOW the 8g decel cap - the asymmetry made concrete.
             var settings = new GForceSettings { AccelMaxMode = GMaxMode.Auto, DecelMaxMode = GMaxMode.Auto };
-            settings.ObserveAccelG("Game", "Car", 7.0);
-            settings.ObserveAccelG("Game", "Car", 7.0);
-            settings.ObserveDecelG("Game", "Car", 7.0);
-            settings.ObserveDecelG("Game", "Car", 7.0);
+            ObserveManyAccel(settings, "Game", "Car", 7.0, 200, T0);
+            ObserveManyDecel(settings, "Game", "Car", 7.0, 200, T0);
 
             Assert.Equal(0.0, settings.GetLearnedAccelMaxG("Game", "Car"), 6);
-            Assert.Equal(7.0, settings.GetLearnedDecelMaxG("Game", "Car"), 6);
+            Assert.Equal(7.0, settings.GetLearnedDecelMaxG("Game", "Car"), 2);
         }
 
         // ---------------------------------------------------------------------------------------
@@ -460,13 +691,12 @@ namespace QAdvanceFeedback.Tests
         public void MUTATION_evidence_a_loose_symmetric_20g_cap_would_have_learned_the_impact_reading()
         {
             var looseLearner = new QAdvanceFeedback.Core.GForce.GForceMaxLearner(learnCapG: 20.0);
-            looseLearner.Observe("Game", "Car", 18.0);
-            looseLearner.Observe("Game", "Car", 18.0);
+            looseLearner.Observe("Game", "Car", 18.0, T0);
 
             // This IS the implausible-maximum failure mode the tight, derived cap (used by the real
             // GForceSettings, see An_impact_magnitude_reading_is_rejected_by_both_learners above) exists
             // to prevent.
-            Assert.Equal(18.0, looseLearner.GetLearnedMax("Game", "Car"), 6);
+            Assert.Equal(18.0, looseLearner.GetLearnedMax("Game", "Car"), 2);
         }
     }
 }

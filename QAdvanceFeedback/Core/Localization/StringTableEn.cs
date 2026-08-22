@@ -21,7 +21,7 @@ namespace QAdvanceFeedback.Core.Localization
             ["Group.TriggerThreshold"] = "Trigger threshold",
             ["Group.Sources"] = "Sources",
             ["Group.Aggregation"] = "Wheel combination",
-            ["Group.Curve"] = "Output shaping",
+            ["Group.Curve"] = "Output data and shaping",
             ["Group.Pulse"] = "Pulse at maximum",
             ["Group.GForceMaxima"] = "Maximum G",
             ["Group.GForceSustain"] = "Sustained feel",
@@ -94,6 +94,11 @@ namespace QAdvanceFeedback.Core.Localization
             ["Curve.Preset.Custom"] = "Custom",
             ["Curve.Column.RawValue"] = "raw value",
             ["Curve.Column.OutputValue"] = "output value",
+            // PRE-RELEASE ADDITION (configurable per-setpoint flatten ranges): a third NumericUpDown
+            // column per setpoint row, defaulting to 3/2/2 for Powerful/Ideal/Max Grip - see
+            // OutputProjector.AcceptSetpointWithFlatten's own remarks for the exact mechanism.
+            ["Curve.Column.FlattenRange"] = "flatten range",
+            ["Curve.Column.FlattenRange.Note"] = "How far either side of this set point (in raw input units) stays close to its own output, forming a near-flat platform instead of a sharp ramp through it. 0 disables flattening for this set point. Ships at 3/2/2 for the Powerful/Ideal/Max Grip set points by default, so the Ideal and Max Grip plateaus land exactly on the shared 60 and 80 band boundaries.",
             // Replaces the old per-row LIVE readout ("at this input, the curve currently sends
             // {0}") - redundant with the spinner textboxes right next to it, which already show the
             // current values. Instead states the SHIPPED DEFAULT input->output mapping for this
@@ -107,33 +112,106 @@ namespace QAdvanceFeedback.Core.Localization
             ["Curve.Anchor.LiveDiffersFormat"] = "note: the curve actually returns {0} here, not what you typed - it may be clamped or dropped",
 
             ["Curve.StartPoint.Label"] = "Start value:",
-            ["Curve.StartPoint.AlwaysZero"] = "(always 0)",
             ["Curve.EndPoint.Label"] = "End value:",
-            ["Curve.EndPoint.AlwaysFull"] = "(always 100)",
+            // PRE-RELEASE ADDITION: the old static "(always 0)"/"(always 100)" text is replaced by real
+            // editable Start/End output spinners (Curve.StartOutput/Curve.EndOutput in the XAML) - these
+            // are their tooltips. See ProjectorSettings.StartOutput/EndOutput's own remarks for the
+            // continuous-floor/ceiling design and the "permanent baseline hum" consequence.
+            ["Curve.StartOutput.Help"] = "The output held at and below the Start raw value, to the left - a continuous baseline, not a one-time floor: once the channel engages, this level is felt for as long as the input stays at or below Start. 0 by default (no output at all before Start). Raising it is useful if a motor's own dead zone would otherwise swallow a small value, but it becomes a permanent hum for the entire time the channel is engaged, not merely a raised floor on the ramp.",
+            ["Curve.EndOutput.Help"] = "The output held at and above the End raw value, to the left - a hard ceiling on the maximum strength the effect can ever reach. 100 by default (full strength). Lower it to cap the effect below full strength.",
 
-            ["Curve.Anchor.Slightly"] = "Slightly",
-            ["Curve.Anchor.Ideal"] = "Ideal",
-            ["Curve.Anchor.Critical"] = "Critical",
+            // RENAMED (v1.0.6.9 rework, Goal 4 - docs\v1068-rework-report.md), only after Goal 3's
+            // 30/60 anchors were verified: "Slightly" -> "Powerful". New meaning, matching the owner's
+            // own final specification: near-30 marks the start of a POWERFUL brake/throttle application -
+            // good enough, but not yet ideal; holding in the 30-60 band gives a GOOD brake/throttle;
+            // holding in the 60-80 band gives the IDEAL brake/throttle and the best result.
+            //
+            // PRE-RELEASE ADDITION: each label now carries a parenthesised NUMBER - the NORMALIZED BAND
+            // value the anchor's own flatten-range plateau reaches (30/60/80), deliberately DIFFERENT
+            // from the curve editor's own "raw value" column for Ideal/Max Grip (62/78 - the underlying
+            // threshold, moved there so the plateau EDGES land on 60/80 - see ProjectorSettings'
+            // Change-2c remarks). This is deliberately STATIC text, not generated from the threshold
+            // field, per the owner's own explicit instruction (auto-generating it would show 62/78 and
+            // defeat the point of the parenthesised number).
+            //
+            // 1.0.6.0 (docs\release-1060-report.md, Part 2's UI half) - these labels now LIVE-SWITCH
+            // with Wheel Lock's own Normalize Pattern selector (Wheel Slip has no selector and keeps a
+            // single, fixed set always - see the "Curve.Anchor.Slip.*" keys below, which restore the
+            // ORIGINAL "Slightly"/"Ideal" wording an earlier rename had incorrectly applied to Slip too,
+            // since Slip shared the same keys Lock's Mapping-mode rename touched):
+            // <list type="bullet">
+            // <item>Mapping (default): "Powerful (30)" / "Perfect (60)" / "Max Grip (80)" - the v1.0.6.9
+            // rework's own wording above, with "Ideal" renamed to "Perfect" to free up "Ideal" for
+            // Max-Grip Only mode below.</item>
+            // <item>Max-Grip Only: "Slightly (30)" / "Ideal (60)" / "Max Grip (80)" - the ORIGINAL,
+            // pre-rework wording (see docs\release-1060-report.md's own 1.0.5 comparison), since under
+            // this pattern only the Max-Grip anchor's own output is guaranteed reliable and the simpler,
+            // older framing fits that better.</item>
+            // </list>
+            // The THIRD anchor ("Max Grip (80)") is IDENTICAL text in both modes - only the first two
+            // change - so it keeps a single shared key.
+            ["Curve.Anchor.Lock.Mapping.Slightly"] = "Powerful (30)",
+            ["Curve.Anchor.Lock.Mapping.Ideal"] = "Perfect (60)",
+            ["Curve.Anchor.Lock.MaxGripOnly.Slightly"] = "Slightly (30)",
+            ["Curve.Anchor.Lock.MaxGripOnly.Ideal"] = "Ideal (60)",
+            ["Curve.Anchor.Slip.Slightly"] = "Slightly (30)",
+            ["Curve.Anchor.Slip.Ideal"] = "Ideal (60)",
+            ["Curve.Anchor.Critical"] = "Max Grip (80)",
+
+            // ---- Normalize Pattern selector (1.0.6.0, docs\release-1060-report.md, Part 2's UI half) -
+            // Wheel Lock ONLY, at the top of the "Output data and shaping" section. Wheel Slip has no
+            // equivalent control at all; it always uses the Mapping-equivalent formula it always has.
+            // Default is Mapping (matches NormalizedWheelLockSlipEngine.LockNormalizePattern's own
+            // field-initialiser default and WheelChannelSettings.NormalizePattern's own default).
+            ["Curve.NormalizePattern.Label"] = "Normalize Pattern:",
+            ["Curve.NormalizePattern.MaxGripOnly"] = "Max-Grip Only",
+            ["Curve.NormalizePattern.Mapping"] = "Max-Grip/S90/S75 Mapping",
+            ["Curve.NormalizePattern.MaxGripOnly.Desc"] = "Only applies general scaling based on the Max-Grip point. Only the Max-Grip normalized output is guaranteed reliable.",
+            ["Curve.NormalizePattern.Mapping.Desc"] = "Applies scaling based on the 100%/90%/75% points of Max-Grip, each range scaled individually. The 100%/90%/75% normalized outputs are guaranteed reliable.",
 
             // Band meaning these anchors are built around (verified numerically, see
-            // docs\refinements-report.md): 0-30 light/margin available, 30-60 the IDEAL working
-            // range (best performance - hold it here), 60-80 starting to lock/spin - NOT yet fully
-            // locked/spinning but very close, reduce brake/throttle immediately - 100 fully
-            // locked/spinning. The anchor INPUT positions (30/60/80/100) are shared by both channels;
-            // only the OUTPUT feel differs (Slip is gentler throughout, matching its own curve).
-            ["Curve.Lock.AnchorNote"] = "Each row reads \"when the lock value reaches this raw value, send this output\". Curve (the default) sends 30 to 10, 60 to 30 and 80 to 80 - almost nothing during light braking, a clear buzz in the ideal zone, then a hard ramp as the tyre approaches lock.",
-            ["Curve.Lock.StartPoint.Desc"] = "Nothing below this point produces any output. Raise it if light braking buzzes more than you want. Ships at {0} by default.",
-            ["Curve.Lock.Slightly.Desc"] = "You're just entering the tyre's working range - below this you still have margin, above this you're using real grip. Keep this low to feel nothing during ordinary, gentle braking.",
-            ["Curve.Lock.Ideal.Desc"] = "You're at the edge of the ideal braking zone - maximum effective braking, right before the wheel starts to lock. This is the sweet spot: hold the brake here for the fastest stop.",
-            ["Curve.Lock.Critical.Desc"] = "The wheel is right on the verge of locking - not locked yet, but only moments away. Ease off the brake immediately.",
-            ["Curve.Lock.EndPoint.Desc"] = "At and above this point the wheel is fully locked and sliding - the output is always full strength. Ships at {0} by default.",
+            // docs\refinements-report.md; the anchor rescale that moved the grip-limit anchor onto
+            // this top anchor's own input position is documented in docs\anchor-rescale-report.md):
+            // 0-30 light/margin available, 30-60 power braking/acceleration working up toward ideal,
+            // 60-80 the ideal working range (best performance - hold it here), up to the measured
+            // grip limit AT 80 - the maximum braking/traction the tyre can deliver - 80-100 past the
+            // limit, the wheel is locking/spinning, reduce brake/throttle immediately. The anchor
+            // BAND positions (30/60/80/100) are shared by both channels; only the OUTPUT feel
+            // differs (Slip is gentler throughout, matching its own curve). PRE-RELEASE Change 2c:
+            // the Ideal/Max Grip curve editor THRESHOLDS moved to 62/78 (paired with flatten ranges of
+            // 2 each) so each plateau's own edge still lands exactly on the shared 60/80 boundary -
+            // "raw value" 62/78 below is what the curve editor's own column shows.
+            // 1.0.6.0 (docs\release-1060-report.md, Part 4d): the "78 to 80" figure below became stale
+            // once Lock's own Critical/Max Grip OUTPUT moved 80 -> 60 - corrected to "78 to 60", and the
+            // "reaching full strength right at the limit" claim (which was only ever true while Critical
+            // output was 80) is removed since Max Grip no longer reads full strength.
+            ["Curve.Lock.AnchorNote"] = "Each row reads \"when the lock value reaches this raw value, send this output\". Curve (the default) sends 30 to 10, 62 to 30 and 78 to 60 - almost nothing during light braking, a clear buzz in the ideal zone, then a strong cue as the tyre approaches lock. Each anchor's own flatten range widens it into a brief plateau instead of a sharp ramp through it - by default the Ideal and Max Grip plateaus land exactly on the shared 60 and 80 band boundaries (60-64 and 76-80), smooth in between and ramping quickly outside that 60-80 band.",
+            ["Curve.Lock.StartPoint.Desc"] = "Below this raw value the output holds steady at the Start output shown to the right (0 by default - no output at all). Raise the raw value if light braking buzzes more than you want. Ships at {0} by default.",
 
-            ["Curve.Slip.AnchorNote"] = "Each row reads \"when the slip value reaches this raw value, send this output\". Curve (the default) sends 30 to 8, 60 to 20 and 80 to 75 - the same band boundaries as the lock curve, but gentler throughout: almost nothing during gentle throttle, a clear cue in the ideal zone, then a hard ramp as the tyre approaches the traction limit.",
-            ["Curve.Slip.StartPoint.Desc"] = "Nothing below this point produces any output. Raise it if light throttle buzzes more than you want. Ships at {0} by default.",
-            ["Curve.Slip.Slightly.Desc"] = "The tyre is just starting to work under power - below this you still have margin, above this you're really putting power down. Keep this low to feel nothing under gentle, controlled throttle.",
-            ["Curve.Slip.Ideal.Desc"] = "You're at the edge of the ideal traction zone - putting down maximum power, right before the tyre starts to spin. This is the sweet spot for the fastest exit without wheelspin.",
-            ["Curve.Slip.Critical.Desc"] = "The wheel is right on the verge of spinning - not spinning yet, but only moments away. Ease off the throttle immediately.",
-            ["Curve.Slip.EndPoint.Desc"] = "At and above this point the wheel is fully spinning and drive is being wasted - the output is always full strength. Ships at {0} by default.",
+            // 1.0.6.0 (docs\release-1060-report.md, Part 2's UI half) - Lock's Slightly/Ideal
+            // descriptions now LIVE-SWITCH with the Normalize Pattern selector; see
+            // "Curve.Anchor.Lock.*" above for the matching label rename. Mapping mode keeps the
+            // v1.0.6.9 rework's own "Powerful"/"Perfect" wording (renamed from "Ideal" only in display
+            // text; the underlying band meaning is unchanged); Max-Grip Only mode restores the ORIGINAL,
+            // pre-rework 1.0.5 wording verbatim (extracted from that release's own shipped source), since
+            // under this pattern only the Max-Grip anchor's own output is guaranteed reliable and the
+            // simpler, older framing fits that better.
+            ["Curve.Lock.Mapping.Slightly.Desc"] = "This is where a POWERFUL brake application starts, at raw value 30 - good enough, but not yet ideal. Holding the brake in the band above this (up to Perfect) gives a good, solid stop; holding it in the Perfect-to-Max-Grip band gives the ideal brake and the best result. Keep this low to feel nothing during ordinary, gentle braking.",
+            ["Curve.Lock.Mapping.Ideal.Desc"] = "You're at the edge of the perfect braking zone, starting at raw value 60 - maximum effective braking, right before the wheel starts to lock. This is the sweet spot: hold the brake here for the fastest stop.",
+            // VERBATIM from QAdvanceFeedback_1.0.5.zip's own StringTableEn.cs (Curve.Lock.Slightly.Desc/
+            // Curve.Lock.Ideal.Desc, before the v1.0.6.9 rework and the 62/78 threshold move) - no raw
+            // value called out, since 1.0.5 predates both.
+            ["Curve.Lock.MaxGripOnly.Slightly.Desc"] = "You're just entering the tyre's working range - below this you still have margin, above this you're using real grip. Keep this low to feel nothing during ordinary, gentle braking.",
+            ["Curve.Lock.MaxGripOnly.Ideal.Desc"] = "You're at the edge of the ideal braking zone - maximum effective braking, right before the wheel starts to lock. This is the sweet spot: hold the brake here for the fastest stop.",
+            ["Curve.Lock.Critical.Desc"] = "This is the measured grip limit, at raw value 80 - the maximum braking force the tyre can deliver. Above this point you are past the limit and the wheel is locking. Release the brake immediately.",
+            ["Curve.Lock.EndPoint.Desc"] = "At and above this raw value the wheel is fully locked and sliding, and the output holds steady at the End output shown to the right (100 by default - full strength). Lower the End output to cap how strong the cue is ever allowed to get. Ships at {0} by default.",
+
+            ["Curve.Slip.AnchorNote"] = "Each row reads \"when the slip value reaches this raw value, send this output\". Curve (the default) sends 30 to 10, 62 to 35 and 78 to 70 - the same band boundaries as the lock curve, and now much closer to it in the ideal zone too: almost nothing during gentle throttle, a clear cue in the ideal zone, then a strong cue as the tyre approaches the traction limit. Each anchor's own flatten range widens it into a brief plateau instead of a sharp ramp through it - by default the Ideal and Max Grip plateaus land exactly on the shared 60 and 80 band boundaries (60-64 and 76-80), smooth in between and ramping quickly outside that 60-80 band.",
+            ["Curve.Slip.StartPoint.Desc"] = "Below this raw value the output holds steady at the Start output shown to the right (0 by default - no output at all). Raise the raw value if light throttle buzzes more than you want. Ships at {0} by default.",
+            ["Curve.Slip.Slightly.Desc"] = "This is where a POWERFUL throttle application starts, at raw value 30 - good enough, but not yet ideal. Holding the throttle in the band above this (up to Ideal) gives a good, solid launch; holding it in the Ideal-to-Max-Grip band gives the ideal throttle and the best result. Keep this low to feel nothing under gentle, controlled throttle.",
+            ["Curve.Slip.Ideal.Desc"] = "You're at the edge of the ideal traction zone, starting at raw value 60 - putting down maximum power, right before the tyre starts to spin. This is the sweet spot for the fastest exit without wheelspin.",
+            ["Curve.Slip.Critical.Desc"] = "This is the measured grip limit, at raw value 80 - the maximum traction the tyre can deliver. Above this point you are past the limit and the wheel is spinning. Release the throttle immediately.",
+            ["Curve.Slip.EndPoint.Desc"] = "At and above this raw value the wheel is fully spinning and drive is being wasted, and the output holds steady at the End output shown to the right (100 by default - full strength). Lower the End output to cap how strong the cue is ever allowed to get. Ships at {0} by default.",
 
             // ---- Pulse ----
             ["Pulse.Enable"] = "Pulse instead of holding flat at maximum",
@@ -147,7 +225,9 @@ namespace QAdvanceFeedback.Core.Localization
             ["GForce.DecelMax.Label"] = "Maximum braking G",
             ["GForce.Mode.Fixed"] = "Fixed",
             ["GForce.Mode.Auto"] = "Auto (learn while driving)",
-            ["GForce.LearnedValueFormat"] = "Learned for this car: {0:0.00} g",
+            ["GForce.Readout.Fixed"] = "Fixed: {0:0.0}G",
+            ["GForce.Readout.Auto.Detected"] = "Default: {0:0.0}G. Auto detected: {1:0.0}G",
+            ["GForce.Readout.Auto.NoDataYet"] = "Default: {0:0.0}G. Auto: still using default (no data yet)",
             ["GForce.RecommendedHz.Note"] = "Recommended pad frequency for configuring your ShakeIt channels: {0:0} Hz at value 0, down to {1:0} Hz at value 100.",
 
             ["GForce.Sustain.Note"] = "Under sustained hard braking or acceleration, the trailing pads keep a weaker vibration instead of fading to nothing, so the feel stays continuous. Defaults are derived from this engine's own model, not arbitrary numbers - 0% reproduces the old fade-to-nothing behaviour.",
@@ -155,6 +235,9 @@ namespace QAdvanceFeedback.Core.Localization
             ["GForce.SustainTau.Label"] = "Level response time (s)",
             ["GForce.TransientTau.Label"] = "Sweep smoothing time (s)",
             ["GForce.TransientGain.Label"] = "Sweep speed",
+            ["GForce.TransitionScale.Auto.Label"] = "Transition scale (Auto mode)",
+            ["GForce.TransitionScale.Fixed.Label"] = "Transition scale (Fixed mode)",
+            ["GForce.TransitionScale.Note"] = "Amplifies the travelling sensation of the sweep so a low-grip car still produces a full-feeling transition, without changing how hard the sustained level says you are actually braking or accelerating relative to the car's own capability - that always stays true to the real g. Two separate scales apply depending on whether the axis is set to Auto or Fixed above (blended smoothly, never a sudden jump, whenever the axis switches between using its default and using a detected value). 1.0 reproduces the original, unscaled sweep exactly; 0 turns the extra amplification off entirely without touching the sustain.",
             ["GForce.Sustain.BrakeBottomRear"] = "Braking - Bottom Rear sustain (%)",
             ["GForce.Sustain.BrakeBackLow"] = "Braking - Back Low sustain (%)",
             ["GForce.Sustain.AccelBottomRear"] = "Acceleration - Bottom Rear sustain (%)",
@@ -180,6 +263,50 @@ namespace QAdvanceFeedback.Core.Localization
             ["General.EnableDiagnostics.RestartNote"] = "SimHub registers properties once at startup - this box needs a SimHub restart to take effect, not just Apply.",
             ["General.ExportCsv"] = "Export session to CSV",
             ["General.ExportCsv.Note"] = "When on, every property (including diagnostics) is written to a CSV file for troubleshooting, in the same folder as this plugin's settings. When off, nothing is written. Takes effect immediately - no restart needed.",
+            // 1.0.6.0 (docs\release-1060-report.md, Part 4f) - {0} is read from the running assembly's
+            // own AssemblyFileVersion at display time, never hardcoded - see SettingsControl.xaml.cs's
+            // own remarks on why (a hand-typed version string cannot be caught by the compiler when it
+            // drifts from the DLL actually shipped, the same lesson docs\curve-help-text-report.md
+            // already drew for the curve editor's own help text).
+            ["General.Version.Label"] = "QAdvanceFeedback version: {0}",
+
+            // ---- Plugin health section (General tab) - invisible/one-line when nothing is wrong;
+            // see Core.Health.HealthRegistry. ----
+            ["Group.Health"] = "Plugin health",
+            ["Health.AllGood"] = "All systems normal - nothing to report.",
+            ["Health.CopyDetails"] = "Copy details for a bug report",
+            ["Health.CopyDetails.Done"] = "Copied to clipboard.",
+            ["Health.SimHubUpdateNeeded"] = "This feature needs an update for your SimHub version.",
+
+            ["Health.Subsystem.ScriptEditor"] = "Script editor",
+            ["Health.Subsystem.PropertyPicker"] = "Property picker",
+            ["Health.Subsystem.ExpressionEvaluator"] = "Expression evaluator",
+            ["Health.Subsystem.ShakeItExport"] = "ShakeIt Motors export reading",
+            ["Health.Subsystem.CapabilityDetection"] = "Capability detection",
+            ["Health.Subsystem.ConfigPersistence"] = "Settings file",
+            ["Health.Subsystem.RuntimePersistence"] = "Learned-calibration file",
+            ["Health.Subsystem.CsvExport"] = "CSV export",
+            ["Health.Subsystem.BackgroundFlush"] = "Background save",
+            ["Health.Subsystem.TelemetryAdapter"] = "Telemetry processing",
+            ["Health.Subsystem.PropertyPublish"] = "Property publishing",
+            ["Health.Subsystem.Init"] = "Plugin startup",
+            ["Health.Subsystem.Shutdown"] = "Plugin shutdown",
+            ["Health.Subsystem.SettingsUi"] = "Settings screen",
+
+            ["Health.Impact.ScriptEditor"] = "The built-in script editor button is unavailable. You can still type a plain SimHub property name or a formula by hand into the Source field.",
+            ["Health.Impact.PropertyPicker"] = "The property picker ('Pick...') button is unavailable. You can still type a plain SimHub property name by hand into the Source field.",
+            ["Health.Impact.ExpressionEvaluator"] = "JavaScript/NCalc expressions cannot be evaluated this session. Configured sources fall back to plain SimHub property names only.",
+            ["Health.Impact.ShakeItExport"] = "Reading ShakeIt Motors' exported wheel properties failed unexpectedly. This channel falls back to its own Raw values automatically.",
+            ["Health.Impact.CapabilityDetection"] = "Diagnostic wheel-telemetry/capability properties are unavailable this session. The main Wheel Lock/Slip and G-Force outputs are unaffected.",
+            ["Health.Impact.ConfigPersistence"] = "Your settings could not be loaded or saved; shipped defaults are being used instead. Re-apply your tuning once this is resolved.",
+            ["Health.Impact.RuntimePersistence"] = "Learned calibration data could not be loaded or saved; the plugin keeps learning fresh this session but may not remember it next time.",
+            ["Health.Impact.CsvExport"] = "CSV session export stopped; every other feature is unaffected.",
+            ["Health.Impact.BackgroundFlush"] = "Learned calibration could not be saved in the background; it will still be saved once when SimHub closes, if possible.",
+            ["Health.Impact.TelemetryAdapter"] = "One or more telemetry frames were skipped; output pauses briefly rather than showing an incorrect value.",
+            ["Health.Impact.PropertyPublish"] = "One of this plugin's published SimHub properties briefly reported a neutral value instead of its real reading.",
+            ["Health.Impact.Init"] = "The plugin did not finish starting up this session; its outputs may be inactive until SimHub is restarted.",
+            ["Health.Impact.Shutdown"] = "The plugin could not fully save state while SimHub was closing.",
+            ["Health.Impact.SettingsUi"] = "The settings screen failed to load; see the SimHub log for details.",
         };
     }
 }

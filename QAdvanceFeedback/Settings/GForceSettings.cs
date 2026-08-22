@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.GForce;
@@ -39,25 +40,32 @@ namespace QAdvanceFeedback.Settings
     {
         private const double MinAllowedMaxG = 0.05;
 
-        private double _fixedAccelMaxG = 0.9;
-        private double _fixedDecelMaxG = 2.0;
+        private double _fixedAccelMaxG = 0.75;
+        private double _fixedDecelMaxG = 1.5;
 
         /// <summary>
-        /// FIXED mode on/off for the acceleration axis. Default <see cref="GMaxMode.Fixed"/> so a
-        /// freshly-installed plugin behaves predictably before any learning has happened.
+        /// AUTO/FIXED mode for the acceleration axis. Default <see cref="GMaxMode.Auto"/>
+        /// (docs\robust-auto-gforce-report.md - CHANGED from the original <see cref="GMaxMode.Fixed"/>
+        /// default): below <see cref="GForceMaxLearner.DefaultMinSamples"/> valid samples, AUTO's own
+        /// effective value IS the FIXED default (see <see cref="EffectiveAccelMaxG"/>) - so a freshly
+        /// installed plugin's WORST case under this new default is bit-for-bit identical to shipping
+        /// FIXED, and it can only ever improve on that once real evidence accumulates. There is no path
+        /// in this implementation where AUTO is worse than FIXED (see that method's own remarks).
         /// </summary>
-        public GMaxMode AccelMaxMode { get; set; } = GMaxMode.Fixed;
+        public GMaxMode AccelMaxMode { get; set; } = GMaxMode.Auto;
 
-        /// <summary>FIXED mode on/off for the deceleration/braking axis. See
+        /// <summary>AUTO/FIXED mode for the deceleration/braking axis. See
         /// <see cref="AccelMaxMode"/>'s remarks.</summary>
-        public GMaxMode DecelMaxMode { get; set; } = GMaxMode.Fixed;
+        public GMaxMode DecelMaxMode { get; set; } = GMaxMode.Auto;
 
         /// <summary>
-        /// Default rationale (feel over physical realism, per the brief's own instruction): 2.0g for
-        /// braking. The brief's own example is that even an F1 car's hardest braking should hit the
-        /// top of the scale quickly - 2.0g comfortably covers hard-braking road/GT/formula content in
-        /// typical sim titles (most peak well under this under braking) while leaving enough headroom
-        /// that the meter isn't permanently pegged at 100 for merely firm braking.
+        /// Default rationale (feel over physical realism, per the brief's own instruction): **1.5g**
+        /// for braking (REVISED DOWN from an original 2.0g - docs\gforce-transition-scale-report.md -
+        /// a legitimate default change, not a weakened assertion: the owner wants the meter to read as
+        /// full sooner). The brief's own example is that even an F1 car's hardest braking should hit
+        /// the top of the scale quickly - 1.5g comfortably covers hard-braking road/GT content in
+        /// typical sim titles while an F1 car's own genuine braking now saturates the meter promptly
+        /// rather than needing to reach all the way to 2.0g first.
         /// </summary>
         public double FixedDecelMaxG
         {
@@ -66,13 +74,15 @@ namespace QAdvanceFeedback.Settings
         }
 
         /// <summary>
-        /// Default rationale: 0.9g for acceleration - deliberately lower than the 2.0g braking
-        /// default because sustained acceleration-g is physically smaller than braking-g for almost
-        /// all vehicles in typical sim content (acceleration is power/traction-limited; braking gets
-        /// the combined benefit of tyre grip plus aerodynamic downforce at speed). Using the same
-        /// ceiling for both axes would make acceleration feel permanently numb by comparison; 0.9g
-        /// lets a strong (not necessarily record) launch or mid-corner power-down clearly reach
-        /// toward the top of the scale.
+        /// Default rationale: **0.75g** for acceleration (REVISED DOWN from an original 0.9g -
+        /// docs\gforce-transition-scale-report.md, alongside <see cref="FixedDecelMaxG"/>'s own
+        /// revision) - deliberately lower than the braking default because sustained acceleration-g is
+        /// physically smaller than braking-g for almost all vehicles in typical sim content
+        /// (acceleration is power/traction-limited; braking gets the combined benefit of tyre grip plus
+        /// aerodynamic downforce at speed). Using the same ceiling for both axes would make acceleration
+        /// feel permanently numb by comparison; 0.75g lets a strong (not necessarily record) launch or
+        /// mid-corner power-down clearly reach toward the top of the scale, sooner than the original
+        /// 0.9g did.
         /// </summary>
         public double FixedAccelMaxG
         {
@@ -229,6 +239,39 @@ namespace QAdvanceFeedback.Settings
             set => _transientGain = value >= 0.0 ? value : 0.0;
         }
 
+        private double _autoTransitionAnimationScale = 1.2;
+        private double _fixedTransitionAnimationScale = 1.5;
+
+        /// <summary>
+        /// MODE-DEPENDENT TRANSITION SCALING (docs\robust-auto-gforce-report.md - REPLACES the single
+        /// <c>TransitionAnimationScale</c> setting this class previously carried): the transition scale
+        /// used while the relevant axis is in AUTO mode. Default **1.2** (owner-specified) - a smaller
+        /// amplification than <see cref="FixedTransitionAnimationScale"/>'s 1.5, since an AUTO-learned
+        /// max is already, by construction, closer to what this car/session genuinely achieves (less
+        /// "low-G car needs help reaching a full-feeling transition" headroom to make up than a
+        /// one-size-fits-all FIXED default has). Clamped to [0, <see cref="GForceEngine.MaxTransitionAnimationScale"/>].
+        /// See <see cref="EffectiveAccelTransitionScale"/>/<see cref="EffectiveDecelTransitionScale"/>
+        /// for how this and <see cref="FixedTransitionAnimationScale"/> are combined without a step at
+        /// the sample threshold.
+        /// </summary>
+        public double AutoTransitionAnimationScale
+        {
+            get => _autoTransitionAnimationScale;
+            set => _autoTransitionAnimationScale = ClampMath.Clamp(value, 0.0, GForceEngine.MaxTransitionAnimationScale);
+        }
+
+        /// <summary>The transition scale used while the relevant axis is in FIXED mode, and also the
+        /// value AUTO mode itself uses whenever its own effective max IS the fixed default (below the
+        /// evidence threshold - see <see cref="EffectiveAccelTransitionScale"/>'s own remarks). Default
+        /// **1.5** - unchanged from this class's previous single-setting default
+        /// (docs\gforce-transition-scale-report.md), so a FIXED-mode driver's feel is completely
+        /// unaffected by this change. Clamped to [0, <see cref="GForceEngine.MaxTransitionAnimationScale"/>].</summary>
+        public double FixedTransitionAnimationScale
+        {
+            get => _fixedTransitionAnimationScale;
+            set => _fixedTransitionAnimationScale = ClampMath.Clamp(value, 0.0, GForceEngine.MaxTransitionAnimationScale);
+        }
+
         /// <summary>
         /// Applies every model/algorithm setting on this object to <paramref name="engine"/> - the one
         /// place that keeps the settings POCO and the live engine's tunable properties from drifting
@@ -245,6 +288,13 @@ namespace QAdvanceFeedback.Settings
             engine.SustainTimeConstantSeconds = SustainTimeConstantSeconds;
             engine.TransientTimeConstantSeconds = TransientTimeConstantSeconds;
             engine.TransientGain = TransientGain;
+            // NOT a single TransitionAnimationScale push any more (docs\robust-auto-gforce-report.md) -
+            // the engine's own per-frame Compute call now always receives the two MODE-DEPENDENT,
+            // per-key blended scales explicitly (see EffectiveAccelTransitionScale/
+            // EffectiveDecelTransitionScale) from the composition root, so engine.TransitionAnimationScale
+            // is left at its own bare-constructor default here, only ever mattering as a defensive
+            // fallback for a caller that invokes Compute without either override.
+            engine.TransitionAnimationScale = FixedTransitionAnimationScale;
             engine.IntegrateWheelLockAndSlip = IntegrateWheelLockAndSlip;
             engine.ShakeFrequencyHz = ShakeFrequencyHz;
             engine.WheelLockShakeScale = WheelLockShakeScale;
@@ -278,6 +328,115 @@ namespace QAdvanceFeedback.Settings
         private readonly GForceMaxLearner _decelLearner = new GForceMaxLearner(DecelLearnMaxPlausibleG);
         private readonly TelemetryLearningGate _learningGate = new TelemetryLearningGate();
 
+        // ---- RAMP-IN WHEN AUTO ENGAGES (docs\robust-auto-gforce-report.md, owner's explicit spec) -
+        // one MaxRamp per (gameId,carId) key, per axis, so switching cars/games gets its own
+        // independent ramp (a brand-new key starts a Dictionary lookup miss -> a fresh MaxRamp -> weight
+        // 0 -> effective value exactly the FIXED default, confirmed by MaxRampTests). See MaxRamp's own
+        // remarks for the full mechanism.
+        private readonly Dictionary<string, MaxRamp> _accelRamps = new Dictionary<string, MaxRamp>(StringComparer.Ordinal);
+        private readonly Dictionary<string, MaxRamp> _decelRamps = new Dictionary<string, MaxRamp>(StringComparer.Ordinal);
+
+        private static MaxRamp RampFor(Dictionary<string, MaxRamp> ramps, string gameId, string carId)
+        {
+            string key = GForceMaxLearner.MakeKey(gameId, carId);
+            if (!ramps.TryGetValue(key, out MaxRamp ramp))
+            {
+                ramp = new MaxRamp();
+                ramps[key] = ramp;
+            }
+            return ramp;
+        }
+
+        /// <summary>
+        /// STEP-SIZE-TRIGGERED RAMP (owner's revised spec, docs\robust-auto-gforce-report.md -
+        /// SUPERSEDES an earlier "always ramp on the sample-threshold crossing" design, now that there is
+        /// no sample threshold at all): every frame produces a RAW target (the learner's own current best
+        /// estimate, or the FIXED default on the one genuine no-evidence case - see
+        /// <see cref="EffectiveAccelMaxG"/>'s own remarks). If that target differs from the LAST PUBLISHED
+        /// effective value by MORE than <see cref="StepTriggerFraction"/> (25%) of
+        /// <c>Max(lastPublished, 1.0)</c>, the change is smoothed over <see cref="RampSeconds"/> (2) of
+        /// real time rather than applied immediately; a smaller change is applied immediately (no ramp
+        /// state at all). The target is RE-READ every frame during a ramp (so a still-rising detected
+        /// value is absorbed naturally, per the owner's own explicit requirement, rather than freezing
+        /// whatever it was when the ramp started).
+        /// <para/>
+        /// ONE INSTANCE PER (gameId,carId) KEY (see <see cref="RampFor"/>): a brand-new key has never
+        /// published anything, so its very first call seeds its own "last published" to whatever the
+        /// FIXED default is (see <see cref="Effective"/>'s own <c>!_initialized</c> branch) - this is what
+        /// makes the owner's own worked ramp-in example (fixed=1.5 -&gt; current 5.5g/6.0g) hold for a
+        /// brand-new key, and confirms "the ramp restarts for a new car/game" by construction, not a
+        /// special case.
+        /// <para/>
+        /// SYMMETRIC IN EITHER DIRECTION: the SAME mechanism smooths a big jump AWAY from a value that was
+        /// previously trusted just as it smooths one INTO a newly-detected value - e.g. if the live
+        /// estimate later swings (a genuine large excursion) or a persisted seed differs greatly from the
+        /// very first fresh sample of a new session, both are ramped the same way. There is no separate
+        /// "ramping down" case to special-case, unlike the sample-threshold-triggered design this
+        /// replaces.
+        /// </summary>
+        private sealed class MaxRamp
+        {
+            private const double RampSeconds = 2.0;
+
+            /// <summary>25% (owner's own figure) - a change smaller than this fraction of
+            /// <c>Max(lastPublished, 1.0)</c> is applied immediately; a larger one is ramped. The
+            /// <c>Max(..., 1.0)</c> floor keeps the trigger meaningful even when the last published value
+            /// is very small (otherwise a tiny reference would make even a modest ABSOLUTE change look
+            /// like a huge relative jump).</summary>
+            private const double StepTriggerFraction = 0.25;
+
+            private bool _initialized;
+            private double _lastPublished;
+            private DateTime? _rampStartUtc;
+            private double _rampStartValue;
+
+            /// <summary>Computes this frame's published effective value from <paramref name="rawTarget"/>
+            /// (the learner's own current best estimate, or the fixed default with no evidence at all).
+            /// <paramref name="fixedDefault"/> seeds the very first call's own "last published" baseline
+            /// only - it plays no role afterward.</summary>
+            public double Effective(double rawTarget, double fixedDefault, DateTime nowUtc)
+            {
+                if (!_initialized)
+                {
+                    _lastPublished = fixedDefault;
+                    _initialized = true;
+                }
+
+                double effective;
+                if (_rampStartUtc.HasValue)
+                {
+                    // ALREADY ramping - continue by ELAPSED TIME alone, regardless of how close the
+                    // residual gap to rawTarget has narrowed. Re-checking the big-jump threshold against
+                    // _lastPublished on every frame (as an earlier revision of this method did) would let
+                    // a CONVERGING ramp "snap" the instant its own remaining gap dips under the trigger
+                    // threshold - exactly the discontinuity this mechanism exists to prevent, and the
+                    // opposite of the owner's own "continuous, no step anywhere" requirement.
+                    double elapsedSeconds = Math.Max(0.0, (nowUtc - _rampStartUtc.Value).TotalSeconds);
+                    double progress = ClampMath.To01(elapsedSeconds / RampSeconds);
+                    effective = _rampStartValue + progress * (rawTarget - _rampStartValue);
+                    if (progress >= 1.0) _rampStartUtc = null;
+                }
+                else
+                {
+                    double changeThreshold = StepTriggerFraction * Math.Max(_lastPublished, 1.0);
+                    bool bigJump = Math.Abs(rawTarget - _lastPublished) > changeThreshold;
+                    if (!bigJump)
+                    {
+                        effective = rawTarget;
+                    }
+                    else
+                    {
+                        _rampStartUtc = nowUtc;
+                        _rampStartValue = _lastPublished;
+                        effective = _rampStartValue; // progress = 0 at the exact instant the ramp starts
+                    }
+                }
+
+                _lastPublished = effective;
+                return effective;
+            }
+        }
+
         private string _currentGameId = string.Empty;
         private string _currentCarId = string.Empty;
 
@@ -307,14 +466,18 @@ namespace QAdvanceFeedback.Settings
         }
 
         /// <summary>Feeds one frame's acceleration-G magnitude (non-negative) into the AUTO learner
-        /// for this (gameId, carId). Safe to call even when <see cref="AccelMaxMode"/> is FIXED - the
-        /// learner keeps learning in the background so switching to AUTO later has data to use; FIXED
-        /// mode simply never reads it back (see <see cref="EffectiveAccelMaxG"/>).</summary>
-        public void ObserveAccelG(string gameId, string carId, double magnitude) => _accelLearner.Observe(gameId, carId, magnitude);
+        /// for this (gameId, carId), at <paramref name="timestampUtc"/> (defaults to
+        /// <see cref="DateTime.UtcNow"/> when null - every pre-existing 3-arg call/test keeps
+        /// compiling and behaving equivalently). Safe to call even when <see cref="AccelMaxMode"/> is
+        /// FIXED - the learner keeps learning in the background so switching to AUTO later has data to
+        /// use; FIXED mode simply never reads it back (see <see cref="EffectiveAccelMaxG"/>).</summary>
+        public void ObserveAccelG(string gameId, string carId, double magnitude, DateTime? timestampUtc = null)
+            => _accelLearner.Observe(gameId, carId, magnitude, timestampUtc ?? DateTime.UtcNow);
 
         /// <summary>Feeds one frame's deceleration/braking-G magnitude (non-negative) into the AUTO
         /// learner for this (gameId, carId). See <see cref="ObserveAccelG"/>'s remarks.</summary>
-        public void ObserveDecelG(string gameId, string carId, double magnitude) => _decelLearner.Observe(gameId, carId, magnitude);
+        public void ObserveDecelG(string gameId, string carId, double magnitude, DateTime? timestampUtc = null)
+            => _decelLearner.Observe(gameId, carId, magnitude, timestampUtc ?? DateTime.UtcNow);
 
         /// <summary>The learned acceleration max for a specific (gameId, carId) - present mainly for
         /// direct testability of the per-game/per-car keying; see <see cref="CurrentLearnedAccelMaxG"/>
@@ -335,27 +498,92 @@ namespace QAdvanceFeedback.Settings
         /// <summary>Read-only - the deceleration equivalent of <see cref="CurrentLearnedAccelMaxG"/>.</summary>
         public double CurrentLearnedDecelMaxG => _decelLearner.GetLearnedMax(_currentGameId, _currentCarId);
 
+        /// <summary>UI-facing no-arg equivalent of <see cref="TryGetAccelAutoDetected"/>, for whichever
+        /// game/car <see cref="SetCurrentGameAndCar"/> was last told is active.</summary>
+        public bool TryGetCurrentAccelAutoDetected(out double detectedG) => TryGetAccelAutoDetected(_currentGameId, _currentCarId, out detectedG);
+
+        /// <summary>UI-facing no-arg equivalent of <see cref="TryGetDecelAutoDetected"/>.</summary>
+        public bool TryGetCurrentDecelAutoDetected(out double detectedG) => TryGetDecelAutoDetected(_currentGameId, _currentCarId, out detectedG);
+
+        private readonly Dictionary<string, MaxRamp> _accelScaleRamps = new Dictionary<string, MaxRamp>(StringComparer.Ordinal);
+        private readonly Dictionary<string, MaxRamp> _decelScaleRamps = new Dictionary<string, MaxRamp>(StringComparer.Ordinal);
+
         /// <summary>
         /// The max-G value <see cref="GForceEngine.Compute"/> should actually normalise acceleration
         /// against for this (gameId, carId) this frame. FIXED always returns
-        /// <see cref="FixedAccelMaxG"/>, ignoring anything learned (by construction - this branch
-        /// never reads the learner). AUTO returns the learned value, falling back to
-        /// <see cref="FixedAccelMaxG"/> as a seed only until enough frames have been observed to
-        /// confirm one (so the very first moments of a new car are not divided by an unlearned zero).
+        /// <see cref="FixedAccelMaxG"/>, ignoring anything learned (by construction - this branch never
+        /// reads the learner). AUTO returns the FIXED default ONLY when there is truly NO evidence at all
+        /// (<see cref="GetLearnedAccelMaxG"/> returns exactly 0.0 - no live sample ever observed AND no
+        /// persisted seed) - otherwise the learner's own current best estimate, RAMPED via
+        /// <see cref="MaxRamp"/> whenever it differs from the last published value by more than the
+        /// step-trigger fraction (25%), rather than stepping. So AUTO's WORST case (truly zero evidence)
+        /// is bit-for-bit identical to FIXED, and it can only ever improve on that once real evidence
+        /// exists - there is no path here where AUTO returns something worse than FIXED.
         /// </summary>
-        public double EffectiveAccelMaxG(string gameId, string carId)
+        public double EffectiveAccelMaxG(string gameId, string carId, DateTime? timestampUtc = null)
         {
             if (AccelMaxMode == GMaxMode.Fixed) return FixedAccelMaxG;
             double learned = _accelLearner.GetLearnedMax(gameId, carId);
-            return learned > MinAllowedMaxG ? learned : FixedAccelMaxG;
+            double rawTarget = learned > MinAllowedMaxG ? learned : FixedAccelMaxG;
+            return RampFor(_accelRamps, gameId, carId).Effective(rawTarget, FixedAccelMaxG, timestampUtc ?? DateTime.UtcNow);
         }
 
         /// <summary>The deceleration equivalent of <see cref="EffectiveAccelMaxG"/>.</summary>
-        public double EffectiveDecelMaxG(string gameId, string carId)
+        public double EffectiveDecelMaxG(string gameId, string carId, DateTime? timestampUtc = null)
         {
             if (DecelMaxMode == GMaxMode.Fixed) return FixedDecelMaxG;
             double learned = _decelLearner.GetLearnedMax(gameId, carId);
-            return learned > MinAllowedMaxG ? learned : FixedDecelMaxG;
+            double rawTarget = learned > MinAllowedMaxG ? learned : FixedDecelMaxG;
+            return RampFor(_decelRamps, gameId, carId).Effective(rawTarget, FixedDecelMaxG, timestampUtc ?? DateTime.UtcNow);
+        }
+
+        /// <summary>
+        /// The transition-animation scale <see cref="GForceEngine.Compute"/> should use for the
+        /// ACCELERATION chain this frame. The raw target is <see cref="FixedTransitionAnimationScale"/>
+        /// with truly no evidence at all, else <see cref="AutoTransitionAnimationScale"/> - put through
+        /// the SAME <see cref="MaxRamp"/> mechanism (its own independent instance, keyed the same way) as
+        /// the max value itself, so a jump between the two scale constants is smoothed exactly like any
+        /// other big jump (or, since 1.2 vs 1.5 is only a 20% relative change - under the 25% trigger -
+        /// applied immediately, by the SAME rule the owner specified; either way, never a raw, unrelated
+        /// step). FIXED mode simply returns <see cref="FixedTransitionAnimationScale"/> outright.
+        /// </summary>
+        public double EffectiveAccelTransitionScale(string gameId, string carId, DateTime? timestampUtc = null)
+        {
+            if (AccelMaxMode == GMaxMode.Fixed) return FixedTransitionAnimationScale;
+            double learned = _accelLearner.GetLearnedMax(gameId, carId);
+            double rawTarget = learned > MinAllowedMaxG ? AutoTransitionAnimationScale : FixedTransitionAnimationScale;
+            return RampFor(_accelScaleRamps, gameId, carId).Effective(rawTarget, FixedTransitionAnimationScale, timestampUtc ?? DateTime.UtcNow);
+        }
+
+        /// <summary>The deceleration equivalent of <see cref="EffectiveAccelTransitionScale"/>.</summary>
+        public double EffectiveDecelTransitionScale(string gameId, string carId, DateTime? timestampUtc = null)
+        {
+            if (DecelMaxMode == GMaxMode.Fixed) return FixedTransitionAnimationScale;
+            double learned = _decelLearner.GetLearnedMax(gameId, carId);
+            double rawTarget = learned > MinAllowedMaxG ? AutoTransitionAnimationScale : FixedTransitionAnimationScale;
+            return RampFor(_decelScaleRamps, gameId, carId).Effective(rawTarget, FixedTransitionAnimationScale, timestampUtc ?? DateTime.UtcNow);
+        }
+
+        /// <summary>
+        /// UI READOUT (docs\robust-auto-gforce-report.md): the RAW auto-detected acceleration value for
+        /// this (gameId, carId), independent of the ramp - the settings UI shows this directly ("Auto
+        /// detected: 2.3G") rather than the ramped/blended value actually fed to the engine, since what
+        /// the driver wants to see is "what has AUTO learned", not an internal smoothing detail. False
+        /// (with <paramref name="detectedG"/> 0.0) means AUTO has NO evidence at all yet for this key -
+        /// the UI shows "still using default" in that case (see <see cref="SettingsControl"/>'s own
+        /// readout wiring).
+        /// </summary>
+        public bool TryGetAccelAutoDetected(string gameId, string carId, out double detectedG)
+        {
+            detectedG = _accelLearner.GetLearnedMax(gameId, carId);
+            return detectedG > MinAllowedMaxG;
+        }
+
+        /// <summary>The deceleration equivalent of <see cref="TryGetAccelAutoDetected"/>.</summary>
+        public bool TryGetDecelAutoDetected(string gameId, string carId, out double detectedG)
+        {
+            detectedG = _decelLearner.GetLearnedMax(gameId, carId);
+            return detectedG > MinAllowedMaxG;
         }
 
         /// <summary>Clears all learned state for both axes - for a full session reset (analogous to
@@ -368,6 +596,13 @@ namespace QAdvanceFeedback.Settings
             _accelLearner.Reset();
             _decelLearner.Reset();
             _learningGate.Reset();
+            // Ramp state restarts too (docs\robust-auto-gforce-report.md's own "does the ramp restart on
+            // a session restart" question) - a full forget must not leave a stale ramp mid-flight for a
+            // key whose underlying learner just got wiped.
+            _accelRamps.Clear();
+            _decelRamps.Clear();
+            _accelScaleRamps.Clear();
+            _decelScaleRamps.Clear();
         }
 
         /// <summary>Snapshots both learners' confirmed maxima for <c>RuntimeStore</c> to persist to

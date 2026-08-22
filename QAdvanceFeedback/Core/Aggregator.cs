@@ -39,9 +39,10 @@ namespace QAdvanceFeedback.Core
     /// channel - only the SHIPPED DEFAULT makes it Slip-only (Lock ships the factor at 0, which
     /// disables this stage entirely).
     /// <para/>
-    /// LOCK DOES NOT NEED THE EQUIVALENT (verified, docs\aggregation-report.md): Lock's own axle blend
-    /// (WMax=0.45/WMin=0.55) actually weights the axle's WEAKER wheel very slightly MORE than the
-    /// stronger one, and Lock's extreme front bias (WFront=0.90) already carries a front lock-up
+    /// LOCK DOES NOT NEED THE EQUIVALENT (verified, docs\aggregation-report.md; axle numbers REVISED,
+    /// docs\slip-source-consistency-report.md - Lock's own axle blend is now WMax=0.75/WMin=0.25, the
+    /// stronger wheel dominating rather than the weaker one, matching the newer owner-tested default):
+    /// Lock's extreme front bias (WFront=0.90) already carries a front lock-up
     /// through strongly at the car level without any floor. Lock-ups from this engine's own algorithm
     /// are also car-level/axle-symmetric far more often than power slip is (an open diff spins ONE
     /// wheel routinely; the "Braking vs speed" branch this plugin's Lock channel uses has no per-wheel

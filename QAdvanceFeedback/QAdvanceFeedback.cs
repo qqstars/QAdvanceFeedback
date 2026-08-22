@@ -4,6 +4,7 @@ using System.Windows.Media;
 using GameReaderCommon;
 using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.GForce;
+using QAdvanceFeedback.Core.Health;
 using QAdvanceFeedback.Core.Projection;
 using QAdvanceFeedback.Core.Normalized;
 using QAdvanceFeedback.Core.RawCalculator;
@@ -78,6 +79,32 @@ namespace QAdvanceFeedback
 
         public void Init(PluginManager pluginManager)
         {
+            try
+            {
+                InitCore(pluginManager);
+            }
+            catch (Exception e)
+            {
+                // PIPELINE-EXCEPTION-SAFETY (docs\pipeline-exception-safety-report.md): SimHub's own
+                // PluginManager iterates every plugin's Init() with NO per-plugin try/catch around the
+                // call (confirmed by decompilation) - a throw here would abort the whole load loop and
+                // starve every plugin still waiting to be initialised, exactly the owner-reported "a
+                // different plugin (AZOM) stops working after a game switch, only a SimHub restart
+                // recovers it" symptom shape, even though Init only runs at load/enable time rather
+                // than on every switch. _settings/_runtimeStore may be left partially constructed
+                // below (ConfigStore.Load/RuntimeStore's own constructor already degrade to safe
+                // defaults on their own internal I/O failures and cannot be the cause; this guards
+                // against an internal Core error - e.g. a Corner/curve construction faulting on a
+                // corrupted config file dictionary) - DataUpdate/End independently null-guard/short-
+                // circuit whatever this leaves unset, so the WORST case is "this plugin does nothing
+                // useful this session", never "SimHub cannot finish loading".
+                SimHub.Logging.Current.Error("QAdvanceFeedback: Init failed - " + e);
+                HealthRegistry.Report(HealthSubsystems.Init, HealthSeverity.Failed, "Health.Impact.Init", e.ToString());
+            }
+        }
+
+        private void InitCore(PluginManager pluginManager)
+        {
             _configPath = pluginManager.GetCommonStoragePath(ConfigFileName);
             string legacyConfigPath = pluginManager.GetCommonStoragePath(LegacyConfigFileName);
             _settings = ConfigStore.Load(_configPath, LogWarning, legacyPath: legacyConfigPath);
@@ -130,6 +157,11 @@ namespace QAdvanceFeedback
             // of this one too, before this session has observed anything itself.
             _runtimeStore.LoadSurfaceSupport(out var surfaceSupportData);
             _normalizedEngine.SurfaceSupport.ImportAll(surfaceSupportData);
+
+            // FEATURE C (docs\v1068-four-range-report.md, RuntimeDocument Version 8) - WheelLock's own
+            // learned S75/S90 anchors. WHEELLOCK ONLY - no Slip equivalent.
+            _runtimeStore.LoadLockAnchors(out var lockAnchorsData);
+            _normalizedEngine.LockAnchors.ImportAll(lockAnchorsData);
 
             _runtimeStore.LoadGForceLearners(out var accelMaxima, out var decelMaxima);
             _settings.GForce.ImportLearnedMaxima(accelMaxima, decelMaxima);
@@ -255,6 +287,12 @@ namespace QAdvanceFeedback
                 // "is the wheel genuinely near its limit" measurement the Normalized engine can fall back
                 // to if the configured source (lockSources/slipSources) goes quiet. See
                 // NormalizedWheelLockSlipEngine's own remarks for the full mechanism.
+                // 1.0.6.0 (docs\release-1060-report.md, Part 2's UI half) - read fresh from settings
+                // every frame, exactly like thresholds/aggregation above, so switching the Normalize
+                // Pattern dropdown takes effect on the very next frame with no engine rebuild. Lock-only:
+                // Slip has no selector and the engine's own Slip call site never reads this flag.
+                _normalizedEngine.LockNormalizePattern = _settings.Lock.NormalizePattern;
+
                 NormalizedWheelLockSlipResult normalized = _normalizedEngine.Compute(
                     sample, lockSources, slipSources, gameId, carId, thresholds, lockAggregation, slipAggregation,
                     lockSourceIdentity, slipSourceIdentity, legacy.LockWheels, legacy.SlipWheels);
@@ -268,14 +306,20 @@ namespace QAdvanceFeedback
                     _normalizedEngine.SurfaceEverReportedLoose, _normalizedEngine.LockLooseFraction, _normalizedEngine.SlipLooseFraction);
 
                 double dtSeconds = sample.Dt.HasValue && sample.Dt.Value.TotalSeconds > 0 ? sample.Dt.Value.TotalSeconds : 0.0;
-                ProjectedWheelLockSlipResult projected = _projectedEngine.Compute(normalized, dtSeconds);
+                ProjectedWheelLockSlipResult projected = _projectedEngine.Compute(normalized, dtSeconds,
+                    _normalizedEngine.LockColdStartConfidence, _normalizedEngine.SlipColdStartConfidence);
                 _publisher.UpdateProjected(projected);
 
                 // ---- G-force channels.
                 _settings.GForce.SetCurrentGameAndCar(gameId, carId);
 
-                double accelMaxG = _settings.GForce.EffectiveAccelMaxG(gameId, carId);
-                double decelMaxG = _settings.GForce.EffectiveDecelMaxG(gameId, carId);
+                double accelMaxG = _settings.GForce.EffectiveAccelMaxG(gameId, carId, sample.FrameTime);
+                double decelMaxG = _settings.GForce.EffectiveDecelMaxG(gameId, carId, sample.FrameTime);
+                // MODE-DEPENDENT TRANSITION SCALING (docs\robust-auto-gforce-report.md) - blended by the
+                // SAME continuous ramp weight EffectiveAccelMaxG/EffectiveDecelMaxG themselves just used,
+                // so neither the max nor the scale ever steps relative to the other.
+                double accelTransitionScale = _settings.GForce.EffectiveAccelTransitionScale(gameId, carId, sample.FrameTime);
+                double decelTransitionScale = _settings.GForce.EffectiveDecelTransitionScale(gameId, carId, sample.FrameTime);
                 // The owner-requested "Integrate Wheel Lock and Slip" shake reads Layer 5's curve-shaped
                 // value WITHOUT the pulse stage (docs\raw-gap-and-pad-balance-report.md, the
                 // pulse-into-shake fix) - NOT the pulsed WheelLock.Projected.All/WheelSlip.Projected.All
@@ -286,7 +330,9 @@ namespace QAdvanceFeedback
                 // the SAME curve projection with that one stage skipped - identical to the pulsed value
                 // whenever the pulse is not actually engaged, differing only while a pulse cycle runs -
                 // see ProjectedWheelLockSlipResult's own remarks.
-                GForceOutput gforce = _gforceEngine.Compute(sample, accelMaxG, decelMaxG, projected.LockAllWithoutPulse, projected.SlipAllWithoutPulse);
+                GForceOutput gforce = _gforceEngine.Compute(
+                    sample, accelMaxG, decelMaxG, projected.LockAllWithoutPulse, projected.SlipAllWithoutPulse,
+                    accelTransitionScale, decelTransitionScale);
                 _publisher.UpdateGForce(gforce);
 
                 // DIRECTION FIX (docs\gforce-direction-fix-report.md): feed the AUTO-mode learners the
@@ -311,9 +357,9 @@ namespace QAdvanceFeedback
                         double magnitude = Math.Abs(longG.Value);
                         LongitudinalMotionState gforceDirection = _gforceEngine.CurrentDirection;
                         if (gforceDirection == LongitudinalMotionState.SpeedingUp)
-                            _settings.GForce.ObserveAccelG(gameId, carId, magnitude);
+                            _settings.GForce.ObserveAccelG(gameId, carId, magnitude, sample.FrameTime);
                         else if (gforceDirection == LongitudinalMotionState.Slowing)
-                            _settings.GForce.ObserveDecelG(gameId, carId, magnitude);
+                            _settings.GForce.ObserveDecelG(gameId, carId, magnitude, sample.FrameTime);
                     }
                 }
 
@@ -333,6 +379,8 @@ namespace QAdvanceFeedback
                 _runtimeStore.SaveSlipPhysicalReference(_normalizedEngine.SlipPhysicalReference.ExportAll());
                 _runtimeStore.SaveLockScaleCrossCarSeed(_normalizedEngine.LockScaleLearner.ExportCrossCarSeeds());
                 _runtimeStore.SaveSlipScaleCrossCarSeed(_normalizedEngine.SlipScaleLearner.ExportCrossCarSeeds());
+                // FEATURE C (RuntimeDocument Version 8) - WheelLock's own learned S75/S90 anchors.
+                _runtimeStore.SaveLockAnchors(_normalizedEngine.LockAnchors.ExportAll());
                 _settings.GForce.ExportLearnedMaxima(out var accelSnapshot, out var decelSnapshot);
                 _runtimeStore.SaveGForceLearners(accelSnapshot, decelSnapshot);
 
@@ -342,10 +390,19 @@ namespace QAdvanceFeedback
                 // Diag.Lock/Slip.LearnedPeakG: the actual COLD/WARM BLENDED reference (item 3) this
                 // frame's Ratio() call divides by - see GripLearner.PublishedPeakG's own remarks.
                 _publisher.UpdateIdentity(gameId, carId);
+                // BUG FIX (docs\pipeline-exception-safety-report.md, Part B - "is accumulation
+                // stuck?"): this used to call PublishedPeakG/Confidence with NO surface-bucket
+                // argument, defaulting to the empty-string bucket, while ComputeChannel only ever
+                // Observe()s under the REAL "Sealed"/"Loose" bucket - two different KeyedGripLearner
+                // dictionary keys, so this readout could never find what real accumulation was
+                // actually writing to and permanently showed the seed (peak 1.0, confidence 0)
+                // regardless of genuine learning - see NormalizedWheelLockSlipEngine.
+                // LockCurrentSurfaceBucket's own remarks for the full diagnosis. Passing the SAME
+                // bucket ComputeChannel itself just observed under fixes the read.
                 _publisher.UpdateDiagnostics(
                     _normalizedEngine.CurrentDirection, motion.Level, motion.MagnitudeG,
-                    _normalizedEngine.LockLearners.PublishedPeakG(gameId, carId, lockSourceIdentity), _normalizedEngine.LockLearners.Confidence(gameId, carId, lockSourceIdentity),
-                    _normalizedEngine.SlipLearners.PublishedPeakG(gameId, carId, slipSourceIdentity), _normalizedEngine.SlipLearners.Confidence(gameId, carId, slipSourceIdentity),
+                    _normalizedEngine.LockLearners.PublishedPeakG(gameId, carId, lockSourceIdentity, _normalizedEngine.LockCurrentSurfaceBucket), _normalizedEngine.LockLearners.Confidence(gameId, carId, lockSourceIdentity, _normalizedEngine.LockCurrentSurfaceBucket),
+                    _normalizedEngine.SlipLearners.PublishedPeakG(gameId, carId, slipSourceIdentity, _normalizedEngine.SlipCurrentSurfaceBucket), _normalizedEngine.SlipLearners.Confidence(gameId, carId, slipSourceIdentity, _normalizedEngine.SlipCurrentSurfaceBucket),
                     _settings.GForce.CurrentLearnedAccelMaxG, _settings.GForce.CurrentLearnedDecelMaxG);
 
                 UpdateCsvExport(pluginManager);
@@ -362,6 +419,8 @@ namespace QAdvanceFeedback
                     _loggedDataUpdateFault = message;
                     SimHub.Logging.Current.Error(message);
                 }
+                HealthRegistry.Report(HealthSubsystems.TelemetryAdapter, HealthSeverity.Degraded,
+                    "Health.Impact.TelemetryAdapter", e.ToString());
             }
         }
 
@@ -426,10 +485,40 @@ namespace QAdvanceFeedback
             catch (Exception e)
             {
                 SimHub.Logging.Current.Error("QAdvanceFeedback: shutdown failed - " + e);
+                HealthRegistry.Report(HealthSubsystems.Shutdown, HealthSeverity.Degraded, "Health.Impact.Shutdown", e.ToString());
             }
         }
 
-        public Control GetWPFSettingsControl(PluginManager pluginManager) => new Settings.SettingsControl(this, pluginManager);
+        /// <summary>
+        /// PIPELINE-EXCEPTION-SAFETY: SimHub calls this whenever its own settings host builds/refreshes
+        /// the list of per-plugin tabs, alongside every OTHER enabled plugin's own
+        /// <c>GetWPFSettingsControl</c> - the exact same "one plugin's exception must not degrade every
+        /// other plugin sharing SimHub's iteration" concern <c>Init</c>/<c>DataUpdate</c>/<c>End</c>
+        /// already guard against (see this class's own remarks and the pipeline-exception-safety
+        /// report). <see cref="Settings.SettingsControl"/>'s constructor does real work (reads
+        /// <see cref="_settings"/>, probes ShakeIt Motors export availability via reflection, wires ~40
+        /// WPF controls) - a corrupt/partial <see cref="_settings"/> object (e.g. Init above having
+        /// failed) or an unexpected reflection surface could throw there. Falls back to a minimal,
+        /// clearly-labelled placeholder control rather than letting that throw escape into SimHub's own
+        /// settings-panel construction.
+        /// </summary>
+        public Control GetWPFSettingsControl(PluginManager pluginManager)
+        {
+            try
+            {
+                return new Settings.SettingsControl(this, pluginManager);
+            }
+            catch (Exception e)
+            {
+                SimHub.Logging.Current.Error("QAdvanceFeedback: settings control failed to load - " + e);
+                HealthRegistry.Report(HealthSubsystems.SettingsUi, HealthSeverity.Failed, "Health.Impact.SettingsUi", e.ToString());
+                return new Label
+                {
+                    Content = "QAdvanceFeedback: settings failed to load - see SimHub log for details.",
+                    Margin = new System.Windows.Thickness(12)
+                };
+            }
+        }
 
         /// <summary>
         /// Applies edited settings: rebuilds the Layer 5 (curve+pulse) engine from the current

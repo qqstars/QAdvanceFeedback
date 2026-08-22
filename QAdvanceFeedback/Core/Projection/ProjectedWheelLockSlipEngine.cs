@@ -38,8 +38,22 @@ namespace QAdvanceFeedback.Core.Projection
             }
         }
 
-        public ProjectedWheelLockSlipResult Compute(NormalizedWheelLockSlipResult reliable, double dtSeconds)
+        /// <param name="reliable">Layer 4's Normalized result.</param>
+        /// <param name="dtSeconds">Elapsed time since the previous frame - see <see cref="PulseGenerator"/>.</param>
+        /// <param name="lockConfidence">
+        /// LAYER 5 COLD-START DEVICE-FEEL SCALE (v1.0.6.9 rework, Goal 2 - <see cref="ColdStartScale"/>,
+        /// docs\v1068-rework-report.md) - the Lock channel's own plain, sample-count-only
+        /// <see cref="Normalized.GripLearner.Confidence"/> (<see cref="Normalized.NormalizedWheelLockSlipEngine.LockColdStartConfidence"/>),
+        /// 0..1. Defaults to 1.0 (fully warmed - <see cref="ColdStartScale.Compute"/> at confidence 1.0 is
+        /// the identity transform) so every pre-existing caller/test that predates this mechanism keeps
+        /// compiling and behaving EXACTLY as before.</param>
+        /// <param name="slipConfidence">The Slip channel's equivalent of <paramref name="lockConfidence"/>.</param>
+        public ProjectedWheelLockSlipResult Compute(NormalizedWheelLockSlipResult reliable, double dtSeconds,
+            double lockConfidence = 1.0, double slipConfidence = 1.0)
         {
+            double lockScale = ColdStartScale.Compute(lockConfidence);
+            double slipScale = ColdStartScale.Compute(slipConfidence);
+
             double[] lockRaw =
             {
                 reliable.LockWheels.FrontLeft, reliable.LockWheels.FrontRight,
@@ -65,8 +79,13 @@ namespace QAdvanceFeedback.Core.Projection
             double[] slipWithoutPulse = new double[TargetCount];
             for (int i = 0; i < TargetCount; i++)
             {
-                lockWithoutPulse[i] = _lockProjector.Project(lockRaw[i]);
-                slipWithoutPulse[i] = _slipProjector.Project(slipRaw[i]);
+                // LAYER 5 COLD-START DEVICE-FEEL SCALE (v1.0.6.9 rework, Goal 2) - applied to the
+                // curve-only value, BEFORE the pulse stage (mirroring how lockWithoutPulse/slipWithoutPulse
+                // already feed PulseGenerator.Advance below) - a multiplicative amplitude damper on the
+                // device-feel output, never on Normalized (see ColdStartScale's own remarks). At full
+                // confidence (the default) this is the identity transform, bit-for-bit.
+                lockWithoutPulse[i] = ColdStartScale.ApplyAmplitudeScale(_lockProjector.Project(lockRaw[i]), lockScale);
+                slipWithoutPulse[i] = ColdStartScale.ApplyAmplitudeScale(_slipProjector.Project(slipRaw[i]), slipScale);
 
                 lockProjected[i] = _lockPulses[i].Advance(dtSeconds, lockWithoutPulse[i]);
                 slipProjected[i] = _slipPulses[i].Advance(dtSeconds, slipWithoutPulse[i]);

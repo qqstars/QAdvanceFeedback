@@ -209,6 +209,17 @@
 
             <GroupBox x:Name="LockCurveGroup">
               <StackPanel>
+                <!-- 1.0.6.0 (docs\release-1060-report.md, Part 2's UI half) - Wheel Lock ONLY, at the
+                     TOP of this section; Wheel Slip has no equivalent control at all. -->
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock x:Name="LockLblNormalizePattern"/>
+                  <ComboBox x:Name="LockNormalizePatternCombo" HorizontalAlignment="Left">
+                    <ComboBoxItem x:Name="LockNormalizePatternMaxGripOnly" Tag="MaxGripOnly"/>
+                    <ComboBoxItem x:Name="LockNormalizePatternMapping" Tag="Mapping"/>
+                  </ComboBox>
+                </StackPanel>
+                <TextBlock x:Name="LockNormalizePatternDesc" TextWrapping="Wrap" FontStyle="Italic" Margin="0,0,0,8"/>
+
                 <StackPanel Orientation="Horizontal">
                   <TextBlock x:Name="LockLblPreset"/>
                   <ComboBox x:Name="LockPresetCombo" HorizontalAlignment="Left">
@@ -222,7 +233,7 @@
 
                 <Grid Margin="0,8,0,0">
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
                   </Grid.ColumnDefinitions>
                   <Grid.RowDefinitions>
                     <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
@@ -232,34 +243,38 @@
 
                   <TextBlock Grid.Row="0" Grid.Column="1" x:Name="LockColRawHeader" HorizontalAlignment="Center" FontWeight="Bold"/>
                   <TextBlock Grid.Row="0" Grid.Column="2" x:Name="LockColOutputHeader" HorizontalAlignment="Center" FontWeight="Bold"/>
+                  <TextBlock Grid.Row="0" Grid.Column="3" x:Name="LockColFlattenRangeHeader" HorizontalAlignment="Center" FontWeight="Bold"/>
 
                   <TextBlock Grid.Row="1" Grid.Column="0" x:Name="LockLblStart" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="1" Grid.Column="1" x:Name="LockStartRaw"/>
-                  <TextBlock Grid.Row="1" Grid.Column="2" x:Name="LockStartOutputStatic" HorizontalAlignment="Center"/>
-                  <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="4" x:Name="LockDescStart" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+                  <mah:NumericUpDown Grid.Row="1" Grid.Column="2" x:Name="LockStartOutput" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
+                  <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="5" x:Name="LockDescStart" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="3" Grid.Column="0" x:Name="LockLblSlightly" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="LockSlightlyRaw"/>
                   <mah:NumericUpDown Grid.Row="3" Grid.Column="2" x:Name="LockSlightlyOutput"/>
-                  <TextBlock Grid.Row="3" Grid.Column="3" x:Name="LockLiveSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
-                  <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="4" x:Name="LockDescSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+                  <mah:NumericUpDown Grid.Row="3" Grid.Column="3" x:Name="LockSlightlyFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+                  <TextBlock Grid.Row="3" Grid.Column="4" x:Name="LockLiveSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
+                  <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5" x:Name="LockDescSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="5" Grid.Column="0" x:Name="LockLblModerate" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="5" Grid.Column="1" x:Name="LockModerateRaw"/>
                   <mah:NumericUpDown Grid.Row="5" Grid.Column="2" x:Name="LockModerateOutput"/>
-                  <TextBlock Grid.Row="5" Grid.Column="3" x:Name="LockLiveModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
-                  <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="4" x:Name="LockDescModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+                  <mah:NumericUpDown Grid.Row="5" Grid.Column="3" x:Name="LockModerateFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+                  <TextBlock Grid.Row="5" Grid.Column="4" x:Name="LockLiveModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
+                  <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="5" x:Name="LockDescModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="7" Grid.Column="0" x:Name="LockLblCritical" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="7" Grid.Column="1" x:Name="LockCriticalRaw"/>
                   <mah:NumericUpDown Grid.Row="7" Grid.Column="2" x:Name="LockCriticalOutput"/>
-                  <TextBlock Grid.Row="7" Grid.Column="3" x:Name="LockLiveCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
-                  <TextBlock Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="4" x:Name="LockDescCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+                  <mah:NumericUpDown Grid.Row="7" Grid.Column="3" x:Name="LockCriticalFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+                  <TextBlock Grid.Row="7" Grid.Column="4" x:Name="LockLiveCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
+                  <TextBlock Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="5" x:Name="LockDescCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="9" Grid.Column="0" x:Name="LockLblEnd" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="9" Grid.Column="1" x:Name="LockEndRaw"/>
-                  <TextBlock Grid.Row="9" Grid.Column="2" x:Name="LockEndOutputStatic" HorizontalAlignment="Center"/>
-                  <TextBlock Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="4" x:Name="LockDescEnd" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+                  <mah:NumericUpDown Grid.Row="9" Grid.Column="2" x:Name="LockEndOutput" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
+                  <TextBlock Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="5" x:Name="LockDescEnd" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
                 </Grid>
 
                 <Border BorderBrush="Gray" BorderThickness="1" Margin="4,8,4,4" HorizontalAlignment="Left">
@@ -411,7 +426,7 @@
 
                 <Grid Margin="0,8,0,0">
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
                   </Grid.ColumnDefinitions>
                   <Grid.RowDefinitions>
                     <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
@@ -421,34 +436,38 @@
 
                   <TextBlock Grid.Row="0" Grid.Column="1" x:Name="SlipColRawHeader" HorizontalAlignment="Center" FontWeight="Bold"/>
                   <TextBlock Grid.Row="0" Grid.Column="2" x:Name="SlipColOutputHeader" HorizontalAlignment="Center" FontWeight="Bold"/>
+                  <TextBlock Grid.Row="0" Grid.Column="3" x:Name="SlipColFlattenRangeHeader" HorizontalAlignment="Center" FontWeight="Bold"/>
 
                   <TextBlock Grid.Row="1" Grid.Column="0" x:Name="SlipLblStart" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="1" Grid.Column="1" x:Name="SlipStartRaw"/>
-                  <TextBlock Grid.Row="1" Grid.Column="2" x:Name="SlipStartOutputStatic" HorizontalAlignment="Center"/>
-                  <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="4" x:Name="SlipDescStart" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+                  <mah:NumericUpDown Grid.Row="1" Grid.Column="2" x:Name="SlipStartOutput" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
+                  <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="5" x:Name="SlipDescStart" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="3" Grid.Column="0" x:Name="SlipLblSlightly" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="SlipSlightlyRaw"/>
                   <mah:NumericUpDown Grid.Row="3" Grid.Column="2" x:Name="SlipSlightlyOutput"/>
-                  <TextBlock Grid.Row="3" Grid.Column="3" x:Name="SlipLiveSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
-                  <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="4" x:Name="SlipDescSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+                  <mah:NumericUpDown Grid.Row="3" Grid.Column="3" x:Name="SlipSlightlyFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+                  <TextBlock Grid.Row="3" Grid.Column="4" x:Name="SlipLiveSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
+                  <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5" x:Name="SlipDescSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="5" Grid.Column="0" x:Name="SlipLblModerate" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="5" Grid.Column="1" x:Name="SlipModerateRaw"/>
                   <mah:NumericUpDown Grid.Row="5" Grid.Column="2" x:Name="SlipModerateOutput"/>
-                  <TextBlock Grid.Row="5" Grid.Column="3" x:Name="SlipLiveModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
-                  <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="4" x:Name="SlipDescModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+                  <mah:NumericUpDown Grid.Row="5" Grid.Column="3" x:Name="SlipModerateFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+                  <TextBlock Grid.Row="5" Grid.Column="4" x:Name="SlipLiveModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
+                  <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="5" x:Name="SlipDescModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="7" Grid.Column="0" x:Name="SlipLblCritical" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="7" Grid.Column="1" x:Name="SlipCriticalRaw"/>
                   <mah:NumericUpDown Grid.Row="7" Grid.Column="2" x:Name="SlipCriticalOutput"/>
-                  <TextBlock Grid.Row="7" Grid.Column="3" x:Name="SlipLiveCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
-                  <TextBlock Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="4" x:Name="SlipDescCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+                  <mah:NumericUpDown Grid.Row="7" Grid.Column="3" x:Name="SlipCriticalFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+                  <TextBlock Grid.Row="7" Grid.Column="4" x:Name="SlipLiveCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
+                  <TextBlock Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="5" x:Name="SlipDescCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="9" Grid.Column="0" x:Name="SlipLblEnd" FontWeight="Bold"/>
                   <mah:NumericUpDown Grid.Row="9" Grid.Column="1" x:Name="SlipEndRaw"/>
-                  <TextBlock Grid.Row="9" Grid.Column="2" x:Name="SlipEndOutputStatic" HorizontalAlignment="Center"/>
-                  <TextBlock Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="4" x:Name="SlipDescEnd" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+                  <mah:NumericUpDown Grid.Row="9" Grid.Column="2" x:Name="SlipEndOutput" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
+                  <TextBlock Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="5" x:Name="SlipDescEnd" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
                 </Grid>
 
                 <Border BorderBrush="Gray" BorderThickness="1" Margin="4,8,4,4" HorizontalAlignment="Left">
@@ -493,7 +512,7 @@
                     <ComboBoxItem x:Name="GForceAccelModeAuto" Tag="Auto"/>
                   </ComboBox>
                   <mah:NumericUpDown x:Name="GForceFixedAccelMax" Minimum="0.1" Maximum="10" Interval="0.1" StringFormat="0.00"/>
-                  <TextBlock x:Name="GForceAccelLearnedText"/>
+                  <TextBlock x:Name="GForceAccelLearnedText" VerticalAlignment="Center" Margin="8,0,0,0"/>
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal">
@@ -503,7 +522,7 @@
                     <ComboBoxItem x:Name="GForceDecelModeAuto" Tag="Auto"/>
                   </ComboBox>
                   <mah:NumericUpDown x:Name="GForceFixedDecelMax" Minimum="0.1" Maximum="10" Interval="0.1" StringFormat="0.00"/>
-                  <TextBlock x:Name="GForceDecelLearnedText"/>
+                  <TextBlock x:Name="GForceDecelLearnedText" VerticalAlignment="Center" Margin="8,0,0,0"/>
                 </StackPanel>
 
                 <TextBlock x:Name="GForceRecommendedHzText" TextWrapping="Wrap"/>
@@ -544,7 +563,7 @@
                     <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
                   <Grid.RowDefinitions>
-                    <RowDefinition/><RowDefinition/><RowDefinition/>
+                    <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
                   </Grid.RowDefinitions>
 
                   <TextBlock Grid.Row="0" Grid.Column="0" x:Name="GForceLblSustainTau"/>
@@ -555,7 +574,14 @@
 
                   <TextBlock Grid.Row="2" Grid.Column="0" x:Name="GForceLblTransientGain"/>
                   <mah:NumericUpDown Grid.Row="2" Grid.Column="1" x:Name="GForceTransientGain" Minimum="0" Maximum="5" Interval="0.1" StringFormat="0.0"/>
+
+                  <TextBlock Grid.Row="3" Grid.Column="0" x:Name="GForceLblAutoTransitionScale"/>
+                  <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="GForceAutoTransitionScale" Minimum="0" Maximum="5" Interval="0.1" StringFormat="0.00"/>
+
+                  <TextBlock Grid.Row="4" Grid.Column="0" x:Name="GForceLblFixedTransitionScale"/>
+                  <mah:NumericUpDown Grid.Row="4" Grid.Column="1" x:Name="GForceFixedTransitionScale" Minimum="0" Maximum="5" Interval="0.1" StringFormat="0.00"/>
                 </Grid>
+                <TextBlock x:Name="GForceTransitionScaleNote" TextWrapping="Wrap" FontStyle="Italic"/>
               </StackPanel>
             </GroupBox>
 
@@ -617,6 +643,23 @@
 
                 <CheckBox x:Name="ExportCsvCheckBox"/>
                 <TextBlock x:Name="ExportCsvNote" TextWrapping="Wrap" FontStyle="Italic" Margin="20,0,4,4"/>
+
+                <!-- 1.0.6.0 (docs\release-1060-report.md, Part 4f) - read from the running assembly's
+                     own version at display time (SettingsControl.xaml.cs's LocalizeStaticText), never
+                     hardcoded, so this label can never drift from the DLL actually loaded. -->
+                <TextBlock x:Name="GeneralVersionText" TextWrapping="Wrap" Margin="4,8,4,4"/>
+              </StackPanel>
+            </GroupBox>
+
+            <!-- Plugin health section - see Core.Health.HealthRegistry and SettingsControl.xaml.cs's
+                 RefreshHealthUi. Invisible/one-line when nothing is wrong, so it adds no clutter in the
+                 normal case; expands to one warning block per degraded subsystem otherwise. -->
+            <GroupBox x:Name="HealthGroup">
+              <StackPanel>
+                <TextBlock x:Name="HealthAllGoodText" TextWrapping="Wrap" Margin="4,0,4,4"/>
+                <StackPanel x:Name="HealthIssuesPanel"/>
+                <Button x:Name="HealthCopyDetailsButton" HorizontalAlignment="Left" Margin="4,4,4,4" Padding="8,2"/>
+                <TextBlock x:Name="HealthCopyDetailsDoneText" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,4" Visibility="Collapsed"/>
               </StackPanel>
             </GroupBox>
           </StackPanel>

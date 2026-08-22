@@ -177,6 +177,19 @@ namespace QAdvanceFeedback.Core
     /// </summary>
     public struct WelfordAccumulator
     {
+        /// <summary>INT32 OVERFLOW GUARD (adaptive-peak-learner-report.md, Part 1) - <see cref="_count"/>
+        /// is an unguarded <c>int</c> incremented once per <see cref="Observe"/> call; this instance is
+        /// SESSION-SCOPED (reset fresh every <see cref="Normalized.GripLearner.Load(double,int)"/> - see
+        /// that method's own remarks), so it cannot accumulate across restarts the way
+        /// <see cref="Normalized.GripLearner.Samples"/> does, but a single, implausibly long,
+        /// never-restarted session could still in principle drive it toward <see cref="int.MaxValue"/>,
+        /// where it would wrap negative - saturating it here, defensively, for the same reason the
+        /// PERSISTED counters are saturated, even though this one's own realistic exposure window is far
+        /// smaller. 1,000,000 is ample headroom below <see cref="int.MaxValue"/> while still being far
+        /// larger than any count this class's own consumers (<see cref="HotWeight"/>,
+        /// <see cref="ConcaveHotWeight"/>) ever meaningfully distinguish from "a lot of samples".</summary>
+        public const int CountSaturationCap = 1_000_000;
+
         private int _count;
         private double _mean;
         private double _m2;
@@ -206,7 +219,16 @@ namespace QAdvanceFeedback.Core
         public void Observe(double value)
         {
             if (!ClampMath.IsFinite(value)) return;
-            _count++;
+
+            // SATURATE, DON'T OVERFLOW (adaptive-peak-learner-report.md, Part 1): once the cap is
+            // reached, _count itself stops rising (protecting it from ever wrapping negative), but the
+            // recurrence below keeps running with _count held at the cap - i.e. LEARNING continues
+            // (mean/variance keep tracking new data, now via a fixed-weight, bounded-window-like update
+            // instead of a shrinking 1/n one) even though the REPORTED count is pinned. A frozen count
+            // paired with a frozen mean (never updating again) would be the wrong fix - see this task's
+            // own explicit test requirement that a learner at the cap "keeps learning".
+            if (_count < CountSaturationCap) _count++;
+
             double delta = value - _mean;
             _mean += delta / _count;
             double delta2 = value - _mean;

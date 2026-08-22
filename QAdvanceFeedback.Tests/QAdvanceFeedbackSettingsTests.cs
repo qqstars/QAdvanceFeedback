@@ -14,15 +14,18 @@ namespace QAdvanceFeedback.Tests
             Assert.NotNull(settings.Slip);
             Assert.NotSame(settings.Lock, settings.Slip);
 
-            // Owner-confirmed global default is ShakeIt Plugin Output Properties, not Manual/Raw - see
-            // WheelChannelSettings.SourceMode's own remarks.
-            Assert.Equal(SourceMode.ShakeIt, settings.Lock.SourceMode);
-            Assert.Equal(SourceMode.ShakeIt, settings.Slip.SourceMode);
-            Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelLock.IRacing.FrontLeft", settings.Lock.SourceFrontLeft);
-            Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelSlip.IRacing.FrontLeft", settings.Slip.SourceFrontLeft);
+            // Global default is now Manual/Raw (docs\relative-fallback-and-raw-default-report.md -
+            // FLIPPED from the earlier ShakeIt Plugin Output Properties default) - see
+            // WheelChannelSettings.SourceMode's own remarks for the evidence.
+            Assert.Equal(SourceMode.Manual, settings.Lock.SourceMode);
+            Assert.Equal(SourceMode.Manual, settings.Slip.SourceMode);
+            Assert.Equal("QAdvanceFeedback.WheelLock.Raw.FrontLeft", settings.Lock.SourceFrontLeft);
+            Assert.Equal("QAdvanceFeedback.WheelSlip.Raw.FrontLeft", settings.Slip.SourceFrontLeft);
 
-            Assert.Equal(60.0, settings.Lock.Projector.ModerateInput, 6);
-            Assert.Equal(60.0, settings.Slip.Projector.ModerateInput, 6); // shared band boundary
+            // Pre-release Change 2c: threshold moved 60 -> 62 (paired with a flatten range of 2) so the
+            // Ideal plateau's own edge still lands exactly on the shared 60 band boundary.
+            Assert.Equal(62.0, settings.Lock.Projector.ModerateInput, 6);
+            Assert.Equal(62.0, settings.Slip.Projector.ModerateInput, 6); // shared band boundary
             Assert.NotEqual(settings.Lock.Projector.ModerateOutput, settings.Slip.Projector.ModerateOutput);
         }
 

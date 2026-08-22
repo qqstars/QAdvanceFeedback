@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Linq;
+using QAdvanceFeedback.Core.Health;
 using Xunit;
 
 namespace QAdvanceFeedback.Tests
@@ -102,6 +104,30 @@ namespace QAdvanceFeedback.Tests
 
             string[] lines = File.ReadAllLines(_path);
             Assert.Single(lines); // only the fresh header - the old row is gone
+        }
+
+        /// <summary>HEALTH REGISTRY (resilience-hardening task) - a path that names an EXISTING
+        /// DIRECTORY can never be opened as a file (FileStream raises UnauthorizedAccessException on
+        /// Windows for this specific shape), exactly the "full disk/permission denial"-flavoured fault
+        /// this plugin must degrade from rather than let escape into DataUpdate. Proves the fault
+        /// reaches HealthRegistry, not just the logWarning delegate.</summary>
+        [Fact]
+        public void Starting_at_a_path_that_is_actually_a_directory_is_recorded_in_the_health_registry_and_does_not_throw()
+        {
+            string directoryAsPath = Path.Combine(Path.GetTempPath(), "qaf-csv-dir-" + Guid.NewGuid());
+            Directory.CreateDirectory(directoryAsPath);
+            try
+            {
+                var exception = Record.Exception(() => _writer.Start(directoryAsPath, new[] { "A" }));
+
+                Assert.Null(exception);
+                Assert.False(_writer.IsRecording);
+                Assert.Contains(HealthRegistry.Snapshot(), e => e.Subsystem == HealthSubsystems.CsvExport);
+            }
+            finally
+            {
+                try { Directory.Delete(directoryAsPath, recursive: true); } catch { /* best effort */ }
+            }
         }
     }
 }

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
+using QAdvanceFeedback.Core.Health;
 using QAdvanceFeedback.Core.Normalized;
 using Xunit;
 
@@ -368,6 +370,69 @@ namespace QAdvanceFeedback.Tests
                 Assert.Equal(62.0, slipData["F12025|#|ShakeIt"].ColdCeiling, 6);
                 Assert.False(slipData["F12025|#|ShakeIt"].ColdIsPrimaryTier);
             }
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // PIPELINE-EXCEPTION-SAFETY (docs\pipeline-exception-safety-report.md): the background flush
+        // Timer's callback runs on a raw ThreadPool thread with nothing upstream of it to catch a
+        // throw (unlike Plugin.DataUpdate, which SimHub's own dispatch loop already guards). An
+        // unhandled exception directly on that thread would crash the whole host process - see
+        // FlushTick's own remarks. These tests force a write failure a plain IOException/
+        // UnauthorizedAccessException catch would NOT have caught (an invalid path segment raises
+        // ArgumentException from Directory.CreateDirectory/File.WriteAllText, not either of those
+        // types) and confirm the store - and the test process itself - survive it.
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void An_invalid_flush_path_does_not_crash_the_background_timer_or_the_process()
+        {
+            // "|" is not a legal character within a Windows path segment - Directory.CreateDirectory/
+            // File.WriteAllText raise ArgumentException for it, a type neither WriteAtomic's nor (pre-
+            // fix) FlushTick's own catch clauses covered.
+            string invalidPath = Path.Combine(Path.GetTempPath(), "qaf-bad-path-" + Guid.NewGuid(), "sub|dir", "params.json");
+            _store = new RuntimeStore(invalidPath, flushInterval: TimeSpan.FromMilliseconds(50));
+            _store.SaveLockLearners(OneLearner("GameA|#|Car1", 1.0, 10));
+
+            // Several timer ticks' worth of time: if FlushTick's guard were missing, the raw
+            // ThreadPool timer callback throwing here would take the whole process down with it -
+            // simply reaching the next line is itself evidence the fix holds.
+            Thread.Sleep(400);
+
+            // The store must still be usable afterwards, not left poisoned by the failed tick.
+            var exception = Record.Exception(() => _store.SaveLockLearners(OneLearner("GameA|#|Car1", 2.0, 20)));
+            Assert.Null(exception);
+
+            // HEALTH REGISTRY (resilience-hardening task) - the fault must not be silently swallowed:
+            // WriteAtomic's own catch(Exception) records it under RuntimePersistence (the same fault
+            // reaches HealthRegistry regardless of which of WriteAtomic's several catch clauses
+            // actually matches the ArgumentException this invalid path segment raises).
+            Assert.Contains(HealthRegistry.Snapshot(), e => e.Subsystem == HealthSubsystems.RuntimePersistence);
+        }
+
+        [Fact]
+        public void Flush_with_an_invalid_path_does_not_throw_synchronously_either()
+        {
+            string invalidPath = Path.Combine(Path.GetTempPath(), "qaf-bad-path-" + Guid.NewGuid(), "sub|dir", "params.json");
+            _store = new RuntimeStore(invalidPath, flushInterval: NoAutoFlush);
+            _store.SaveLockLearners(OneLearner("GameA|#|Car1", 1.0, 10));
+
+            // Mirrors Plugin.End's own call chain (a synchronous Flush guaranteed not to throw out of
+            // shutdown) - WriteAtomic's broadened catch(Exception) is what protects this path now.
+            var exception = Record.Exception(() => _store.Flush());
+            Assert.Null(exception);
+            Assert.Contains(HealthRegistry.Snapshot(), e => e.Subsystem == HealthSubsystems.RuntimePersistence);
+        }
+
+        [Fact]
+        public void A_corrupt_runtime_file_is_recorded_in_the_health_registry_and_still_degrades_to_a_fresh_document()
+        {
+            File.WriteAllText(_path, "{ not valid json ][");
+
+            _store = new RuntimeStore(_path, flushInterval: NoAutoFlush);
+            _store.LoadLockLearners(out var data);
+
+            Assert.Empty(data);
+            Assert.Contains(HealthRegistry.Snapshot(), e => e.Subsystem == HealthSubsystems.RuntimePersistence);
         }
 
         private static bool SpinWaitForFile(string path, TimeSpan timeout)

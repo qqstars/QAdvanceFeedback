@@ -1,6 +1,7 @@
 using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.Projection;
 using QAdvanceFeedback.Core.MotorsExport;
+using QAdvanceFeedback.Core.Normalized;
 
 namespace QAdvanceFeedback.Settings
 {
@@ -16,7 +17,7 @@ namespace QAdvanceFeedback.Settings
     /// configurable - All/Front/Rear/Left/Right are always aggregated from them, confirmed in the
     /// brief: "the algorithm does not provide them natively") plus each field's own
     /// <see cref="ScriptType"/> (always <see cref="Settings.ScriptType.Plain"/> under either shipped
-    /// default) and <see cref="SourceMode"/> (default <see cref="Settings.SourceMode.ShakeIt"/> - see
+    /// default) and <see cref="SourceMode"/> (default <see cref="Settings.SourceMode.Manual"/> - see
     /// that property's own remarks; <see cref="Settings.SourceMode.Manual"/>'s own default is a PLAIN
     /// reference to the matching Layer 3 Raw property - see <see cref="DefaultWheelSources"/>).</item>
     /// <item>Layer 5's curve (<see cref="Projector"/>, a <see cref="ProjectorSettings"/> - ported
@@ -48,16 +49,28 @@ namespace QAdvanceFeedback.Settings
         /// property) vs. ShakeIt (SimHub's own ShakeIt Motors export - see
         /// <see cref="MotorsExportPropertyNames"/>).
         /// <para/>
-        /// DEFAULT IS <see cref="Settings.SourceMode.ShakeIt"/> - per the owner's explicit instruction
-        /// ("Default, globally: ShakeIt Plugin Output Properties"), NOT Manual. A fresh install (and
-        /// "Restore all default settings") therefore ships both channels already pointed at the four
-        /// confirmed ShakeIt Motors export names (see <see cref="ApplyMotorsExportDefaults"/>) - the settings
-        /// UI always shows the toggle and, when the export is not yet configured, an inline note
-        /// explaining how to produce it (see <c>docs\shakeit-export-guide.md</c>); the plugin never
-        /// silently reads a missing export as 0 either way (see <see cref="WheelSourceResolver"/>'s
-        /// fallback to this channel's own Raw value).
+        /// DEFAULT IS <see cref="Settings.SourceMode.Manual"/> (docs\relative-fallback-and-raw-default-report.md
+        /// - FLIPPED from the previous shipped default, <see cref="Settings.SourceMode.ShakeIt"/>).
+        /// SUPERSEDES the earlier "Default, globally: ShakeIt Plugin Output Properties" instruction:
+        /// the owner's own controlled F1 25 comparison (four matched wet/dry, Raw/ShakeIt logs, then a
+        /// fifth wet/dry-in-one-session pair) established that Layer 3's own Raw needs NO SimHub-side
+        /// setup at all and reads consistently across both cars/conditions from the very first braking
+        /// zone, while ShakeIt requires BOTH the export to be configured (steps 1-6 of
+        /// docs\shakeit-export-guide.md) AND its own internal per-car calibration to mature (up to 7000
+        /// samples - docs\shakeit-silence-diagnosis-report.md) before its numbers are trustworthy - on a
+        /// car it has not yet "seen" enough, ShakeIt's own native scale for the SAME physical event can
+        /// differ more than 3x from one car to another (measured: Sauber's own near-limit reading sits
+        /// close to Raw's, F1 Generic's sits at roughly a third of it), something Raw does not exhibit.
+        /// A fresh install (and "Restore all default settings") therefore now ships both channels
+        /// already pointed at this channel's own Layer 3 Raw property (see
+        /// <see cref="ResetSourcesToDefault"/>) - a driver who prefers ShakeIt's own export can still
+        /// switch to it via the settings UI's toggle (see <see cref="ApplyMotorsExportDefaults"/>), which
+        /// remains fully supported and unchanged; the settings UI always shows the toggle and, when the
+        /// export is not yet configured, an inline note explaining how to produce it (see
+        /// <c>docs\shakeit-export-guide.md</c>); the plugin never silently reads a missing export as 0
+        /// either way (see <see cref="WheelSourceResolver"/>'s fallback to this channel's own Raw value).
         /// </summary>
-        public SourceMode SourceMode { get; set; } = SourceMode.ShakeIt;
+        public SourceMode SourceMode { get; set; } = SourceMode.Manual;
 
         private double _brakeThresholdPercent;
         private double _throttleThresholdPercent;
@@ -99,6 +112,20 @@ namespace QAdvanceFeedback.Settings
             get => _lockSensibility;
             set => _lockSensibility = ClampMath.To0100(value);
         }
+
+        /// <summary>
+        /// 1.0.6.0 (docs\release-1060-report.md, Part 2's UI half) - which severity formula Wheel
+        /// Lock's own published output uses, ONLY meaningful for the Lock channel (Slip has no
+        /// selector at all - it always uses the Mapping-equivalent, four-range-free formula it always
+        /// has). Persisted here (rather than only living on <see cref="Core.Normalized.NormalizedWheelLockSlipEngine"/>,
+        /// which has no settings-file awareness of its own) so a driver's choice survives a SimHub
+        /// restart; <see cref="QAdvanceFeedback"/>'s own per-frame read of this property (mirroring how
+        /// <see cref="LockSensibility"/>/aggregation weights above are re-read every frame rather than
+        /// baked in at construction) is what actually feeds
+        /// <see cref="Core.Normalized.NormalizedWheelLockSlipEngine.LockNormalizePattern"/>. Defaults to
+        /// <see cref="NormalizePattern.Mapping"/>, matching the engine's own field-initialiser default.
+        /// </summary>
+        public NormalizePattern NormalizePattern { get; set; } = NormalizePattern.Mapping;
 
         public ProjectorSettings Projector { get; set; } = new ProjectorSettings();
 
@@ -207,18 +234,25 @@ namespace QAdvanceFeedback.Settings
 
         /// <summary>
         /// The Wheel Slip channel's shipped defaults: sources point at Layer 3's own
-        /// <c>WheelSlip.Raw.*</c> properties, and the curve is the brief's slip preset (start 20, end
-        /// 100, 30-&gt;8, 45-&gt;25, 75-&gt;75) - earlier and gentler than the lock channel's, exactly
-        /// as the sibling project's own traction curve is.
+        /// <c>WheelSlip.Raw.*</c> properties, and the curve is the slip preset (start 20, end 100,
+        /// 30-&gt;10, 60-&gt;35, 80-&gt;70 - Critical/Max-Grip output SOFTENED 75 -&gt; 70 in this build
+        /// (owner-confirmed, direct response to "with ShakeIt, WheelSlip shakes much harder than using
+        /// Raw" - see <see cref="Core.Projection.ProjectorSettings.ApplyPreset"/>'s own remarks for the
+        /// full rationale); earlier still 30-&gt;8/60-&gt;20/80-&gt;75, see
+        /// docs\slip-source-consistency-report.md) - the mid-range "Ideal" output is close to Lock's
+        /// own, while Critical (80-&gt;70, still below Lock's 80) keeps full spin gentler than full
+        /// lock. WheelLock's own Critical output is UNCHANGED (stays 60) - the owner was explicit that
+        /// only Slip's max-grip output should move here.
         /// </summary>
         public static WheelChannelSettings CreateSlipDefaults() => CreateDefaults(isLockChannel: false);
 
         private static WheelChannelSettings CreateDefaults(bool isLockChannel)
         {
             var settings = new WheelChannelSettings();
-            // Global shipped default is ShakeIt (see SourceMode's own remarks) - NOT
-            // ResetSourcesToDefault (which would force Manual/Raw).
-            settings.ApplyMotorsExportDefaults(isLockChannel);
+            // Global shipped default is now Manual/Raw (docs\relative-fallback-and-raw-default-report.md
+            // - FLIPPED from the previous ShakeIt default; see SourceMode's own remarks for the evidence)
+            // - NOT ApplyMotorsExportDefaults (which would force ShakeIt).
+            settings.ResetSourcesToDefault(isLockChannel);
             settings.Projector.ApplyPreset(
                 ProjectorPreset.Curve,
                 isLockChannel ? ProjectionChannel.Lock : ProjectionChannel.Slip);

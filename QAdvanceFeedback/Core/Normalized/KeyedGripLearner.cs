@@ -115,17 +115,58 @@ namespace QAdvanceFeedback.Core.Normalized
         public double Confidence(string gameId, string carId, string sourceIdentity = "", string surfaceBucket = "")
             => Find(gameId, carId, sourceIdentity, surfaceBucket)?.Confidence ?? 0.0;
 
+        /// <summary>Read-only diagnostic passthrough to <see cref="GripLearner.PublishedGMech"/> for this
+        /// key - <see cref="GripLearner.SeedPeakG"/> (the flat seed) for a key never observed yet. Added
+        /// for the v1.0.6.9 rework's own Goal 3 reporting (docs\v1068-rework-report.md - the wet/dry and
+        /// cross-car speed-G-mapping-vs-source-anchor stability comparison); never creates an entry.</summary>
+        public double PublishedGMech(string gameId, string carId, string sourceIdentity = "", string surfaceBucket = "")
+            => Find(gameId, carId, sourceIdentity, surfaceBucket)?.PublishedGMech ?? GripLearner.SeedPeakG;
+
+        /// <summary>The Slip/Lock-shared equivalent for <see cref="GripLearner.PublishedK"/> - 0.0 (no
+        /// aero term learned) for a key never observed yet.</summary>
+        public double PublishedK(string gameId, string carId, string sourceIdentity = "", string surfaceBucket = "")
+            => Find(gameId, carId, sourceIdentity, surfaceBucket)?.PublishedK ?? 0.0;
+
+        /// <summary>DIAGNOSTIC/MEASUREMENT ONLY (docs\speed-aware-reference-fix-report.md) - passthrough to
+        /// <see cref="GripLearner.SnapshotSpeedBucket"/> for this key. Never creates an entry - a key never
+        /// observed yet reports every bucket as having no live estimate.</summary>
+        public void SnapshotSpeedBucket(string gameId, string carId, string sourceIdentity, string surfaceBucket, int index,
+            out bool hasLiveEstimate, out double peakG, out double meanSpeedKmh, out int liveSamples)
+        {
+            GripLearner learner = Find(gameId, carId, sourceIdentity, surfaceBucket);
+            if (learner == null)
+            {
+                hasLiveEstimate = false; peakG = 0.0; meanSpeedKmh = 0.0; liveSamples = 0;
+                return;
+            }
+            learner.SnapshotSpeedBucket(index, out hasLiveEstimate, out peakG, out meanSpeedKmh, out liveSamples);
+        }
+
+        /// <summary>DIAGNOSTIC/MEASUREMENT ONLY - the fixed number of speed buckets every
+        /// <see cref="GripLearner"/> uses (not per-key).</summary>
+        public static int SpeedBucketCount => GripLearner.SpeedBucketCount;
+
+        /// <summary>DIAGNOSTIC/MEASUREMENT ONLY - the lower edge (km/h) of speed bucket <paramref name="index"/>.</summary>
+        public static double SpeedBucketEdgeKmh(int index) => GripLearner.SpeedBucketEdgeKmh(index);
+
         /// <summary><paramref name="magnitudeG"/> as a fraction of this (gameId, carId, sourceIdentity,
         /// surfaceBucket)'s own learned peak - see <see cref="GripLearner.Ratio"/>. Creates a fresh (or
         /// legacy-seeded) learner for a key seen for the very first time, mirroring
         /// <see cref="Observe"/>.</summary>
-        public double Ratio(string gameId, string carId, double magnitudeG, string sourceIdentity = "", string surfaceBucket = "", bool applyColdStartCeiling = true)
-            => GetOrCreate(gameId, carId, sourceIdentity, surfaceBucket).Ratio(magnitudeG, applyColdStartCeiling);
+        /// <param name="speedKmh">SPEED-DEPENDENT GRIP MODEL (docs\speed-aware-grip-report.md) - see
+        /// <see cref="GripLearner.Ratio"/>'s own remarks. Defaults to <c>null</c> so every pre-existing
+        /// caller/test keeps its exact prior behaviour.</param>
+        /// <param name="useStabilityGatedCeiling">See <see cref="GripLearner.Ratio"/>'s own remarks.</param>
+        public double Ratio(string gameId, string carId, double magnitudeG, string sourceIdentity = "", string surfaceBucket = "", bool applyColdStartCeiling = true, double? speedKmh = null, bool useStabilityGatedCeiling = true)
+            => GetOrCreate(gameId, carId, sourceIdentity, surfaceBucket).Ratio(magnitudeG, applyColdStartCeiling, speedKmh, useStabilityGatedCeiling);
 
         /// <summary>Folds one qualifying observation into this (gameId, carId, sourceIdentity,
         /// surfaceBucket)'s own learner - see <see cref="GripLearner.Observe"/>.</summary>
-        public void Observe(string gameId, string carId, double magnitudeG, string sourceIdentity = "", string surfaceBucket = "")
-            => GetOrCreate(gameId, carId, sourceIdentity, surfaceBucket).Observe(magnitudeG);
+        /// <param name="speedKmh">See <see cref="Ratio"/>'s own remarks.</param>
+        /// <param name="atLimitWeight">See <see cref="GripLearner.Observe"/>'s own remarks. Defaults to
+        /// 1.0 (unconditional speed-bucket admission) so every pre-existing caller/test is unaffected.</param>
+        public void Observe(string gameId, string carId, double magnitudeG, string sourceIdentity = "", string surfaceBucket = "", double? speedKmh = null, double atLimitWeight = 1.0)
+            => GetOrCreate(gameId, carId, sourceIdentity, surfaceBucket).Observe(magnitudeG, speedKmh, atLimitWeight);
 
         /// <summary>Read-only lookup: the key's own learner if it has been created yet (via
         /// <see cref="Observe"/>/<see cref="Ratio"/>/<see cref="ImportAll"/>), otherwise this SAME
@@ -210,8 +251,27 @@ namespace QAdvanceFeedback.Core.Normalized
                     // already-persisted, trustworthy COLD reference from a noisy session's own hot state
                     // (see GripLearner.PersistedPeakG's own remarks). Identical to LearnedPeakG for every
                     // key that was never Load-ed from a prior session (a brand-new key becoming persisted
-                    // for the first time has no cold reference to protect yet).
-                    export[pair.Key] = new GripLearnerState { PeakG = pair.Value.PersistedPeakG, Samples = pair.Value.Samples };
+                    // for the first time has no cold reference to protect yet). PersistedGMech/PersistedK
+                    // (docs\speed-aware-grip-report.md) mirror PersistedPeakG's own "HOT must not corrupt
+                    // COLD" gate exactly - same reasoning, same key.
+                    //
+                    // RaiseCandidateG/Hits/LowerCandidateG/Hits (docs\adaptive-peak-learner-report.md) -
+                    // the evidence-weighted estimator's own in-progress corroboration, exported AS-IS
+                    // (not cold/warm blended - see GripLearner.RaiseCandidateG's own remarks on why this
+                    // discrete bookkeeping is not a value meaningful to interpolate) so a returning car
+                    // resumes warm rather than relearning its confidence from scratch.
+                    export[pair.Key] = new GripLearnerState
+                    {
+                        PeakG = pair.Value.PersistedPeakG,
+                        Samples = pair.Value.Samples,
+                        GMech = pair.Value.PersistedGMech,
+                        K = pair.Value.PersistedK,
+                        RaiseCandidateG = pair.Value.RaiseCandidateG,
+                        RaiseCandidateHits = pair.Value.RaiseCandidateHits,
+                        LowerCandidateG = pair.Value.LowerCandidateG,
+                        LowerCandidateHits = pair.Value.LowerCandidateHits,
+                        QuietStreak = pair.Value.QuietStreak
+                    };
             }
             return export;
         }
@@ -228,7 +288,10 @@ namespace QAdvanceFeedback.Core.Normalized
             {
                 if (string.IsNullOrEmpty(pair.Key) || pair.Value == null) continue;
                 var learner = new GripLearner(_learnCapG);
-                learner.Load(pair.Value.PeakG, pair.Value.Samples);
+                learner.Load(pair.Value.PeakG, pair.Value.Samples, pair.Value.GMech, pair.Value.K,
+                    pair.Value.RaiseCandidateG, pair.Value.RaiseCandidateHits,
+                    pair.Value.LowerCandidateG, pair.Value.LowerCandidateHits,
+                    pair.Value.QuietStreak);
                 _learners[pair.Key] = learner;
             }
         }
@@ -257,5 +320,45 @@ namespace QAdvanceFeedback.Core.Normalized
     {
         public double PeakG = GripLearner.SeedPeakG;
         public int Samples;
+
+        /// <summary>SPEED-DEPENDENT GRIP MODEL (docs\speed-aware-grip-report.md) - the persisted
+        /// mechanical (v=0) grip term, <see cref="GripLearner.PersistedGMech"/>. Defaults to 0.0 -
+        /// a document written before this feature existed simply lacks this key in its JSON;
+        /// Newtonsoft's construct-then-overwrite convention leaves it at this default, and
+        /// <see cref="GripLearner.Load(double,int,double,double)"/> treats a non-positive value as
+        /// "fall back to the flat <see cref="PeakG"/>" - the exact bit-identical behaviour this
+        /// feature guarantees for every pre-existing persisted profile.</summary>
+        public double GMech;
+
+        /// <summary>The persisted aero/drag term, <see cref="GripLearner.PersistedK"/> - see
+        /// <see cref="GMech"/>'s own remarks. Defaults to 0.0; any invalid or negative value loaded
+        /// falls back to 0.0 (see <see cref="GripLearner.Load(double,int,double,double)"/>).</summary>
+        public double K;
+
+        /// <summary>EVIDENCE-WEIGHTED ADAPTIVE PEAK ESTIMATOR (docs\adaptive-peak-learner-report.md) -
+        /// the flat scalar's own in-progress RAISE corroboration (<see cref="GripLearner.RaiseCandidateG"/>/
+        /// <see cref="GripLearner.RaiseCandidateHits"/>), persisted so a returning car resumes warm
+        /// rather than relearning its confidence from scratch. Defaults to 0.0/0 - a document written
+        /// before this feature existed simply lacks these keys; Newtonsoft's construct-then-overwrite
+        /// convention leaves them at these defaults, which <see cref="GripLearner.Load(double,int,double,double,double,int,double,int)"/>
+        /// already treats as "no corroboration in progress yet" - bit-identical to a freshly-constructed
+        /// learner's own starting state.</summary>
+        public double RaiseCandidateG;
+        public int RaiseCandidateHits;
+
+        /// <summary>The flat scalar's own in-progress LOWER corroboration - see
+        /// <see cref="RaiseCandidateG"/>'s own remarks.</summary>
+        public double LowerCandidateG;
+        public int LowerCandidateHits;
+
+        /// <summary>STABILITY-GATED MATURITY (docs\stability-confidence-fix-report.md) - the flat
+        /// scalar's own in-progress "settling streak" (<see cref="GripLearner.QuietStreak"/>), persisted
+        /// so a RETURNING car's already-genuinely-stable reference is not treated as freshly unstable on
+        /// every restart - see <see cref="GripLearner.Load(double,int,double,double,double,int,double,int,double)"/>'s
+        /// own remarks. Defaults to 0.0 - a document written before this feature existed simply lacks
+        /// this key; Newtonsoft's construct-then-overwrite convention leaves it at this default, which
+        /// that <c>Load</c> overload already treats as "no settling evidence yet this session" - the
+        /// exact starting state a freshly-constructed learner already has.</summary>
+        public double QuietStreak;
     }
 }

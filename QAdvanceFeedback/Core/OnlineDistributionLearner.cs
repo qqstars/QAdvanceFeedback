@@ -47,6 +47,22 @@ namespace QAdvanceFeedback.Core
         /// formula.</summary>
         public const int MinSamplesForPercentile = 500;
 
+        /// <summary>INT32 OVERFLOW GUARD (docs\stability-confidence-fix-report.md, Part 2 - the
+        /// counter-saturation follow-up to docs\adaptive-peak-learner-report.md's own Part 1) -
+        /// <see cref="_count"/> is an unguarded <c>int</c> incremented once per
+        /// <see cref="AddValue(double,double)"/> call and is exactly what <see cref="Count"/> reports to
+        /// every caller (<c>KeyedScaleLearner.LearnedCeilingForKey</c>'s own
+        /// <see cref="ColdWarmBlend.ConcaveHotWeight"/> call, most notably - a negative wrap there would
+        /// silently collapse a fully-earned calibration weight back toward zero). Saturating at
+        /// 1,000,000 (identical cap to <see cref="Normalized.GripLearner.SampleCountSaturationCap"/>/
+        /// <see cref="WelfordAccumulator.CountSaturationCap"/> - the same shared, ample-headroom
+        /// figure, not a new one) stops the COUNTER, never the learning: <see cref="_histogram"/> and
+        /// the decaying weighted-average state below (<see cref="_decayedWeightedSum"/>/
+        /// <see cref="_decayedWeight"/>) are entirely independent fields, updated unconditionally on
+        /// every call regardless of whether this cap has been reached - <see cref="GetAverage"/>/
+        /// <see cref="GetPercentile"/> keep moving exactly as before.</summary>
+        public const int SampleCountSaturationCap = 1_000_000;
+
         private readonly Dictionary<double, int> _histogram = new Dictionary<double, int>();
         private double _sum;
         private int _count;
@@ -75,7 +91,11 @@ namespace QAdvanceFeedback.Core
         /// <see cref="Normalized.GripLearner"/>'s own decaying peak uses
         /// (<c>GripLearner.ForgetPerSample</c>), for the same reason: slow enough that ordinary
         /// per-braking-zone variance does not visibly wander the estimate, fast enough that a genuine,
-        /// sustained condition change is reflected within a handful of braking zones rather than never.</summary>
+        /// sustained condition change is reflected within a handful of braking zones rather than never.
+        /// (docs\robust-auto-gforce-report.md: a windowed trimmed-band swap was PROTOTYPED for
+        /// <see cref="Normalized.GripLearner"/> and measurably reduced outlier sensitivity, but surfaced a
+        /// regression in a different pinned cold-start invariant and was reverted - see that class's own
+        /// remarks; this class was never touched.)</summary>
         private const double WeightedAverageDecayPerSample = 0.997;
 
         /// <summary>Total qualifying samples folded in so far (used by the caller to decide whether to
@@ -111,7 +131,9 @@ namespace QAdvanceFeedback.Core
             if (!ClampMath.IsFinite(weight) || weight <= 0.0) return;
             double abs = Math.Abs(value);
             _sum += abs;
-            _count++;
+            // INT32 OVERFLOW GUARD - see SampleCountSaturationCap's own remarks: the counter freezes,
+            // never the histogram/decayed-average state below (unconditionally updated regardless).
+            if (_count < SampleCountSaturationCap) _count++;
 
             _decayedWeightedSum = _decayedWeightedSum * WeightedAverageDecayPerSample + weight * abs;
             _decayedWeight = _decayedWeight * WeightedAverageDecayPerSample + weight;

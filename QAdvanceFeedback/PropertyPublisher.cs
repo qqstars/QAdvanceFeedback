@@ -1,5 +1,7 @@
+using System;
 using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.GForce;
+using QAdvanceFeedback.Core.Health;
 using SimHub.Plugins;
 
 namespace QAdvanceFeedback
@@ -61,38 +63,38 @@ namespace QAdvanceFeedback
             for (int i = 0; i < gforceNames.Length; i++)
             {
                 int index = i;
-                plugin.AttachDelegate(gforceNames[index], () => (object)_gforce[index]);
+                AttachSafe(plugin, gforceNames[index], () => (object)_gforce[index]);
             }
 
             if (!diagnosticsEnabled) return;
 
-            plugin.AttachDelegate("Diag.GameId", () => _gameId);
-            plugin.AttachDelegate("Diag.CarId", () => _carId);
-            plugin.AttachDelegate("Diag.Direction", () => _direction);
-            plugin.AttachDelegate("Diag.MotionLevel", () => _motionLevel);
-            plugin.AttachDelegate("Diag.MotionMagnitudeG", () => _motionMagnitudeG);
-            plugin.AttachDelegate("Diag.Lock.LearnedPeakG", () => _lockLearnedPeakG);
-            plugin.AttachDelegate("Diag.Lock.LearnerConfidence", () => _lockLearnerConfidence);
-            plugin.AttachDelegate("Diag.Slip.LearnedPeakG", () => _slipLearnedPeakG);
-            plugin.AttachDelegate("Diag.Slip.LearnerConfidence", () => _slipLearnerConfidence);
-            plugin.AttachDelegate("Diag.GForce.LearnedAccelMaxG", () => _gforceLearnedAccelMaxG);
-            plugin.AttachDelegate("Diag.GForce.LearnedDecelMaxG", () => _gforceLearnedDecelMaxG);
-            plugin.AttachDelegate("Diag.SelectedBranch.Lock", () => _selectedLockBranch);
-            plugin.AttachDelegate("Diag.SelectedBranch.Slip", () => _selectedSlipBranch);
-            plugin.AttachDelegate("Diag.Lock.SourceScaleCeiling", () => (object)_lockScaleCeiling);
-            plugin.AttachDelegate("Diag.Lock.SourceScaleCeilingIsPrimaryTier", () => _lockScaleCeilingIsPrimaryTier);
-            plugin.AttachDelegate("Diag.Slip.SourceScaleCeiling", () => (object)_slipScaleCeiling);
-            plugin.AttachDelegate("Diag.Slip.SourceScaleCeilingIsPrimaryTier", () => _slipScaleCeilingIsPrimaryTier);
-            plugin.AttachDelegate("Diag.Lock.SourceFallbackActive", () => _lockSourceFallbackActive);
-            plugin.AttachDelegate("Diag.Slip.SourceFallbackActive", () => _slipSourceFallbackActive);
+            AttachSafe(plugin, "Diag.GameId", () => _gameId);
+            AttachSafe(plugin, "Diag.CarId", () => _carId);
+            AttachSafe(plugin, "Diag.Direction", () => _direction);
+            AttachSafe(plugin, "Diag.MotionLevel", () => _motionLevel);
+            AttachSafe(plugin, "Diag.MotionMagnitudeG", () => (object)_motionMagnitudeG);
+            AttachSafe(plugin, "Diag.Lock.LearnedPeakG", () => (object)_lockLearnedPeakG);
+            AttachSafe(plugin, "Diag.Lock.LearnerConfidence", () => (object)_lockLearnerConfidence);
+            AttachSafe(plugin, "Diag.Slip.LearnedPeakG", () => (object)_slipLearnedPeakG);
+            AttachSafe(plugin, "Diag.Slip.LearnerConfidence", () => (object)_slipLearnerConfidence);
+            AttachSafe(plugin, "Diag.GForce.LearnedAccelMaxG", () => (object)_gforceLearnedAccelMaxG);
+            AttachSafe(plugin, "Diag.GForce.LearnedDecelMaxG", () => (object)_gforceLearnedDecelMaxG);
+            AttachSafe(plugin, "Diag.SelectedBranch.Lock", () => _selectedLockBranch);
+            AttachSafe(plugin, "Diag.SelectedBranch.Slip", () => _selectedSlipBranch);
+            AttachSafe(plugin, "Diag.Lock.SourceScaleCeiling", () => (object)_lockScaleCeiling);
+            AttachSafe(plugin, "Diag.Lock.SourceScaleCeilingIsPrimaryTier", () => (object)_lockScaleCeilingIsPrimaryTier);
+            AttachSafe(plugin, "Diag.Slip.SourceScaleCeiling", () => (object)_slipScaleCeiling);
+            AttachSafe(plugin, "Diag.Slip.SourceScaleCeilingIsPrimaryTier", () => (object)_slipScaleCeilingIsPrimaryTier);
+            AttachSafe(plugin, "Diag.Lock.SourceFallbackActive", () => (object)_lockSourceFallbackActive);
+            AttachSafe(plugin, "Diag.Slip.SourceFallbackActive", () => (object)_slipSourceFallbackActive);
 
-            plugin.AttachDelegate("Diag.Telemetry.WheelOnLooseSurface.FrontLeft", () => (object)_wheelOnLooseSurfaceFrontLeft);
-            plugin.AttachDelegate("Diag.Telemetry.WheelOnLooseSurface.FrontRight", () => (object)_wheelOnLooseSurfaceFrontRight);
-            plugin.AttachDelegate("Diag.Telemetry.WheelOnLooseSurface.RearLeft", () => (object)_wheelOnLooseSurfaceRearLeft);
-            plugin.AttachDelegate("Diag.Telemetry.WheelOnLooseSurface.RearRight", () => (object)_wheelOnLooseSurfaceRearRight);
-            plugin.AttachDelegate("Diag.Capabilities.SurfaceEverReportedLoose", () => _surfaceEverReportedLoose);
-            plugin.AttachDelegate("Diag.Lock.SurfaceLooseFraction", () => _lockLooseFraction);
-            plugin.AttachDelegate("Diag.Slip.SurfaceLooseFraction", () => _slipLooseFraction);
+            AttachSafe(plugin, "Diag.Telemetry.WheelOnLooseSurface.FrontLeft", () => (object)_wheelOnLooseSurfaceFrontLeft);
+            AttachSafe(plugin, "Diag.Telemetry.WheelOnLooseSurface.FrontRight", () => (object)_wheelOnLooseSurfaceFrontRight);
+            AttachSafe(plugin, "Diag.Telemetry.WheelOnLooseSurface.RearLeft", () => (object)_wheelOnLooseSurfaceRearLeft);
+            AttachSafe(plugin, "Diag.Telemetry.WheelOnLooseSurface.RearRight", () => (object)_wheelOnLooseSurfaceRearRight);
+            AttachSafe(plugin, "Diag.Capabilities.SurfaceEverReportedLoose", () => (object)_surfaceEverReportedLoose);
+            AttachSafe(plugin, "Diag.Lock.SurfaceLooseFraction", () => (object)_lockLooseFraction);
+            AttachSafe(plugin, "Diag.Slip.SurfaceLooseFraction", () => (object)_slipLooseFraction);
 
             AttachTier(plugin, AllPublishedProperties.SourceLockPrefix, _sourceLock);
             AttachTier(plugin, AllPublishedProperties.SourceSlipPrefix, _sourceSlip);
@@ -104,52 +106,66 @@ namespace QAdvanceFeedback
             // backing fields' own remarks. Every delegate below returns a nullable boxed as object
             // (same pattern already used for _gforce above) so a missing reading publishes as SimHub's
             // own "no value" rather than a fabricated 0/false.
-            plugin.AttachDelegate("Diag.Telemetry.GroundSpeedKmh", () => (object)_telemetryGroundSpeedKmh);
-            plugin.AttachDelegate("Diag.Telemetry.SpeedKmh", () => (object)_telemetrySpeedKmh);
-            plugin.AttachDelegate("Diag.Telemetry.GroundSpeedMps", () => (object)_telemetryGroundSpeedMps);
-            plugin.AttachDelegate("Diag.Telemetry.Rpm", () => (object)_telemetryRpm);
-            plugin.AttachDelegate("Diag.Telemetry.Gear", () => (object)_telemetryGear);
-            plugin.AttachDelegate("Diag.Telemetry.BrakePercent", () => (object)_telemetryBrakePercent);
-            plugin.AttachDelegate("Diag.Telemetry.ThrottlePercent", () => (object)_telemetryThrottlePercent);
-            plugin.AttachDelegate("Diag.Telemetry.ClutchPercent", () => (object)_telemetryClutchPercent);
-            plugin.AttachDelegate("Diag.Telemetry.LateralLocalVelocity", () => (object)_telemetryLateralLocalVelocity);
-            plugin.AttachDelegate("Diag.Telemetry.LongitudinalG", () => (object)_telemetryLongitudinalG);
-            plugin.AttachDelegate("Diag.Telemetry.LateralG", () => (object)_telemetryLateralG);
+            AttachSafe(plugin, "Diag.Telemetry.GroundSpeedKmh", () => (object)_telemetryGroundSpeedKmh);
+            AttachSafe(plugin, "Diag.Telemetry.SpeedKmh", () => (object)_telemetrySpeedKmh);
+            AttachSafe(plugin, "Diag.Telemetry.GroundSpeedMps", () => (object)_telemetryGroundSpeedMps);
+            AttachSafe(plugin, "Diag.Telemetry.Rpm", () => (object)_telemetryRpm);
+            AttachSafe(plugin, "Diag.Telemetry.Gear", () => (object)_telemetryGear);
+            AttachSafe(plugin, "Diag.Telemetry.BrakePercent", () => (object)_telemetryBrakePercent);
+            AttachSafe(plugin, "Diag.Telemetry.ThrottlePercent", () => (object)_telemetryThrottlePercent);
+            AttachSafe(plugin, "Diag.Telemetry.ClutchPercent", () => (object)_telemetryClutchPercent);
+            AttachSafe(plugin, "Diag.Telemetry.LateralLocalVelocity", () => (object)_telemetryLateralLocalVelocity);
+            AttachSafe(plugin, "Diag.Telemetry.LongitudinalG", () => (object)_telemetryLongitudinalG);
+            AttachSafe(plugin, "Diag.Telemetry.LateralG", () => (object)_telemetryLateralG);
 
-            plugin.AttachDelegate("Diag.Telemetry.WheelRPS.FrontLeft", () => (object)_wheelRpsFrontLeft);
-            plugin.AttachDelegate("Diag.Telemetry.WheelRPS.FrontRight", () => (object)_wheelRpsFrontRight);
-            plugin.AttachDelegate("Diag.Telemetry.WheelRPS.RearLeft", () => (object)_wheelRpsRearLeft);
-            plugin.AttachDelegate("Diag.Telemetry.WheelRPS.RearRight", () => (object)_wheelRpsRearRight);
+            AttachSafe(plugin, "Diag.Telemetry.WheelRPS.FrontLeft", () => (object)_wheelRpsFrontLeft);
+            AttachSafe(plugin, "Diag.Telemetry.WheelRPS.FrontRight", () => (object)_wheelRpsFrontRight);
+            AttachSafe(plugin, "Diag.Telemetry.WheelRPS.RearLeft", () => (object)_wheelRpsRearLeft);
+            AttachSafe(plugin, "Diag.Telemetry.WheelRPS.RearRight", () => (object)_wheelRpsRearRight);
 
-            plugin.AttachDelegate("Diag.Telemetry.WheelSpeed.FrontLeft", () => (object)_wheelSpeedFrontLeft);
-            plugin.AttachDelegate("Diag.Telemetry.WheelSpeed.FrontRight", () => (object)_wheelSpeedFrontRight);
-            plugin.AttachDelegate("Diag.Telemetry.WheelSpeed.RearLeft", () => (object)_wheelSpeedRearLeft);
-            plugin.AttachDelegate("Diag.Telemetry.WheelSpeed.RearRight", () => (object)_wheelSpeedRearRight);
+            AttachSafe(plugin, "Diag.Telemetry.WheelSpeed.FrontLeft", () => (object)_wheelSpeedFrontLeft);
+            AttachSafe(plugin, "Diag.Telemetry.WheelSpeed.FrontRight", () => (object)_wheelSpeedFrontRight);
+            AttachSafe(plugin, "Diag.Telemetry.WheelSpeed.RearLeft", () => (object)_wheelSpeedRearLeft);
+            AttachSafe(plugin, "Diag.Telemetry.WheelSpeed.RearRight", () => (object)_wheelSpeedRearRight);
 
-            plugin.AttachDelegate("Diag.Telemetry.WheelSlipRatio.FrontLeft", () => (object)_wheelSlipRatioFrontLeft);
-            plugin.AttachDelegate("Diag.Telemetry.WheelSlipRatio.FrontRight", () => (object)_wheelSlipRatioFrontRight);
-            plugin.AttachDelegate("Diag.Telemetry.WheelSlipRatio.RearLeft", () => (object)_wheelSlipRatioRearLeft);
-            plugin.AttachDelegate("Diag.Telemetry.WheelSlipRatio.RearRight", () => (object)_wheelSlipRatioRearRight);
+            AttachSafe(plugin, "Diag.Telemetry.WheelSlipRatio.FrontLeft", () => (object)_wheelSlipRatioFrontLeft);
+            AttachSafe(plugin, "Diag.Telemetry.WheelSlipRatio.FrontRight", () => (object)_wheelSlipRatioFrontRight);
+            AttachSafe(plugin, "Diag.Telemetry.WheelSlipRatio.RearLeft", () => (object)_wheelSlipRatioRearLeft);
+            AttachSafe(plugin, "Diag.Telemetry.WheelSlipRatio.RearRight", () => (object)_wheelSlipRatioRearRight);
 
-            plugin.AttachDelegate("Diag.Capabilities.WheelsSlip", () => (object)_capWheelsSlip);
-            plugin.AttachDelegate("Diag.Capabilities.WheelsRPS", () => (object)_capWheelsRPS);
-            plugin.AttachDelegate("Diag.Capabilities.WheelsSpeed", () => (object)_capWheelsSpeed);
-            plugin.AttachDelegate("Diag.Capabilities.WheelsSlipDirectMode", () => (object)_capWheelsSlipDirectMode);
-            plugin.AttachDelegate("Diag.Capabilities.WheelSlipUseSimpleBraking", () => (object)_capWheelSlipUseSimpleBraking);
-            plugin.AttachDelegate("Diag.Capabilities.DetectLockFromWheelsSpeed", () => (object)_capDetectLockFromWheelsSpeed);
-            plugin.AttachDelegate("Diag.Capabilities.DetectLockFromWheelsRPSAndDummyRadius", () => (object)_capDetectLockFromWheelsRPSAndDummyRadius);
-            plugin.AttachDelegate("Diag.Capabilities.Speed", () => (object)_capSpeed);
-            plugin.AttachDelegate("Diag.Capabilities.Rpm", () => (object)_capRpm);
-            plugin.AttachDelegate("Diag.Capabilities.GameFamily", () => (object)_capGameFamily);
-            plugin.AttachDelegate("Diag.Capabilities.WheelSlipCalibrationProviderSlipScale", () => (object)_capWheelSlipCalibrationProviderSlipScale);
+            AttachSafe(plugin, "Diag.Capabilities.WheelsSlip", () => (object)_capWheelsSlip);
+            AttachSafe(plugin, "Diag.Capabilities.WheelsRPS", () => (object)_capWheelsRPS);
+            AttachSafe(plugin, "Diag.Capabilities.WheelsSpeed", () => (object)_capWheelsSpeed);
+            AttachSafe(plugin, "Diag.Capabilities.WheelsSlipDirectMode", () => (object)_capWheelsSlipDirectMode);
+            AttachSafe(plugin, "Diag.Capabilities.WheelSlipUseSimpleBraking", () => (object)_capWheelSlipUseSimpleBraking);
+            AttachSafe(plugin, "Diag.Capabilities.DetectLockFromWheelsSpeed", () => (object)_capDetectLockFromWheelsSpeed);
+            AttachSafe(plugin, "Diag.Capabilities.DetectLockFromWheelsRPSAndDummyRadius", () => (object)_capDetectLockFromWheelsRPSAndDummyRadius);
+            AttachSafe(plugin, "Diag.Capabilities.Speed", () => (object)_capSpeed);
+            AttachSafe(plugin, "Diag.Capabilities.Rpm", () => (object)_capRpm);
+            AttachSafe(plugin, "Diag.Capabilities.GameFamily", () => (object)_capGameFamily);
+            AttachSafe(plugin, "Diag.Capabilities.WheelSlipCalibrationProviderSlipScale", () => (object)_capWheelSlipCalibrationProviderSlipScale);
         }
+
+        /// <summary>
+        /// PIPELINE-EXCEPTION-SAFETY (docs\pipeline-exception-safety-report.md): every single published
+        /// property funnels through here rather than a raw <c>AttachDelegate</c> call. <paramref name="provider"/>
+        /// is wrapped in <see cref="SafeCall.Value{T}"/>, so even a future change that makes one of these
+        /// lambdas capable of throwing (today, none can - every one is a direct read of a fixed-size
+        /// backing array/field at a compile-time-constant index) degrades to publishing SimHub's own
+        /// "no value" (null) for that ONE property, once, rather than propagating into whichever
+        /// dashboard/ShakeIt effect/other plugin happens to be reading it at the time - see
+        /// <c>PropertyEntry.Evaluate()</c>/<c>PropertyEntryWrapper.GetValue()</c>'s own decompiled,
+        /// unguarded-primitive status in the pipeline-exception-safety report.
+        /// </summary>
+        private static void AttachSafe<TPlugin>(TPlugin plugin, string name, Func<object> provider) where TPlugin : IPlugin
+            => plugin.AttachDelegate(name, () => SafeCall.Value(provider, (object)null, HealthSubsystems.PropertyPublish, "Health.Impact.PropertyPublish"));
 
         private static void AttachTier<TPlugin>(TPlugin plugin, string prefix, double[] values) where TPlugin : IPlugin
         {
             for (int i = 0; i < PublishedPropertyNames.Targets.Length; i++)
             {
                 int index = i; // capture per iteration
-                plugin.AttachDelegate(prefix + PublishedPropertyNames.Targets[index], () => values[index]);
+                AttachSafe(plugin, prefix + PublishedPropertyNames.Targets[index], () => (object)values[index]);
             }
         }
 
@@ -163,7 +179,7 @@ namespace QAdvanceFeedback
             for (int i = 0; i < PublishedPropertyNames.Targets.Length; i++)
             {
                 int index = i; // capture per iteration
-                plugin.AttachDelegate(prefix + PublishedPropertyNames.Targets[index], () => (object)(hasValue[index] ? (double?)values[index] : null));
+                AttachSafe(plugin, prefix + PublishedPropertyNames.Targets[index], () => (object)(hasValue[index] ? (double?)values[index] : null));
             }
         }
     }
