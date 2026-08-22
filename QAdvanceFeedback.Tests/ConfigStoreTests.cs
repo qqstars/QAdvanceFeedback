@@ -1,6 +1,8 @@
 using System;
 using System.IO;
+using System.Linq;
 using QAdvanceFeedback.Core.GForce;
+using QAdvanceFeedback.Core.Health;
 using QAdvanceFeedback.Core.Projection;
 using QAdvanceFeedback.Settings;
 using Xunit;
@@ -32,10 +34,13 @@ namespace QAdvanceFeedback.Tests
 
             QAdvanceFeedbackSettings loaded = ConfigStore.Load(_path);
 
-            // Owner-confirmed global default is ShakeIt Plugin Output Properties, not Manual/Raw.
-            Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelLock.IRacing.FrontLeft", loaded.Lock.SourceFrontLeft);
-            Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelSlip.IRacing.FrontLeft", loaded.Slip.SourceFrontLeft);
-            Assert.Equal(60.0, loaded.Lock.Projector.ModerateInput, 6);
+            // Global default is now Manual/Raw (docs\relative-fallback-and-raw-default-report.md -
+            // FLIPPED from the earlier ShakeIt Plugin Output Properties default).
+            Assert.Equal("QAdvanceFeedback.WheelLock.Raw.FrontLeft", loaded.Lock.SourceFrontLeft);
+            Assert.Equal("QAdvanceFeedback.WheelSlip.Raw.FrontLeft", loaded.Slip.SourceFrontLeft);
+            // Pre-release Change 2c: threshold moved 60 -> 62 (paired with a flatten range of 2) so the
+            // Ideal plateau's own edge still lands exactly on the shared 60 band boundary.
+            Assert.Equal(62.0, loaded.Lock.Projector.ModerateInput, 6);
             Assert.False(loaded.Lock.Pulse.Enabled);
         }
 
@@ -74,8 +79,13 @@ namespace QAdvanceFeedback.Tests
             var warnings = 0;
             QAdvanceFeedbackSettings loaded = ConfigStore.Load(_path, _ => warnings++);
 
-            Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelLock.IRacing.FrontLeft", loaded.Lock.SourceFrontLeft);
+            Assert.Equal("QAdvanceFeedback.WheelLock.Raw.FrontLeft", loaded.Lock.SourceFrontLeft);
             Assert.True(warnings > 0);
+
+            // HEALTH REGISTRY (resilience-hardening task) - the caller's logWarning delegate is a
+            // SimHub-log-only channel; the settings UI never reads it. The fault must ALSO be visible
+            // through HealthRegistry so the settings UI's own health section can surface it.
+            Assert.Contains(HealthRegistry.Snapshot(), e => e.Subsystem == HealthSubsystems.ConfigPersistence);
         }
 
         [Fact]
@@ -84,7 +94,7 @@ namespace QAdvanceFeedback.Tests
             File.WriteAllText(_path, "{\r\n  \"Version\": 1,\r\n  \"Lock\": { \"SourceFrontLeft\": \"Cal");
 
             QAdvanceFeedbackSettings loaded = ConfigStore.Load(_path);
-            Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelLock.IRacing.FrontLeft", loaded.Lock.SourceFrontLeft);
+            Assert.Equal("QAdvanceFeedback.WheelLock.Raw.FrontLeft", loaded.Lock.SourceFrontLeft);
         }
 
         [Fact]
@@ -113,8 +123,13 @@ namespace QAdvanceFeedback.Tests
 
             Assert.NotNull(loaded.GForce);
             Assert.NotNull(loaded.General);
-            Assert.Equal(GMaxMode.Fixed, loaded.GForce.AccelMaxMode);
-            Assert.Equal(0.9, loaded.GForce.FixedAccelMaxG, 6);
+            // REVISED default (docs\robust-auto-gforce-report.md): Fixed->Auto - AUTO's worst case (no
+            // evidence) is bit-for-bit identical to FIXED, so it can only ever improve on it.
+            Assert.Equal(GMaxMode.Auto, loaded.GForce.AccelMaxMode);
+            // REVISED default (docs\gforce-transition-scale-report.md): 0.9->0.75 for accel, 2.0->1.5
+            // for decel - a legitimate default change, not a weakened assertion.
+            Assert.Equal(0.75, loaded.GForce.FixedAccelMaxG, 6);
+            Assert.Equal(1.5, loaded.GForce.FixedDecelMaxG, 6);
             Assert.Equal(50.0, loaded.GForce.BrakeBottomRearSustainPercent, 6);
             Assert.Equal(LateralDirectionMode.Normal, loaded.GForce.LateralDirection);
             Assert.False(loaded.General.EnableDiagnostics);
@@ -234,7 +249,7 @@ namespace QAdvanceFeedback.Tests
         public void A_missing_legacy_config_file_still_degrades_to_defaults_without_throwing()
         {
             QAdvanceFeedbackSettings loaded = ConfigStore.Load(_path, legacyPath: _legacyPath);
-            Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelLock.IRacing.FrontLeft", loaded.Lock.SourceFrontLeft);
+            Assert.Equal("QAdvanceFeedback.WheelLock.Raw.FrontLeft", loaded.Lock.SourceFrontLeft);
         }
 
         // ---------------------------------------------------------------------------------------
@@ -246,17 +261,18 @@ namespace QAdvanceFeedback.Tests
         {
             QAdvanceFeedbackSettings loaded = ConfigStore.Load(_path);
 
-            Assert.Equal(0.45, loaded.Lock.AggregationWMax, 9);
-            Assert.Equal(0.55, loaded.Lock.AggregationWMin, 9);
+            // REVISED (docs\slip-source-consistency-report.md - a second round of owner seat-testing).
+            Assert.Equal(0.75, loaded.Lock.AggregationWMax, 9);
+            Assert.Equal(0.25, loaded.Lock.AggregationWMin, 9);
             Assert.Equal(0.90, loaded.Lock.AggregationWFront, 9);
             Assert.Equal(0.10, loaded.Lock.AggregationWRear, 9);
             Assert.Equal(0.0, loaded.Lock.SlipFloorFactor, 9);
 
-            Assert.Equal(0.55, loaded.Slip.AggregationWMax, 9);
-            Assert.Equal(0.45, loaded.Slip.AggregationWMin, 9);
-            Assert.Equal(0.65, loaded.Slip.AggregationWFront, 9);
-            Assert.Equal(0.35, loaded.Slip.AggregationWRear, 9);
-            Assert.Equal(0.4, loaded.Slip.SlipFloorFactor, 9);
+            Assert.Equal(0.85, loaded.Slip.AggregationWMax, 9);
+            Assert.Equal(0.15, loaded.Slip.AggregationWMin, 9);
+            Assert.Equal(0.45, loaded.Slip.AggregationWFront, 9);
+            Assert.Equal(0.55, loaded.Slip.AggregationWRear, 9);
+            Assert.Equal(0.70, loaded.Slip.SlipFloorFactor, 9);
         }
 
         [Fact]
@@ -300,8 +316,9 @@ namespace QAdvanceFeedback.Tests
 
             settings.RestoreDefaults();
 
-            Assert.Equal(0.45, settings.Lock.AggregationWMax, 9);
-            Assert.Equal(0.4, settings.Slip.SlipFloorFactor, 9);
+            // REVISED (docs\slip-source-consistency-report.md).
+            Assert.Equal(0.75, settings.Lock.AggregationWMax, 9);
+            Assert.Equal(0.70, settings.Slip.SlipFloorFactor, 9);
         }
 
         [Fact]
@@ -321,8 +338,9 @@ namespace QAdvanceFeedback.Tests
             QAdvanceFeedbackSettings loaded = ConfigStore.Load(_path);
 
             Assert.Equal("Custom.Wheel.FL", loaded.Lock.SourceFrontLeft);
-            Assert.Equal(0.45, loaded.Lock.AggregationWMax, 9);
-            Assert.Equal(0.55, loaded.Lock.AggregationWMin, 9);
+            // REVISED (docs\slip-source-consistency-report.md).
+            Assert.Equal(0.75, loaded.Lock.AggregationWMax, 9);
+            Assert.Equal(0.25, loaded.Lock.AggregationWMin, 9);
             Assert.Equal(0.90, loaded.Lock.AggregationWFront, 9);
             Assert.Equal(0.10, loaded.Lock.AggregationWRear, 9);
             Assert.Equal(0.0, loaded.Lock.SlipFloorFactor, 9);

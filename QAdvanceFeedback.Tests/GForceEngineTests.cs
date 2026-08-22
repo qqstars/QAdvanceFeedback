@@ -874,5 +874,247 @@ namespace QAdvanceFeedback.Tests
             Assert.True(Math.Abs(after.BottomFrontLeft.Value - before.BottomFrontLeft.Value) < 15.0,
                 $"output should recover close to the pre-impact level, before={before.BottomFrontLeft.Value} after={after.BottomFrontLeft.Value}");
         }
+
+        // ---------------------------------------------------------------------------------------
+        // TRANSITION ANIMATION SCALE (docs\gforce-transition-scale-report.md) - the owner's own
+        // request: a low-G car should still produce a full-feeling transition SWEEP. Applied ONLY to
+        // StagedShape's own transit-only keyframes (the far pad's p=0 peak, the mid pad's p=0.5 peak) -
+        // never to AdvanceSustainLevel, and never to either pad's own TRUE, settled p=1 value - see
+        // StagedShape's own remarks for the exact proof.
+        //
+        // METHOD for observing the transit PEAK directly: settle the chain fully (sustain level AND
+        // stage progress both converged) at a target ratio, then force exactly one frame where the
+        // chain goes briefly inactive with an INFINITESIMAL dt (so the sustain level barely decays,
+        // but stage progress/travel-rate/previous-ratio all reset to 0 - see AdvanceStageProgress's own
+        // remarks), then immediately reactivate at the SAME ratio with another infinitesimal dt (so
+        // stage progress barely advances beyond its just-reset 0). At that exact frame, progress is
+        // still ~0 (the far pad's own transit-peak keyframe) while the sustain level is still ~= the
+        // target ratio - isolating "sustained * peak" without needing to touch engine internals.
+        // ---------------------------------------------------------------------------------------
+
+        private const double TinyDt = 0.0001;
+
+        /// <summary>Settles the BRAKING chain at <paramref name="magnitudeG"/>/<paramref name="decelMax"/>,
+        /// then returns the far pad's (Back Low) reading at the moment described in the region comment
+        /// above - approximately <c>ratio * TransitionAnimationScale * 100</c>.</summary>
+        private static double BrakeFarPadTransitPeak(GForceEngine engine, double magnitudeG, double decelMax)
+        {
+            for (int i = 0; i < 400; i++) engine.Compute(BrakingSample(magnitudeG, 0.02), AccelMax, decelMax);
+
+            // One frame with the brake pedal released (not applied) but the car still genuinely
+            // slowing at the SAME magnitude (no coasting delta) - decelChainActive is false this frame
+            // (brakeApplied=false, coasting=true, but the coasting-gate's own delta is ~0 since the
+            // ratio hasn't changed), so this resets stage progress to 0 while barely decaying the
+            // sustain level (dt is infinitesimal).
+            var oldFrame = new TelemetryFrame(groundSpeedKmh: 101.0);
+            var releasedFrame = new TelemetryFrame(groundSpeedKmh: 100.0, longitudinalG: -magnitudeG, brakePercent: 0.0);
+            engine.Compute(new TelemetrySample(releasedFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromSeconds(TinyDt)), AccelMax, decelMax);
+
+            // Reactivate at the SAME ratio - stage progress barely advances beyond the 0 it was just
+            // reset to (dt is infinitesimal again), so this frame sits at the far pad's own p~0 peak.
+            var result = engine.Compute(BrakingSample(magnitudeG, TinyDt), AccelMax, decelMax);
+            return result.BackLowLeft.Value;
+        }
+
+        /// <summary>The acceleration-chain mirror of <see cref="BrakeFarPadTransitPeak"/> - returns the
+        /// far pad's (Bottom Rear) reading at the same kind of moment.</summary>
+        private static double AccelFarPadTransitPeak(GForceEngine engine, double magnitudeG, double accelMax)
+        {
+            for (int i = 0; i < 400; i++) engine.Compute(ThrottleSample(magnitudeG, 0.02), accelMax, DecelMax);
+
+            var oldFrame = new TelemetryFrame(groundSpeedKmh: 100.0);
+            var releasedFrame = new TelemetryFrame(groundSpeedKmh: 101.0, longitudinalG: magnitudeG, throttlePercent: 0.0);
+            engine.Compute(new TelemetrySample(releasedFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromSeconds(TinyDt)), accelMax, DecelMax);
+
+            var result = engine.Compute(ThrottleSample(magnitudeG, TinyDt), accelMax, DecelMax);
+            return result.BottomRearLeft.Value;
+        }
+
+        /// <summary>THE OWNER'S OWN WORKED EXAMPLE, VERBATIM (docs\gforce-transition-scale-report.md):
+        /// a road car generating only 0.3g acceleration and 0.9g deceleration, scale 1.5, against the
+        /// NEW 0.75g/1.5g fixed maxima - 0.3x1.5=0.45 -&gt; 60% of the accel transition ceiling,
+        /// 0.9x1.5=1.35 -&gt; 90% of the decel one ("almost the full braking transition feeling").</summary>
+        [Fact]
+        public void The_owners_worked_example_reproduces_60_and_90_percent_of_the_transition_ceiling()
+        {
+            const double newAccelMax = 0.75;
+            const double newDecelMax = 1.5;
+            var engine = new GForceEngine { TransitionAnimationScale = 1.5 };
+
+            double accelPeak = AccelFarPadTransitPeak(engine, 0.3, newAccelMax);
+            Assert.Equal(60.0, accelPeak, 0);
+
+            var engine2 = new GForceEngine { TransitionAnimationScale = 1.5 };
+            double decelPeak = BrakeFarPadTransitPeak(engine2, 0.9, newDecelMax);
+            Assert.Equal(90.0, decelPeak, 0);
+        }
+
+        /// <summary>Scale 1.0 must reproduce the ORIGINAL (pre-this-feature) unscaled sweep exactly -
+        /// the far pad's own transit peak equals the sustain level alone (no amplification), matching
+        /// the hardcoded HIGH=1.0 ceiling StagedShape used before this setting existed.</summary>
+        [Fact]
+        public void Scale_1_0_reproduces_the_original_unscaled_transition_peak_exactly()
+        {
+            var engine = new GForceEngine { TransitionAnimationScale = 1.0 };
+            double peak = BrakeFarPadTransitPeak(engine, 0.9, 1.5); // ratio = 0.6 -> peak should read ~60, not 90.
+            Assert.Equal(60.0, peak, 0);
+        }
+
+        /// <summary>Scale 0 disables the extra amplification entirely (the far pad's own transit peak
+        /// reads ~0, not the sustain level) WITHOUT breaking the sustain - the settled/sustain reading
+        /// (checked separately, fully settled) is unaffected.</summary>
+        [Fact]
+        public void Scale_0_disables_the_extra_transition_amplification_without_breaking_the_sustain()
+        {
+            var engine = new GForceEngine { TransitionAnimationScale = 0.0 };
+            double peak = BrakeFarPadTransitPeak(engine, 0.9, 1.5);
+            Assert.True(peak < 5.0, $"scale 0 should suppress the transit peak almost entirely, got {peak}");
+
+            var settleEngine = new GForceEngine { TransitionAnimationScale = 0.0 };
+            var settled = RunToSteadyState(settleEngine, -0.9, dtSeconds: 0.02, steps: 400);
+            // ratio 0.9/2.0 (test-file DecelMax constant) = 0.45 -> true, unscaled sustain distribution.
+            Assert.Equal(45.0, settled.BottomFrontLeft.Value, 0);
+            Assert.Equal(22.5, settled.BottomRearLeft.Value, 1);
+            Assert.Equal(11.25, settled.BackLowLeft.Value, 1);
+        }
+
+        /// <summary>THE CORE GUARANTEE (the constraint that matters most - asserted directly): the
+        /// settled/sustain distribution is bit-for-bit IDENTICAL across every scale value, at both a
+        /// mid-level and a fully-saturated braking input. If the scaler ever leaked into the sustain
+        /// path, this would fail - see the MUTATION evidence in the report.</summary>
+        [Fact]
+        public void The_settled_sustain_distribution_is_unchanged_by_the_transition_scale_at_every_value()
+        {
+            double[] scales = { 0.0, 0.5, 1.0, 1.5, 3.0, GForceEngine.MaxTransitionAnimationScale };
+
+            foreach (double magnitude in new[] { -1.0, -2.0 }) // mid-level (ratio 0.5) and fully saturated (ratio 1.0)
+            {
+                GForceOutput reference = null;
+                foreach (double scale in scales)
+                {
+                    var engine = new GForceEngine { TransitionAnimationScale = scale };
+                    var settled = RunToSteadyState(engine, magnitude, dtSeconds: 0.02, steps: 400);
+
+                    if (reference == null)
+                    {
+                        reference = settled;
+                        continue;
+                    }
+
+                    Assert.Equal(reference.BottomFrontLeft.Value, settled.BottomFrontLeft.Value, 3);
+                    Assert.Equal(reference.BottomRearLeft.Value, settled.BottomRearLeft.Value, 3);
+                    Assert.Equal(reference.BackLowLeft.Value, settled.BackLowLeft.Value, 3);
+                }
+            }
+        }
+
+        /// <summary>The acceleration-chain mirror of the sustain-unchanged guarantee above.</summary>
+        [Fact]
+        public void The_settled_sustain_distribution_for_acceleration_is_unchanged_by_the_transition_scale()
+        {
+            double[] scales = { 0.0, 1.0, 1.5, GForceEngine.MaxTransitionAnimationScale };
+            GForceOutput reference = null;
+
+            foreach (double scale in scales)
+            {
+                var engine = new GForceEngine { TransitionAnimationScale = scale };
+                var settled = RunToSteadyState(engine, 0.45, dtSeconds: 0.02, steps: 400); // ratio 0.5
+
+                if (reference == null) { reference = settled; continue; }
+
+                Assert.Equal(reference.BackTopLeft.Value, settled.BackTopLeft.Value, 3);
+                Assert.Equal(reference.BackLowLeft.Value, settled.BackLowLeft.Value, 3);
+                Assert.Equal(reference.BottomRearLeft.Value, settled.BottomRearLeft.Value, 3);
+            }
+        }
+
+        [Fact]
+        public void TransitionAnimationScale_defaults_to_1_5_on_the_engine()
+        {
+            Assert.Equal(1.5, new GForceEngine().TransitionAnimationScale, 6);
+        }
+
+        [Fact]
+        public void TransitionAnimationScale_is_clamped_to_0_and_the_configured_upper_bound()
+        {
+            var engine = new GForceEngine { TransitionAnimationScale = -3.0 };
+            Assert.Equal(0.0, engine.TransitionAnimationScale, 6);
+
+            engine.TransitionAnimationScale = 999.0;
+            Assert.Equal(GForceEngine.MaxTransitionAnimationScale, engine.TransitionAnimationScale, 6);
+
+            engine.TransitionAnimationScale = 2.0;
+            Assert.Equal(2.0, engine.TransitionAnimationScale, 6);
+        }
+
+        [Fact]
+        public void Every_channel_stays_within_0_to_100_across_a_wide_sweep_at_the_maximum_transition_scale()
+        {
+            var engine = new GForceEngine { TransitionAnimationScale = GForceEngine.MaxTransitionAnimationScale };
+            for (double longG = -6.0; longG <= 6.0; longG += 0.25)
+            {
+                var r = engine.Compute(SampleForLongG(longG, 0.02), AccelMax, DecelMax);
+                AssertInBounds(r.BottomFrontLeft); AssertInBounds(r.BottomFrontRight);
+                AssertInBounds(r.BottomRearLeft); AssertInBounds(r.BottomRearRight);
+                AssertInBounds(r.BackLowLeft); AssertInBounds(r.BackLowRight);
+                AssertInBounds(r.BackTopLeft); AssertInBounds(r.BackTopRight);
+            }
+        }
+
+        /// <summary>Mirrors <see cref="The_sweep_never_steps_discontinuously"/>'s own established,
+        /// gentle-ramp methodology exactly (same ramp shape, same dt, same step count) - the only
+        /// variable changed is <see cref="GForceEngine.TransitionAnimationScale"/>, raised to its
+        /// configured maximum - proving the scale feature itself does not introduce a discontinuity
+        /// under conditions that were already known continuous. (An instantaneous, one-frame STEP
+        /// straight to a saturating magnitude at a high scale is a DIFFERENT, already-documented
+        /// exemption - see <see cref="Output_never_jumps_as_longitudinal_G_sweeps_continuously"/>'s own
+        /// remarks on why a fresh engine's very first, cold-start transient is a real, arguably correct
+        /// one-off event, not a continuity violation; a high scale simply makes that one-off transient
+        /// larger in absolute terms, exactly as intended - "a full-feeling sweep".)</summary>
+        [Fact]
+        public void The_sweep_never_steps_discontinuously_at_the_maximum_transition_scale()
+        {
+            var engine = new GForceEngine { TransitionAnimationScale = GForceEngine.MaxTransitionAnimationScale };
+            const double dt = 0.02;
+            double? prevFar = null, prevMid = null, prevTerminal = null;
+
+            for (int i = 1; i <= 300; i++)
+            {
+                double longG = -2.0 * Math.Min(1.0, i / 200.0); // gentle ramp past saturation (decelMax=2.0)
+                var r = engine.Compute(SampleForLongG(longG, dt), AccelMax, DecelMax);
+                if (prevFar.HasValue)
+                {
+                    AssertSmallStep(prevFar.Value, r.BackLowLeft.Value);
+                    AssertSmallStep(prevMid.Value, r.BottomRearLeft.Value);
+                    AssertSmallStep(prevTerminal.Value, r.BottomFrontLeft.Value);
+                }
+                prevFar = r.BackLowLeft.Value;
+                prevMid = r.BottomRearLeft.Value;
+                prevTerminal = r.BottomFrontLeft.Value;
+            }
+        }
+
+        /// <summary>A high scale that has already saturated the far/mid pads' own transit peak never
+        /// permanently pins the channel: continuing to brake (pedal never released, so the chain stays
+        /// active throughout - this is the "already fully swept, sustain level now falling" path, not a
+        /// fresh sweep) at a much gentler, unsaturated level afterwards settles exactly at that
+        /// gentler ratio's own TRUE, unscaled value.</summary>
+        [Fact]
+        public void A_high_scale_never_permanently_pins_the_channel_once_the_input_falls_back_to_a_gentle_level()
+        {
+            var engine = new GForceEngine { TransitionAnimationScale = GForceEngine.MaxTransitionAnimationScale };
+
+            // Settle fully saturated (ratio 4.0/2.0=2.0, well past 1.0) at the maximum scale.
+            for (int i = 0; i < 400; i++) engine.Compute(BrakingSample(4.0, 0.02), AccelMax, DecelMax);
+
+            // Never release the pedal - continue braking, but at a much gentler, unsaturated level long
+            // enough to fully settle there.
+            GForceOutput last = null;
+            for (int i = 0; i < 400; i++) last = engine.Compute(BrakingSample(0.4, 0.02), AccelMax, DecelMax); // ratio 0.4/2.0 = 0.2
+
+            Assert.Equal(20.0, last.BottomFrontLeft.Value, 0);
+            Assert.Equal(10.0, last.BottomRearLeft.Value, 0);
+            Assert.Equal(5.0, last.BackLowLeft.Value, 0);
+        }
     }
 }

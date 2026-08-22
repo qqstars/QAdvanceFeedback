@@ -188,6 +188,25 @@ namespace QAdvanceFeedback.Core.Runtime
             }
         }
 
+        /// <summary>Version 8 (docs\v1068-four-range-report.md, Feature C): WheelLock's own learned
+        /// S75/S90 anchors - see <c>LockAnchorLearner</c>. WHEELLOCK ONLY, same in-memory-only convention
+        /// as <see cref="LoadLockLearners"/>/<see cref="SaveLockLearners"/> above.</summary>
+        public void LoadLockAnchors(out Dictionary<string, LockAnchorState> data)
+        {
+            lock (_gate) { data = new Dictionary<string, LockAnchorState>(_document.LockAnchors, StringComparer.Ordinal); }
+        }
+
+        public void SaveLockAnchors(Dictionary<string, LockAnchorState> data)
+        {
+            lock (_gate)
+            {
+                _document.LockAnchors = new Dictionary<string, LockAnchorState>(data ?? EmptyLockAnchors, StringComparer.Ordinal);
+                _dirty = true;
+            }
+        }
+
+        private static readonly Dictionary<string, LockAnchorState> EmptyLockAnchors = new Dictionary<string, LockAnchorState>();
+
         public void LoadGForceLearners(out Dictionary<string, double> accel, out Dictionary<string, double> decel)
         {
             lock (_gate)
@@ -249,13 +268,36 @@ namespace QAdvanceFeedback.Core.Runtime
             SlipPhysicalReference = CloneLearners(source.SlipPhysicalReference),
             LockScaleCrossCarSeed = CloneScaleLearners(source.LockScaleCrossCarSeed),
             SlipScaleCrossCarSeed = CloneScaleLearners(source.SlipScaleCrossCarSeed),
+            LockAnchors = CloneLockAnchors(source.LockAnchors),
         };
+
+        private static Dictionary<string, LockAnchorState> CloneLockAnchors(Dictionary<string, LockAnchorState> source)
+        {
+            var copy = new Dictionary<string, LockAnchorState>(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, LockAnchorState> pair in source)
+                copy[pair.Key] = new LockAnchorState
+                {
+                    S75 = pair.Value.S75,
+                    Hits75 = pair.Value.Hits75,
+                    Candidate75 = pair.Value.Candidate75,
+                    S90 = pair.Value.S90,
+                    Hits90 = pair.Value.Hits90,
+                    Candidate90 = pair.Value.Candidate90,
+                };
+            return copy;
+        }
 
         private static Dictionary<string, GripLearnerState> CloneLearners(Dictionary<string, GripLearnerState> source)
         {
             var copy = new Dictionary<string, GripLearnerState>(StringComparer.Ordinal);
             foreach (KeyValuePair<string, GripLearnerState> pair in source)
-                copy[pair.Key] = new GripLearnerState { PeakG = pair.Value.PeakG, Samples = pair.Value.Samples };
+                copy[pair.Key] = new GripLearnerState
+                {
+                    PeakG = pair.Value.PeakG,
+                    Samples = pair.Value.Samples,
+                    GMech = pair.Value.GMech,
+                    K = pair.Value.K,
+                };
             return copy;
         }
 

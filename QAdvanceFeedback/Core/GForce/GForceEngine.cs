@@ -197,6 +197,42 @@ namespace QAdvanceFeedback.Core.GForce
             set => _wheelSlipShakeScale = value >= 0.0 ? value : 0.0;
         }
 
+        /// <summary>Upper bound enforced by <see cref="TransitionAnimationScale"/>'s own setter -
+        /// docs\gforce-transition-scale-report.md. JUDGMENT CALL: even a very placid low-G car whose
+        /// sustained ratio bottoms out around 0.15-0.2 (against the new, lower 0.75g/1.5g fixed maxima)
+        /// only needs a scale of ~5 to push its own transition PEAK all the way to a full-feeling 100%;
+        /// beyond that the aggregate pad level is already saturated and clamped (see
+        /// <see cref="Compute"/>'s own <c>ClampMath.To01</c> calls), so a higher ceiling would only
+        /// invite nonsense values (e.g. a typo) in the settings UI without ever producing a stronger
+        /// felt result.</summary>
+        public const double MaxTransitionAnimationScale = 5.0;
+
+        private double _transitionAnimationScale = 1.5;
+
+        /// <summary>
+        /// THE TRANSITION ANIMATION SCALE (docs\gforce-transition-scale-report.md - the owner's own
+        /// request: "a low-G car should still produce a full-feeling transition sweep"). Amplifies ONLY
+        /// the staged sweep's own PEAK reach (see <see cref="StagedShape"/>'s <c>peak</c> parameter,
+        /// replacing what used to be a hardcoded HIGH=1.0 ceiling for the far/mid pads' own transit-only
+        /// keyframes) - it never touches <see cref="AdvanceSustainLevel"/> or the settled (progress=1)
+        /// distribution, which is why a driver's real sense of "how hard am I actually
+        /// braking/accelerating relative to the car's own capability" is completely unaffected by this
+        /// setting at ANY value (see <see cref="StagedShape"/>'s remarks for the exact proof: every one
+        /// of the three pads reaches its own TRUE, scale-independent value at progress=1, regardless of
+        /// <paramref name="peak"/> along the way). Clamped to [0, <see cref="MaxTransitionAnimationScale"/>]
+        /// in the setter itself. Default 1.5, matching the owner's own worked example (a 0.3g/0.9g road
+        /// car against the new 0.75g/1.5g maxima: 0.3x1.5=0.45 -&gt; 60% of the accel transition ceiling,
+        /// 0.9x1.5=1.35 -&gt; 90% of the decel one) - see the report for why 1.5 still ships even though
+        /// the maxima in the SAME change are being lowered (the two changes turn out not to compound
+        /// harmfully for a high-G car, which is already saturated under the new maxima with or without
+        /// this scale).
+        /// </summary>
+        public double TransitionAnimationScale
+        {
+            get => _transitionAnimationScale;
+            set => _transitionAnimationScale = ClampMath.Clamp(value, 0.0, MaxTransitionAnimationScale);
+        }
+
         private bool _shakeActive;
         private double _shakePhaseSeconds;
 
@@ -326,11 +362,25 @@ namespace QAdvanceFeedback.Core.GForce
             _direction.Reset();
         }
 
+        /// <param name="accelTransitionScale">Per-frame override for the ACCELERATION chain's own
+        /// transition-animation scale (docs\robust-auto-gforce-report.md, mode-dependent transition
+        /// scaling) - null uses this instance's own <see cref="TransitionAnimationScale"/> property
+        /// (every pre-existing caller/test that never passes this keeps its exact prior behaviour).
+        /// <see cref="Settings.GForceSettings"/> computes this per (gameId,carId) frame, continuously
+        /// blending its configured Auto/Fixed transition scales by AUTO's own confidence - see that
+        /// class's own remarks for why this avoids a step in animation magnitude at the 200-sample
+        /// threshold.</param>
+        /// <param name="decelTransitionScale">The deceleration/braking chain's own equivalent of
+        /// <paramref name="accelTransitionScale"/>.</param>
         public GForceOutput Compute(
             ITelemetrySample sample, double accelMaxG, double decelMaxG,
-            double wheelLockAll0100 = 0.0, double wheelSlipAll0100 = 0.0)
+            double wheelLockAll0100 = 0.0, double wheelSlipAll0100 = 0.0,
+            double? accelTransitionScale = null, double? decelTransitionScale = null)
         {
             if (sample == null) return GForceOutput.Empty;
+
+            double effectiveAccelTransitionScale = accelTransitionScale ?? TransitionAnimationScale;
+            double effectiveDecelTransitionScale = decelTransitionScale ?? TransitionAnimationScale;
 
             double dtSeconds = sample.Dt.HasValue && sample.Dt.Value.TotalSeconds > 0.0 ? sample.Dt.Value.TotalSeconds : 0.0;
 
@@ -416,6 +466,7 @@ namespace QAdvanceFeedback.Core.GForce
 
             // ---- Braking chain: far=BackLow, mid=BottomRear, terminal=BottomFront.
             StagedShape(brakeProgress, ClampMath.To01(BrakeBottomRearSustainFraction), ClampMath.To01(BrakeBackLowSustainFraction),
+                effectiveDecelTransitionScale,
                 out double brakeFarShape, out double brakeMidShape, out double brakeTerminalShape);
             double brakeBackLowSustained = brakeSustained * brakeFarShape;
             double brakeBottomRearSustained = brakeSustained * brakeMidShape;
@@ -423,6 +474,7 @@ namespace QAdvanceFeedback.Core.GForce
 
             // ---- Acceleration chain: far=BottomRear, mid=BackLow, terminal=BackTop.
             StagedShape(accelProgress, ClampMath.To01(AccelBackLowSustainFraction), ClampMath.To01(AccelBottomRearSustainFraction),
+                effectiveAccelTransitionScale,
                 out double accelFarShape, out double accelMidShape, out double accelTerminalShape);
             double accelBottomRearSustained = accelSustained * accelFarShape;
             double accelBackLowSustained = accelSustained * accelMidShape;
@@ -579,31 +631,57 @@ namespace QAdvanceFeedback.Core.GForce
         /// exactly the MID/LOW ratios relative to the terminal's own 1.0 - e.g. sustainLevel 0.9-&gt;0.6
         /// with MID=0.5/LOW=0.25 gives terminal 90-&gt;60 (100% of the change), mid 45-&gt;30 (50%), far
         /// 22.5-&gt;15 (25%), the owner's own example, verbatim.
+        /// <para/>
+        /// TRANSITION ANIMATION SCALE (docs\gforce-transition-scale-report.md - <paramref name="peak"/>,
+        /// <see cref="TransitionAnimationScale"/>): the ORIGINAL hardcoded HIGH=1.0 constant appeared in
+        /// exactly three places above - the far pad's own p=0 keyframe, the mid pad's own p=0.5
+        /// keyframe, and the terminal pad's own p=1 keyframe. Of those three, only the FIRST TWO are
+        /// ever a pad's OWN transit peak (a value it passes through on its way to a DIFFERENT final
+        /// resting fraction - far ends at LOW, mid ends at MID); the terminal's own p=1 keyframe is its
+        /// TRUE, settled sustain value, never a transit peak. This split is why <paramref name="peak"/>
+        /// (replacing HIGH in only the first two instances - see the branches below) can amplify the
+        /// SWEEP without ever moving the terminal's own p=1 reading, or far/mid's own p=1 readings
+        /// (LOW/MID respectively) - EVERY branch below still resolves to exactly (LOW, MID, HIGH) at
+        /// p=1 for ANY value of <paramref name="peak"/>, by construction (each keyframe's own two
+        /// defining branches meet at that keyframe's TRUE value, never at <paramref name="peak"/>) -
+        /// this is what keeps the settled/sustain distribution bit-for-bit identical across every scale
+        /// value (the dedicated test asserts exactly this). <paramref name="peak"/> itself is the RAW
+        /// <see cref="TransitionAnimationScale"/> value (not pre-multiplied by anything) since the
+        /// caller already multiplies this method's whole output by <c>sustainLevel</c> - so a peak of
+        /// 1.0 (this method's own prior hardcoded HIGH) reproduces the pre-existing behaviour exactly,
+        /// and a peak of, say, 1.5 makes a far/mid pad's own transit peak reach 1.5x what the current
+        /// sustain level alone would have given it (still clamped 0-100 downstream, same as any other
+        /// saturation in this engine).
+        /// <para/>
+        /// MUTATION target (sustain-path leak): multiplying <paramref name="peak"/> - rather than the
+        /// unchanged constant <c>high</c> - into the TERMINAL's own p=1 branch (or into either pad's own
+        /// p=1 resting fraction) would leak this scale into the settled/sustain reading - the dedicated
+        /// "sustain unchanged at every scale value" test is what catches that.
         /// </summary>
-        private static void StagedShape(double progress, double midFraction, double lowFraction, out double farValue, out double midValue, out double terminalValue)
+        private static void StagedShape(double progress, double midFraction, double lowFraction, double peak, out double farValue, out double midValue, out double terminalValue)
         {
-            const double high = 1.0;
+            const double high = 1.0; // TRUE, scale-independent terminal ceiling - NEVER replaced by peak.
             double mid = midFraction;
             double low = lowFraction;
 
-            // Keyframe 0 (stage 1): far=HIGH, mid=LOW, terminal=LOW.
-            // Keyframe 1 (stage 2): far=MID,  mid=HIGH, terminal=LOW.
-            // Keyframe 2 (stage 3 = sustain): far=LOW, mid=MID, terminal=HIGH.
+            // Keyframe 0 (stage 1): far=PEAK, mid=LOW, terminal=LOW.
+            // Keyframe 1 (stage 2): far=MID,  mid=PEAK, terminal=LOW.
+            // Keyframe 2 (stage 3 = sustain): far=LOW, mid=MID, terminal=HIGH (unscaled).
             double p = ClampMath.To01(progress);
 
             if (p <= 0.5)
             {
                 double t = p / 0.5;
-                farValue = high + (mid - high) * t;
-                midValue = low + (high - low) * t;
+                farValue = peak + (mid - peak) * t;
+                midValue = low + (peak - low) * t;
                 terminalValue = low; // unchanged across stage 0->1 (LOW at both keyframes)
             }
             else
             {
                 double t = (p - 0.5) / 0.5;
-                farValue = mid + (low - mid) * t;
-                midValue = high + (mid - high) * t;
-                terminalValue = low + (high - low) * t;
+                farValue = mid + (low - mid) * t;   // unaffected by peak - far's own transit peak already passed at p<=0.5.
+                midValue = peak + (mid - peak) * t;
+                terminalValue = low + (high - low) * t; // always the TRUE high=1.0 - never peak.
             }
         }
 

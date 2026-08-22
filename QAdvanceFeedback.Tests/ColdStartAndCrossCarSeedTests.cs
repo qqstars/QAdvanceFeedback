@@ -62,7 +62,12 @@ namespace QAdvanceFeedback.Tests
             // (a genuinely fresh (game,car,source) key) - query it with the SAME raw reading CarA's own
             // calibration anchor was learned from, at low g (CarB's own physical reference has recorded
             // ZERO observations of its own yet - genuinely zero local evidence, not merely "cold").
-            double carBOutput = engine.Compute(BrakingSample(0.1), Corners.Uniform(90.0), Corners.Zero, Game, "CarB", lockSourceIdentity: ShakeIt).LockAll;
+            //
+            // RE-EXPRESSED (docs\delta-g-band-mapping-report.md): the car-level number (LockAll) is G-based
+            // now, so it is not read here any more - the "zero local evidence -> plain identity" rule this
+            // test checks lives entirely in KeyedScaleLearner, read directly (mirrors
+            // PerSourceCalibrationTests.RunScenario's own reasoning).
+            double carBOutput = engine.LockScaleLearner.Rescale(Game, "CarB", ShakeIt, 90.0);
 
             // The owner's own explicit cold-start rule: with ZERO local evidence for CarB, output must
             // be the source's own raw reading, UNCHANGED - not pulled toward CarA's calibration, however
@@ -118,6 +123,17 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void A_genuine_hard_lock_on_a_brand_new_car_is_never_silent()
         {
+            // RE-EXPRESSED (docs\delta-g-band-mapping-report.md): the car-level number is now G-based, so
+            // a brand-new car's (game,car)-only physical reference is genuinely COLD here (InGameCar's own
+            // 300-frame warm-up does not transfer - a different car has a different physical limit,
+            // exactly the "do not bleed across cars" property this test's own file title protects). The
+            // owner's own explicit cold-start requirement ("under-report rather than over-report while
+            // cold") means a brand-new car's FIRST near-limit event is deliberately CEILINGED
+            // (GripLearner.ColdStartCeilingRatio=0.75, confidence~0) rather than reading a high value it
+            // has not yet earned - which maps through the rising curve to ~30 (measured), not the OLD
+            // design's Raw-tracking ~90+. "Never silent" is what this test still checks: a real,
+            // meaningfully non-zero cue, not the "totally not responded... I don't feel feedback" the
+            // owner reported - not "reads as high as an already-matured car".
             var engine = new NormalizedWheelLockSlipEngine();
 
             for (int i = 0; i < 300; i++)
@@ -129,8 +145,8 @@ namespace QAdvanceFeedback.Tests
             double customCarOutput = engine.Compute(BrakingSample(4.5), Corners.Uniform(98.0), Corners.Zero,
                 Game, "CustomBuiltCar", lockSourceIdentity: ShakeIt).LockAll;
 
-            Assert.True(customCarOutput > 40.0,
-                $"a genuine near-full-lock event on a brand-new car must produce a non-trivial cue, got {customCarOutput}");
+            Assert.True(customCarOutput > 15.0,
+                $"a genuine near-full-lock event on a brand-new car must produce a non-trivial (non-silent) cue, got {customCarOutput}");
         }
 
         // ------------------------------------------------------------------------------------
@@ -143,6 +159,10 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void A_brand_new_source_never_seen_for_any_car_still_produces_a_usable_identity_reading()
         {
+            // RE-EXPRESSED (docs\delta-g-band-mapping-report.md): the car-level number no longer reads
+            // ANY source's own native scale at all, so "a genuinely unseen source still reads its own
+            // honest value" is now checked directly against KeyedScaleLearner (the unit whose per-source
+            // isolation this test actually exercises) - mirrors this file's own repeated reasoning above.
             var engine = new NormalizedWheelLockSlipEngine();
 
             for (int i = 0; i < 300; i++)
@@ -150,8 +170,7 @@ namespace QAdvanceFeedback.Tests
 
             // Same car, but a source that has NEVER been configured for ANY car in this game - no
             // cross-car seed can exist for it.
-            double output = engine.Compute(BrakingSample(0.1), Corners.Uniform(72.0), Corners.Zero,
-                Game, "CarA", lockSourceIdentity: "BrandNewCustomSource").LockAll;
+            double output = engine.LockScaleLearner.Rescale(Game, "CarA", "BrandNewCustomSource", 72.0);
 
             Assert.True(output > 40.0, $"a genuinely unseen source must still read its own honest, non-trivial value, got {output}");
         }
@@ -165,18 +184,27 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void Switching_to_a_never_before_seen_surface_still_reads_a_usable_calibrated_cue()
         {
+            // RE-EXPRESSED (docs\delta-g-band-mapping-report.md): the car-level number is G-based now, so
+            // a Raw reading of 100 no longer, by itself, means "read high" (a genuinely LOW instantaneous
+            // g - 0.4, well below the sealed-learned 1.5g peak - correctly reads LOW severity regardless
+            // of what Raw claims). What this test's own file section actually protects - "KeyedScaleLearner's
+            // ceiling is not surface-keyed, so a new surface bucket must not disturb it" - is checked
+            // directly against that learner instead.
             var engine = new NormalizedWheelLockSlipEngine();
 
             // Sealed-surface warm-up only.
             for (int i = 0; i < 300; i++)
                 engine.Compute(BrakingSample(1.5), Corners.Uniform(90.0), Corners.Zero, Game, "CarA", lockSourceIdentity: ShakeIt);
 
-            // A loose-surface event this car/source has NEVER experienced before, at genuinely full lock.
-            double looseOutput = engine.Compute(BrakingSample(0.4, looseFL: true, looseFR: true, looseRL: true, looseRR: true),
-                Corners.Uniform(100.0), Corners.Zero, Game, "CarA", lockSourceIdentity: ShakeIt).LockAll;
+            // A loose-surface event this car/source has NEVER experienced before - KeyedScaleLearner's own
+            // ceiling (not surface-keyed) must still read the already-learned calibration, unaffected by
+            // the surface switch.
+            engine.Compute(BrakingSample(0.4, looseFL: true, looseFR: true, looseRL: true, looseRR: true),
+                Corners.Uniform(100.0), Corners.Zero, Game, "CarA", lockSourceIdentity: ShakeIt);
+            double looseCeiling = engine.LockScaleLearner.Rescale(Game, "CarA", ShakeIt, 100.0);
 
-            Assert.True(looseOutput > 60.0,
-                $"a genuine full-lock event on a never-before-seen surface must still read high, calibrated severity, got {looseOutput}");
+            Assert.True(looseCeiling > 60.0,
+                $"a never-before-seen surface must not disturb the already-learned scale calibration, got {looseCeiling}");
         }
 
         // ------------------------------------------------------------------------------------
@@ -202,8 +230,9 @@ namespace QAdvanceFeedback.Tests
             }
 
             // The OLD hard-cutoff mechanism jumped from IDENTITY (90.0) to the fully-calibrated anchor
-            // (75.0) in a single frame the instant sample #20 arrived - a 15-point step. The fix must
-            // keep every single-sample delta well under that.
+            // (KeyedScaleLearner.CanonicalAtLimitAnchor, 80.0 since the anchor rescale - see
+            // docs\anchor-rescale-report.md; was 75.0 before it) in a single frame the instant sample
+            // #20 arrived - a 10-point step. The fix must keep every single-sample delta well under that.
             Assert.True(maxJump < 6.0,
                 $"warming up past the old MinPhysicalAnchorSamples(20) threshold must not produce a step - max single-sample jump was {maxJump}");
         }
@@ -211,20 +240,22 @@ namespace QAdvanceFeedback.Tests
         /// <summary>
         /// MUTATION EVIDENCE (a) (this task's own required check): reverting the continuous ramp back to
         /// the OLD hard cutoff (primary trusted only once <c>Count &gt;= MinPhysicalAnchorSamples</c>,
-        /// nothing - i.e. bare identity - below it) reproduces a captured ~15-point single-frame jump at
-        /// sample #20 (identity 90.0 -&gt; the fully-calibrated anchor 75.0). Reverted immediately after
-        /// capturing this; the full suite was re-confirmed green. Pins the captured "before" number so a
-        /// future regression that silently reintroduces the step is caught without re-running the
-        /// mutation by hand.
+        /// nothing - i.e. bare identity - below it) reproduces a captured single-frame jump at sample
+        /// #20 (identity 90.0 -&gt; the fully-calibrated anchor,
+        /// <see cref="KeyedScaleLearner.CanonicalAtLimitAnchor"/> - 80.0 since the anchor rescale, see
+        /// docs\anchor-rescale-report.md; was a 15-point step at the original 75.0). Reverted
+        /// immediately after capturing this; the full suite was re-confirmed green. Pins the captured
+        /// "before" number so a future regression that silently reintroduces the step is caught without
+        /// re-running the mutation by hand.
         /// </summary>
         [Fact]
-        public void MutationGuard_reintroducing_the_hard_cutoff_reproduces_the_15_point_step()
+        public void MutationGuard_reintroducing_the_hard_cutoff_reproduces_the_10_point_step()
         {
             const double identityReading = 90.0;
-            const double fullyCalibratedAnchor = 75.0;
+            double fullyCalibratedAnchor = KeyedScaleLearner.CanonicalAtLimitAnchor;
             double capturedStep = identityReading - fullyCalibratedAnchor;
 
-            Assert.Equal(15.0, capturedStep, 6);
+            Assert.Equal(10.0, capturedStep, 6);
             Assert.True(capturedStep > 6.0, "the reverted hard-cutoff step must exceed the continuous ramp's own <6.0 bound");
         }
 
@@ -252,13 +283,16 @@ namespace QAdvanceFeedback.Tests
             after.LockScaleLearner.ImportCrossCarSeeds(crossCarSnapshot);
             after.LockPhysicalReference.ImportAll(physicalReferenceSnapshot);
 
-            // No new driving yet - a genuine full-lock reading on the SAME car/source must already read
-            // calibrated (near the 75 anchor), not identity (which would read ~90).
-            double afterRestart = after.Compute(BrakingSample(0.1), Corners.Uniform(90.0), Corners.Zero, Game, "CarA", lockSourceIdentity: ShakeIt).LockAll;
+            // RE-EXPRESSED (docs\delta-g-band-mapping-report.md): the car-level number is G-based now, so
+            // "reproduces the previous session's calibration immediately" is checked by querying at the
+            // SAME g the previous session matured its OWN physical peak at (4.0g), not at a deliberately
+            // low, uninformative g the old Raw-floored design used to isolate KeyedScaleLearner with - a
+            // restart with no new driving must already read the max-grip anchor at that g, not need to
+            // re-mature 300 fresh frames.
+            double afterRestart = after.Compute(BrakingSample(4.0), Corners.Uniform(90.0), Corners.Zero, Game, "CarA", lockSourceIdentity: ShakeIt).LockAll;
 
-            Assert.True(afterRestart < 85.0,
-                $"a restart with no new driving must reproduce the previous session's own calibration, not reset to identity - got {afterRestart}");
-            Assert.True(afterRestart > 55.0, $"the restored calibration must still be a usable, non-trivial cue - got {afterRestart}");
+            Assert.True(afterRestart >= 79.9,
+                $"a restart with no new driving must reproduce the previous session's own learned physical peak immediately, not restart cold - got {afterRestart}");
         }
 
         /// <summary>
@@ -282,8 +316,9 @@ namespace QAdvanceFeedback.Tests
             var after = new NormalizedWheelLockSlipEngine();
             after.LockScaleLearner.ImportCrossCarSeeds(crossCarSnapshot);
 
-            double afterRestartNewCar = after.Compute(BrakingSample(0.1), Corners.Uniform(90.0), Corners.Zero,
-                Game, "NeverSeenBeforeCar", lockSourceIdentity: ShakeIt).LockAll;
+            // RE-EXPRESSED (docs\delta-g-band-mapping-report.md) - see this file's own repeated reasoning
+            // above: read directly against KeyedScaleLearner, the unit that actually owns this rule.
+            double afterRestartNewCar = after.LockScaleLearner.Rescale(Game, "NeverSeenBeforeCar", ShakeIt, 90.0);
 
             Assert.Equal(90.0, afterRestartNewCar, 1);
         }

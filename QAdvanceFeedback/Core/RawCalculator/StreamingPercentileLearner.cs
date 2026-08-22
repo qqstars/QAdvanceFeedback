@@ -27,12 +27,36 @@ namespace QAdvanceFeedback.Core.RawCalculator
     /// learner in this plugin waits for the same amount of evidence before trusting a distribution-shaped
     /// answer, rather than one part of it demanding an order of magnitude more evidence than another for
     /// no reason specific to this signal.
+    /// <para/>
+    /// NOT MIGRATED TO THE SHARED ROBUST-BAND ESTIMATOR (docs\robust-auto-gforce-report.md, evaluated
+    /// and explicitly declined): this class's own call sites (<c>RawCalculatorEngine</c> - wheel
+    /// rotation-rate/speed ratio, slip ratio, per-gear cruise average) are not G-force samples at all,
+    /// so the specific failure mode the robust estimator was built to fix (a blind/decaying MAXIMUM
+    /// being fragile against a handful of non-representative high G readings) does not apply here in the
+    /// same way - this class already answers a DIFFERENT question (a percentile/mean of a whole
+    /// distribution, not "the representative near-maximum"), and its own nearest-rank percentile
+    /// (<see cref="Percentile"/>) is already considerably more outlier-resistant than a blind maximum by
+    /// construction. Left as-is; not evaluated against captured logs since it is out of this task's own
+    /// "noisy G samples" scope.
     /// </summary>
     internal sealed class StreamingPercentileLearner : IValueDistributionLearner
     {
         public const int MinimumSamplesForMaturity = 200;
 
         private const int BucketDecimalPlaces = 4;
+
+        /// <summary>INT32 OVERFLOW GUARD (docs\release-1060-report.md, Part 5 overflow audit) - this
+        /// class is fed every telemetry frame (Layer 3, unconditionally), so at a typical 60fps it is by
+        /// far the highest-frequency counter in the plugin - genuinely at risk of wrapping an
+        /// unguarded Int32 within roughly a year of continuous, never-restarted running. Same cap/pattern
+        /// as <see cref="Normalized.GripLearner.SampleCountSaturationCap"/>: <see cref="_totalObservations"/>
+        /// and each per-bucket count freeze here; <see cref="_runningSum"/> switches from a raw running
+        /// sum to a self-consistent decaying-mean update once its own counter is frozen (mirrors
+        /// <see cref="OnlineDistributionLearner"/>'s established "count saturates, mean keeps updating
+        /// slowly, forever" pattern) - <see cref="Average"/>'s own `_runningSum / _totalObservations`
+        /// read is unchanged and stays meaningful indefinitely. Never Int64 - saturation removes the
+        /// overflow risk; Int64 only postpones the same failure at a larger number.</summary>
+        public const int SampleCountSaturationCap = 1_000_000;
 
         private readonly Dictionary<double, int> _bucketCounts = new Dictionary<double, int>();
         private double _runningSum;
@@ -47,12 +71,19 @@ namespace QAdvanceFeedback.Core.RawCalculator
             if (double.IsNaN(value) || double.IsInfinity(value)) return;
 
             double magnitude = Math.Abs(value);
-            _runningSum += magnitude;
-            _totalObservations++;
+            if (_totalObservations < SampleCountSaturationCap)
+            {
+                _runningSum += magnitude;
+                _totalObservations++;
+            }
+            else
+            {
+                _runningSum += magnitude - _runningSum / SampleCountSaturationCap;
+            }
 
             double bucket = Math.Round(magnitude, BucketDecimalPlaces);
             _bucketCounts.TryGetValue(bucket, out int countSoFar);
-            _bucketCounts[bucket] = countSoFar + 1;
+            if (countSoFar < SampleCountSaturationCap) _bucketCounts[bucket] = countSoFar + 1;
         }
 
         public double? Average() => _totalObservations == 0 ? (double?)null : _runningSum / _totalObservations;

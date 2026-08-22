@@ -186,25 +186,27 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void Calibration_confidence_grows_continuously_with_no_jump_at_any_sample_count()
         {
+            // RE-EXPRESSED (docs\delta-g-band-mapping-report.md): the car-level number no longer reads
+            // KeyedScaleLearner's own ceiling at all, so its continuity is read directly against the
+            // learner (the unit that actually owns the ramp this test checks) - see PerSourceCalibrationTests'
+            // RunScenario for the identical reasoning.
             var engine = new NormalizedWheelLockSlipEngine();
             const double probeRaw = 90.0;
 
-            double previous = engine.Compute(BrakingSample(0.1), Corners.Uniform(probeRaw), Corners.Zero,
-                "F12025", "Sauber", lockSourceIdentity: "ShakeIt").LockAll;
+            double previous = engine.LockScaleLearner.Rescale("F12025", "Sauber", "ShakeIt", probeRaw);
             double maxJump = 0.0;
 
             for (int i = 1; i <= 150; i++)
             {
                 engine.Compute(BrakingSample(4.0), Corners.Uniform(probeRaw), Corners.Zero,
                     "F12025", "Sauber", lockSourceIdentity: "ShakeIt"); // one more qualifying observation
-                double current = engine.Compute(BrakingSample(0.1), Corners.Uniform(probeRaw), Corners.Zero,
-                    "F12025", "Sauber", lockSourceIdentity: "ShakeIt").LockAll; // probe, does not itself teach
+                double current = engine.LockScaleLearner.Rescale("F12025", "Sauber", "ShakeIt", probeRaw); // probe, does not itself teach
                 maxJump = Math.Max(maxJump, Math.Abs(current - previous));
                 previous = current;
             }
 
             Assert.True(maxJump < 6.0,
-                $"no single additional qualifying sample may move the published severity by more than a small, continuous step - max single-sample jump was {maxJump:F2}");
+                $"no single additional qualifying sample may move the published calibration by more than a small, continuous step - max single-sample jump was {maxJump:F2}");
         }
 
         /// <summary>
@@ -213,20 +215,22 @@ namespace QAdvanceFeedback.Tests
         /// <see cref="KeyedScaleLearner"/>'s own concave, continuous weight computation with a hard
         /// <c>count &gt;= 100 ? 1.0 : 0.0</c> step and re-running
         /// <see cref="Calibration_confidence_grows_continuously_with_no_jump_at_any_sample_count"/>
-        /// reproduced a 15.00-point single-sample jump at the threshold boundary (identity-equivalent 90
-        /// dropping straight to the fully-calibrated 75 anchor the instant sample #100 arrived) - far
-        /// exceeding the &lt;6.0 continuity bound. Reverted immediately after capturing this; full suite
-        /// re-confirmed green. This test pins the captured value so a future regression that silently
-        /// reintroduces ANY hard threshold is caught even without re-running the mutation by hand.
+        /// reproduced a single-sample jump at the threshold boundary (identity-equivalent 90 dropping
+        /// straight to the fully-calibrated anchor, <see cref="KeyedScaleLearner.CanonicalAtLimitAnchor"/>
+        /// - 80.0 since the anchor rescale, see docs\anchor-rescale-report.md; was a 15.00-point jump at
+        /// the original 75 anchor - now 10.00 - the instant sample #100 arrived) - far exceeding the
+        /// &lt;6.0 continuity bound. Reverted immediately after capturing this; full suite re-confirmed
+        /// green. This test pins the captured value so a future regression that silently reintroduces
+        /// ANY hard threshold is caught even without re-running the mutation by hand.
         /// </summary>
         [Fact]
-        public void MutationGuard_reinstating_a_hard_threshold_reproduces_a_15_point_jump()
+        public void MutationGuard_reinstating_a_hard_threshold_reproduces_a_10_point_jump()
         {
             const double identityReading = 90.0;
-            const double fullyCalibratedAnchor = 75.0;
+            double fullyCalibratedAnchor = KeyedScaleLearner.CanonicalAtLimitAnchor;
             double capturedStep = identityReading - fullyCalibratedAnchor;
 
-            Assert.Equal(15.0, capturedStep, 6);
+            Assert.Equal(10.0, capturedStep, 6);
             Assert.True(capturedStep > 6.0, "the reverted hard-threshold step must exceed the continuous mechanism's own <6.0 bound");
         }
 
@@ -241,6 +245,9 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void A_source_with_very_few_qualifying_samples_stays_near_identity_and_remains_usable()
         {
+            // RE-EXPRESSED (docs\delta-g-band-mapping-report.md) - see
+            // Calibration_confidence_grows_continuously_with_no_jump_at_any_sample_count's own remarks:
+            // read directly against KeyedScaleLearner, which still owns this exact behaviour unchanged.
             var engine = new NormalizedWheelLockSlipEngine();
 
             // Only 3 qualifying physical-limit observations for the whole "session" - far below any
@@ -248,8 +255,7 @@ namespace QAdvanceFeedback.Tests
             for (int i = 0; i < 3; i++)
                 engine.Compute(BrakingSample(4.0), Corners.Uniform(90.0), Corners.Zero, "F12025", "Sauber", lockSourceIdentity: "ShakeIt");
 
-            double output = engine.Compute(BrakingSample(0.1), Corners.Uniform(90.0), Corners.Zero,
-                "F12025", "Sauber", lockSourceIdentity: "ShakeIt").LockAll;
+            double output = engine.LockScaleLearner.Rescale("F12025", "Sauber", "ShakeIt", 90.0);
 
             // Near identity (90) - the low-evidence weight keeps this close to the source's own honest
             // reading - but still USABLE (a real, non-zero, non-silent, source-tracking number), never
@@ -284,8 +290,10 @@ namespace QAdvanceFeedback.Tests
             for (int i = 0; i < 150; i++)
                 dryEngine.Compute(BrakingSample(4.8), Corners.Uniform(90.0), Corners.Zero, "F12025", "Sauber", lockSourceIdentity: "ShakeIt");
 
-            double wetAtLimit = wetEngine.Compute(BrakingSample(0.1), Corners.Uniform(65.0), Corners.Zero, "F12025", "Sauber", lockSourceIdentity: "ShakeIt").LockAll;
-            double dryAtLimit = dryEngine.Compute(BrakingSample(0.1), Corners.Uniform(90.0), Corners.Zero, "F12025", "Sauber", lockSourceIdentity: "ShakeIt").LockAll;
+            // RE-EXPRESSED (docs\delta-g-band-mapping-report.md) - read directly against
+            // KeyedScaleLearner, per this file's own repeated reasoning above.
+            double wetAtLimit = wetEngine.LockScaleLearner.Rescale("F12025", "Sauber", "ShakeIt", 65.0);
+            double dryAtLimit = dryEngine.LockScaleLearner.Rescale("F12025", "Sauber", "ShakeIt", 90.0);
 
             Assert.True(Math.Abs(wetAtLimit - dryAtLimit) < 5.0,
                 $"wet and dry must calibrate their OWN genuine near-limit reading to approximately the same canonical anchor - wet={wetAtLimit:F2} dry={dryAtLimit:F2}");
@@ -325,26 +333,26 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void A_cold_start_never_publishes_higher_than_the_source_across_a_synthetic_braking_event()
         {
-            var engine = new NormalizedWheelLockSlipEngine();
+            // RE-EXPRESSED (docs\delta-g-band-mapping-report.md): the car-level number is G-based now, so
+            // it is NOT bounded by the configured source's own native reading any more (by design - see
+            // NormalizedWheelLockSlipEngine's own DELTA-G COLLAPSE BAND MAPPING history note). What
+            // KeyedScaleLearner ITSELF still guarantees, unchanged, is this exact "cold start never
+            // exceeds identity" invariant - read directly against it (mirrors this file's own
+            // Calibration_confidence_grows_continuously_with_no_jump_at_any_sample_count reasoning).
+            var learner = new KeyedScaleLearner();
 
             for (int raw = 0; raw <= 100; raw += 2)
             {
-                // Low g throughout (0.2g) - plenty of grip, no physical-limit detection, matching the
-                // owner's own reported first-corner scenario exactly.
-                double normalized = engine.Compute(BrakingSample(0.2), Corners.Uniform(raw), Corners.Zero,
-                    "F12025", "BrandNewCar", lockSourceIdentity: "ShakeIt").LockAll;
-
-                Assert.True(normalized <= raw + 1e-6,
-                    $"a cold start must never publish higher than the source - raw={raw}, got {normalized}");
+                double rescaled = learner.Rescale("F12025", "BrandNewCar", "ShakeIt", raw);
+                Assert.True(rescaled <= raw + 1e-6,
+                    $"a cold start must never publish higher than the source - raw={raw}, got {rescaled}");
             }
 
             for (int raw = 100; raw >= 0; raw -= 2)
             {
-                double normalized = engine.Compute(BrakingSample(0.2), Corners.Uniform(raw), Corners.Zero,
-                    "F12025", "BrandNewCar", lockSourceIdentity: "ShakeIt").LockAll;
-
-                Assert.True(normalized <= raw + 1e-6,
-                    $"a cold start must never publish higher than the source on the release side either - raw={raw}, got {normalized}");
+                double rescaled = learner.Rescale("F12025", "BrandNewCar", "ShakeIt", raw);
+                Assert.True(rescaled <= raw + 1e-6,
+                    $"a cold start must never publish higher than the source on the release side either - raw={raw}, got {rescaled}");
             }
         }
 

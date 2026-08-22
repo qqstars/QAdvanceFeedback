@@ -58,15 +58,21 @@ namespace QAdvanceFeedback.Core
         private static double ClampNonNegative(double value)
             => ClampMath.IsFinite(value) && value > 0.0 ? value : 0.0;
 
-        /// <summary>Wheel Lock's owner-tested shipped defaults (docs\aggregation-report.md): axle blend
-        /// 0.45/0.55, front/rear blend 0.90/0.10 (braking is front-weight-transfer-dominated), no slip
-        /// floor (0.0 - Lock does not need one, see <see cref="Aggregator"/>'s own remarks).</summary>
-        public static readonly AggregationWeights LockDefaults = new AggregationWeights(0.45, 0.55, 0.90, 0.10, 0.0);
+        /// <summary>Wheel Lock's owner-tested shipped defaults (docs\aggregation-report.md; REVISED,
+        /// docs\slip-source-consistency-report.md - a second round of owner seat-testing): axle blend
+        /// 0.75/0.25 (up from 0.45/0.55 - the stronger of the two wheels on an axle now dominates,
+        /// rather than being weighted slightly LESS than the weaker one), front/rear blend 0.90/0.10
+        /// UNCHANGED (braking is still front-weight-transfer-dominated), no slip floor (0.0 - Lock does
+        /// not need one, see <see cref="Aggregator"/>'s own remarks).</summary>
+        public static readonly AggregationWeights LockDefaults = new AggregationWeights(0.75, 0.25, 0.90, 0.10, 0.0);
 
-        /// <summary>Wheel Slip's owner-tested shipped defaults: axle blend 0.55/0.45, front/rear blend
-        /// 0.65/0.35 (gentler front bias than Lock's - which axle is driven varies by car), slip floor
-        /// 0.4 (a single strongly-spinning wheel is never diluted away).</summary>
-        public static readonly AggregationWeights SlipDefaults = new AggregationWeights(0.55, 0.45, 0.65, 0.35, 0.4);
+        /// <summary>Wheel Slip's owner-tested shipped defaults (REVISED, docs\slip-source-consistency-report.md):
+        /// axle blend 0.85/0.15 (up from 0.55/0.45 - the strongest spinning wheel now dominates the axle
+        /// reading far more than before), front/rear blend 0.45/0.55 (FLIPPED from 0.65/0.35 - rear/driven-axle
+        /// bias, matching the owner's own seat-tested RWD-leaning default rather than Lock's front bias),
+        /// slip floor 0.70 (up from 0.4 - a single strongly-spinning wheel is diluted away even less than
+        /// before).</summary>
+        public static readonly AggregationWeights SlipDefaults = new AggregationWeights(0.85, 0.15, 0.45, 0.55, 0.70);
 
         /// <summary>
         /// The NEUTRAL, equal-weight, no-floor fallback (0.5/0.5/0.5/0.5/0.0) - reduces both blend

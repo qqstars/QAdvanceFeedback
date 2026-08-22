@@ -1,4 +1,5 @@
 using QAdvanceFeedback.Core;
+using QAdvanceFeedback.Core.Normalized;
 using QAdvanceFeedback.Core.Projection;
 using QAdvanceFeedback.Settings;
 using Xunit;
@@ -8,17 +9,20 @@ namespace QAdvanceFeedback.Tests
     public class WheelChannelSettingsTests
     {
         [Fact]
-        public void Lock_defaults_point_at_the_confirmed_ShakeIt_Motors_export_names()
+        public void Lock_defaults_point_at_this_channels_own_Raw_property_not_ShakeIt()
         {
-            // Owner-confirmed global default: "ShakeIt Plugin Output Properties" (SourceMode.ShakeIt),
-            // NOT Manual/Raw - see WheelChannelSettings.SourceMode's own remarks.
+            // FLIPPED (docs\relative-fallback-and-raw-default-report.md): the shipped global default is
+            // now Manual/Raw, NOT "ShakeIt Plugin Output Properties" - see
+            // WheelChannelSettings.SourceMode's own remarks for the evidence (Raw needs no SimHub-side
+            // setup and reads consistently across cars/conditions; ShakeIt needs both export
+            // configuration and its own per-car calibration to mature).
             WheelChannelSettings s = WheelChannelSettings.CreateLockDefaults();
 
-            Assert.Equal(SourceMode.ShakeIt, s.SourceMode);
-            Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelLock.IRacing.FrontLeft", s.SourceFrontLeft);
-            Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelLock.IRacing.FrontRight", s.SourceFrontRight);
-            Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelLock.IRacing.RearLeft", s.SourceRearLeft);
-            Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelLock.IRacing.RearRight", s.SourceRearRight);
+            Assert.Equal(SourceMode.Manual, s.SourceMode);
+            Assert.Equal("QAdvanceFeedback.WheelLock.Raw.FrontLeft", s.SourceFrontLeft);
+            Assert.Equal("QAdvanceFeedback.WheelLock.Raw.FrontRight", s.SourceFrontRight);
+            Assert.Equal("QAdvanceFeedback.WheelLock.Raw.RearLeft", s.SourceRearLeft);
+            Assert.Equal("QAdvanceFeedback.WheelLock.Raw.RearRight", s.SourceRearRight);
 
             Assert.Equal(ScriptType.Plain, s.ScriptTypeFrontLeft);
             Assert.Equal(ScriptType.Plain, s.ScriptTypeFrontRight);
@@ -27,13 +31,13 @@ namespace QAdvanceFeedback.Tests
         }
 
         [Fact]
-        public void Slip_defaults_point_at_the_confirmed_ShakeIt_Motors_export_names()
+        public void Slip_defaults_point_at_this_channels_own_Raw_property_not_ShakeIt()
         {
             WheelChannelSettings s = WheelChannelSettings.CreateSlipDefaults();
 
-            Assert.Equal(SourceMode.ShakeIt, s.SourceMode);
-            Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelSlip.IRacing.FrontLeft", s.SourceFrontLeft);
-            Assert.Equal("ShakeITMotorsV3Plugin.Export.WheelSlip.IRacing.RearRight", s.SourceRearRight);
+            Assert.Equal(SourceMode.Manual, s.SourceMode);
+            Assert.Equal("QAdvanceFeedback.WheelSlip.Raw.FrontLeft", s.SourceFrontLeft);
+            Assert.Equal("QAdvanceFeedback.WheelSlip.Raw.RearRight", s.SourceRearRight);
         }
 
         [Fact]
@@ -65,10 +69,19 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(100.0, s.Projector.EndInput, 6);
             Assert.Equal(30.0, s.Projector.SlightlyInput, 6);
             Assert.Equal(10.0, s.Projector.SlightlyOutput, 6);
-            Assert.Equal(60.0, s.Projector.ModerateInput, 6);
+            // Pre-release Change 2c: thresholds moved 60 -> 62 and 80 -> 78 (paired with flatten ranges
+            // of 2 each) so the Ideal/Max Grip plateaus' own edges still land exactly on the shared band
+            // boundaries 60 and 80.
+            Assert.Equal(62.0, s.Projector.ModerateInput, 6);
             Assert.Equal(30.0, s.Projector.ModerateOutput, 6);
-            Assert.Equal(80.0, s.Projector.CriticalInput, 6);
-            Assert.Equal(80.0, s.Projector.CriticalOutput, 6);
+            Assert.Equal(78.0, s.Projector.CriticalInput, 6);
+            // 1.0.6.0 (docs\release-1060-report.md, Part 4d): Critical/"Max Grip" OUTPUT moved 80 -> 60,
+            // matching the sibling 1.0.6.2 pre-release branch - the owner's explicit request, since 80
+            // shook too strong once braking reached the best-braking-force point.
+            Assert.Equal(60.0, s.Projector.CriticalOutput, 6);
+            Assert.Equal(3.0, s.Projector.SlightlyFlattenRange, 6);
+            Assert.Equal(2.0, s.Projector.ModerateFlattenRange, 6);
+            Assert.Equal(2.0, s.Projector.CriticalFlattenRange, 6);
         }
 
         [Fact]
@@ -76,17 +89,55 @@ namespace QAdvanceFeedback.Tests
         {
             WheelChannelSettings s = WheelChannelSettings.CreateSlipDefaults();
 
-            // Same anchor INPUT positions as Lock (30/60/80/100 - the owner's stated band
-            // boundaries apply to both channels, see docs\refinements-report.md); only the OUTPUT
-            // values differ, kept gentler than Lock's own (10/30/80).
+            // Same anchor INPUT positions as Lock (30/62/78/100 - the owner's stated band
+            // boundaries apply to both channels, see docs\refinements-report.md; thresholds moved
+            // 60/80 -> 62/78 by pre-release Change 2c so the flatten-range plateau edges land on the
+            // shared 60/80 boundaries); only the OUTPUT values differ. REVISED
+            // (docs\slip-source-consistency-report.md - a second round of owner seat-testing):
+            // 8/20/75 -> 10/35/75, no longer dramatically gentler than Lock's own (10/30/80) in the
+            // working range. FURTHER REVISED (this build, owner-confirmed): Critical (Max Grip) output
+            // softened 75 -> 70, direct response to the owner's in-game report that ShakeIt "shakes
+            // much harder than using Raw" on WheelSlip. WheelLock's own Critical output is unchanged
+            // (stays 60) - only Slip's max-grip output moves.
             Assert.Equal(20.0, s.Projector.StartInput, 6);
             Assert.Equal(100.0, s.Projector.EndInput, 6);
             Assert.Equal(30.0, s.Projector.SlightlyInput, 6);
-            Assert.Equal(8.0, s.Projector.SlightlyOutput, 6);
-            Assert.Equal(60.0, s.Projector.ModerateInput, 6);
-            Assert.Equal(20.0, s.Projector.ModerateOutput, 6);
-            Assert.Equal(80.0, s.Projector.CriticalInput, 6);
-            Assert.Equal(75.0, s.Projector.CriticalOutput, 6);
+            Assert.Equal(10.0, s.Projector.SlightlyOutput, 6);
+            Assert.Equal(62.0, s.Projector.ModerateInput, 6);
+            Assert.Equal(35.0, s.Projector.ModerateOutput, 6);
+            Assert.Equal(78.0, s.Projector.CriticalInput, 6);
+            Assert.Equal(70.0, s.Projector.CriticalOutput, 6);
+        }
+
+        [Fact]
+        public void CanonicalAtLimitAnchor_is_80()
+        {
+            // Rescaled from 75.0 (docs\anchor-rescale-report.md) so the grip limit sits at 80 on the
+            // canonical Normalized scale.
+            Assert.Equal(80.0, KeyedScaleLearner.CanonicalAtLimitAnchor, 6);
+        }
+
+        [Fact]
+        public void Lock_and_slip_top_curve_plateau_edge_coincides_with_the_canonical_at_limit_anchor()
+        {
+            // THE ESSENTIAL COUPLING (docs\anchor-rescale-report.md), REVISED for pre-release Change 2c:
+            // the top ("Max Grip") curve anchor's own THRESHOLD moved to 78 (from 80) specifically so
+            // that, PAIRED WITH its own flatten range (2), the plateau's own UPPER EDGE
+            // (threshold + range = 78 + 2 = 80) still coincides exactly with
+            // KeyedScaleLearner.CanonicalAtLimitAnchor - the owner's own explicit intent ("we will get
+            // the smooth range between 60 to 80, with flatten on the edge of ... 80"). The coincidence
+            // that used to be against the raw threshold directly is now against the plateau edge -
+            // still catches either number drifting without the other. Independent of Lock's own
+            // Critical OUTPUT (80 on this branch, unlike the sibling 1.0.6.2 branch's 60) - this
+            // coupling is purely about INPUT/plateau-edge positioning.
+            WheelChannelSettings lockDefaults = WheelChannelSettings.CreateLockDefaults();
+            WheelChannelSettings slipDefaults = WheelChannelSettings.CreateSlipDefaults();
+
+            double lockPlateauEdge = lockDefaults.Projector.CriticalInput + lockDefaults.Projector.CriticalFlattenRange;
+            double slipPlateauEdge = slipDefaults.Projector.CriticalInput + slipDefaults.Projector.CriticalFlattenRange;
+
+            Assert.Equal(KeyedScaleLearner.CanonicalAtLimitAnchor, lockPlateauEdge, 6);
+            Assert.Equal(KeyedScaleLearner.CanonicalAtLimitAnchor, slipPlateauEdge, 6);
         }
 
         [Fact]
@@ -114,13 +165,15 @@ namespace QAdvanceFeedback.Tests
         }
 
         [Fact]
-        public void Lock_and_slip_defaults_ship_ShakeIt_mode_and_the_owners_revised_pedal_thresholds()
+        public void Lock_and_slip_defaults_ship_Manual_Raw_mode_and_the_owners_revised_pedal_thresholds()
         {
             WheelChannelSettings lockDefaults = WheelChannelSettings.CreateLockDefaults();
             WheelChannelSettings slipDefaults = WheelChannelSettings.CreateSlipDefaults();
 
-            Assert.Equal(SourceMode.ShakeIt, lockDefaults.SourceMode);
-            Assert.Equal(SourceMode.ShakeIt, slipDefaults.SourceMode);
+            // FLIPPED (docs\relative-fallback-and-raw-default-report.md) - see this class's other tests'
+            // own remarks for the evidence.
+            Assert.Equal(SourceMode.Manual, lockDefaults.SourceMode);
+            Assert.Equal(SourceMode.Manual, slipDefaults.SourceMode);
 
             Assert.Equal(20.0, lockDefaults.BrakeThresholdPercent, 6);
             // 100.0 - the owner's own explicit, deliberate instruction ("by default, set the break
@@ -175,7 +228,10 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void ResetSourcesForCurrentMode_in_ShakeIt_mode_restores_the_four_ShakeIt_names_and_stays_in_ShakeIt_mode()
         {
-            WheelChannelSettings s = WheelChannelSettings.CreateLockDefaults(); // already ShakeIt by default
+            // Defaults are now Manual/Raw (docs\relative-fallback-and-raw-default-report.md), so ShakeIt
+            // mode must be explicitly selected first to set up this test's own precondition.
+            WheelChannelSettings s = WheelChannelSettings.CreateLockDefaults();
+            s.ApplyMotorsExportDefaults(isLockChannel: true);
             s.SourceFrontLeft = "SomethingTypedOverTheShakeItName";
 
             s.ResetSourcesForCurrentMode(isLockChannel: true);
@@ -201,8 +257,10 @@ namespace QAdvanceFeedback.Tests
         public void ResetSourcesForCurrentMode_never_switches_the_mode_itself_either_way()
         {
             // MUTATION (c) target: if this method ignored SourceMode and always reset to one fixed
-            // mode, one of these two assertions would fail.
+            // mode, one of these two assertions would fail. Defaults are Manual/Raw now (docs\
+            // relative-fallback-and-raw-default-report.md), so ShakeIt mode is set up explicitly here.
             WheelChannelSettings shakeIt = WheelChannelSettings.CreateLockDefaults();
+            shakeIt.ApplyMotorsExportDefaults(isLockChannel: true);
             shakeIt.ResetSourcesForCurrentMode(isLockChannel: true);
             Assert.Equal(SourceMode.ShakeIt, shakeIt.SourceMode);
 
@@ -253,8 +311,9 @@ namespace QAdvanceFeedback.Tests
         {
             WheelChannelSettings s = WheelChannelSettings.CreateLockDefaults();
 
-            Assert.Equal(0.45, s.AggregationWMax, 9);
-            Assert.Equal(0.55, s.AggregationWMin, 9);
+            // REVISED (docs\slip-source-consistency-report.md): WMax/WMin 0.45/0.55 -> 0.75/0.25.
+            Assert.Equal(0.75, s.AggregationWMax, 9);
+            Assert.Equal(0.25, s.AggregationWMin, 9);
             Assert.Equal(0.90, s.AggregationWFront, 9);
             Assert.Equal(0.10, s.AggregationWRear, 9);
             Assert.Equal(0.0, s.SlipFloorFactor, 9);
@@ -265,11 +324,13 @@ namespace QAdvanceFeedback.Tests
         {
             WheelChannelSettings s = WheelChannelSettings.CreateSlipDefaults();
 
-            Assert.Equal(0.55, s.AggregationWMax, 9);
-            Assert.Equal(0.45, s.AggregationWMin, 9);
-            Assert.Equal(0.65, s.AggregationWFront, 9);
-            Assert.Equal(0.35, s.AggregationWRear, 9);
-            Assert.Equal(0.4, s.SlipFloorFactor, 9);
+            // REVISED (docs\slip-source-consistency-report.md): WMax/WMin 0.55/0.45 -> 0.85/0.15;
+            // WFront/WRear FLIPPED 0.65/0.35 -> 0.45/0.55; floor 0.4 -> 0.70.
+            Assert.Equal(0.85, s.AggregationWMax, 9);
+            Assert.Equal(0.15, s.AggregationWMin, 9);
+            Assert.Equal(0.45, s.AggregationWFront, 9);
+            Assert.Equal(0.55, s.AggregationWRear, 9);
+            Assert.Equal(0.70, s.SlipFloorFactor, 9);
         }
 
         [Fact]
@@ -350,9 +411,50 @@ namespace QAdvanceFeedback.Tests
 
             settings.RestoreDefaults();
 
-            Assert.Equal(0.45, settings.Lock.AggregationWMax, 9);
-            Assert.Equal(0.55, settings.Lock.AggregationWMin, 9);
-            Assert.Equal(0.4, settings.Slip.SlipFloorFactor, 9);
+            // REVISED (docs\slip-source-consistency-report.md): Lock WMax/WMin 0.45/0.55 -> 0.75/0.25;
+            // Slip floor 0.4 -> 0.70.
+            Assert.Equal(0.75, settings.Lock.AggregationWMax, 9);
+            Assert.Equal(0.25, settings.Lock.AggregationWMin, 9);
+            Assert.Equal(0.70, settings.Slip.SlipFloorFactor, 9);
+        }
+
+        // ------------------------------------------------------------------------------------
+        // NormalizePattern (1.0.6.0, docs\release-1060-report.md, Part 2's UI half) - Lock-only
+        // selector between the four-range Mapping formula and the simpler MaxGripOnly one. The
+        // property lives on the shared WheelChannelSettings class (same convention as LockSensibility,
+        // which is likewise "only meaningful for Lock") so it round-trips through Newtonsoft alongside
+        // every other setting, without needing a bespoke JSON path.
+        // ------------------------------------------------------------------------------------
+
+        [Fact]
+        public void NormalizePattern_defaults_to_Mapping_on_a_bare_instance_and_both_channel_defaults()
+        {
+            Assert.Equal(NormalizePattern.Mapping, new WheelChannelSettings().NormalizePattern);
+            Assert.Equal(NormalizePattern.Mapping, WheelChannelSettings.CreateLockDefaults().NormalizePattern);
+            Assert.Equal(NormalizePattern.Mapping, WheelChannelSettings.CreateSlipDefaults().NormalizePattern);
+        }
+
+        [Fact]
+        public void NormalizePattern_round_trips_through_JSON_serialisation()
+        {
+            var settings = WheelChannelSettings.CreateLockDefaults();
+            settings.NormalizePattern = NormalizePattern.MaxGripOnly;
+
+            string json = Newtonsoft.Json.JsonConvert.SerializeObject(settings);
+            var restored = Newtonsoft.Json.JsonConvert.DeserializeObject<WheelChannelSettings>(json);
+
+            Assert.Equal(NormalizePattern.MaxGripOnly, restored.NormalizePattern);
+        }
+
+        [Fact]
+        public void RestoreDefaults_resets_NormalizePattern_to_Mapping_after_being_customised()
+        {
+            var settings = QAdvanceFeedbackSettings.CreateDefault();
+            settings.Lock.NormalizePattern = NormalizePattern.MaxGripOnly;
+
+            settings.RestoreDefaults();
+
+            Assert.Equal(NormalizePattern.Mapping, settings.Lock.NormalizePattern);
         }
     }
 }

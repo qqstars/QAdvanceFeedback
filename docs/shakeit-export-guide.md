@@ -30,6 +30,24 @@ properties and do not care which physical output type is nominally selected - se
 In the ShakeIt tab, create/open a profile for your car or game, then add an effect. The two
 relevant effects are both in the **"Slip and lock"** group:
 
+> **Expect cold, unstable numbers on any car+track pairing you haven't already driven a few minutes
+> on this SimHub session - this is NOT specific to creating a new profile.** Decompilation
+> (`docs\shakeit-calibration-scope-investigation.md`) confirms ShakeIt's Wheels lock/slip
+> calibration is keyed by **game + track + car** (`CalibrationDataProvider.GetKey`/
+> `GetSlipCalibration`), held only in memory for the current SimHub run, and is **never persisted to
+> disk** (`CalibrationSettingsManager.Save()` is an empty no-op) - it is NOT scoped by ShakeIt
+> profile at all. Practically: every car+track combination starts "cold" the first time it's driven
+> after a SimHub restart, no matter which profile (new or long-established) is loaded, and the
+> exported 0-100 value is a live percentile-relative score against that specific car+track's own
+> still-forming sample history (`CalibrationData.GetPercentile`/`IsReady => Count >= 7000`) until you
+> have driven it long enough (roughly a couple of minutes of active braking/slip events) for that
+> pairing to mature. Two different cars driven back-to-back in the same brand-new profile can
+> legitimately read very differently (e.g. one pegged near 100, another sitting at 30-something)
+> purely because both are cold and an early hard braking/lock-up event saturates one car's
+> still-forming ceiling while the other's doesn't - don't read this as a bug or as something to
+> "fix" by recreating the profile. Warm up each car+track pairing before trusting or tuning its
+> exported values.
+
 - **`Wheels lock`** - SimHub's own description: "Provide localized wheel slip and lock feedback
   under braking".
 - **`Wheels slip`** - SimHub's own description: "Provide localized wheel slip feedback".

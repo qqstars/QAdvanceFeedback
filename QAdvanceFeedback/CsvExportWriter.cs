@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using QAdvanceFeedback.Core.Health;
 
 namespace QAdvanceFeedback
 {
@@ -65,8 +66,18 @@ namespace QAdvanceFeedback
                 }
                 _writer.WriteLine(header.ToString());
             }
-            catch (IOException e) { logWarning?.Invoke("QAdvanceFeedback: CSV export could not start - " + e.Message); Stop(); }
-            catch (UnauthorizedAccessException e) { logWarning?.Invoke("QAdvanceFeedback: CSV export denied - " + e.Message); Stop(); }
+            catch (IOException e)
+            {
+                logWarning?.Invoke("QAdvanceFeedback: CSV export could not start - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.CsvExport, HealthSeverity.Degraded, "Health.Impact.CsvExport", e.ToString());
+                Stop();
+            }
+            catch (UnauthorizedAccessException e)
+            {
+                logWarning?.Invoke("QAdvanceFeedback: CSV export denied - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.CsvExport, HealthSeverity.Degraded, "Health.Impact.CsvExport", e.ToString());
+                Stop();
+            }
         }
 
         /// <summary>
@@ -89,7 +100,12 @@ namespace QAdvanceFeedback
                 }
                 _writer.WriteLine(row.ToString());
             }
-            catch (IOException e) { logWarning?.Invoke("QAdvanceFeedback: CSV export write failed - " + e.Message); Stop(); }
+            catch (IOException e)
+            {
+                logWarning?.Invoke("QAdvanceFeedback: CSV export write failed - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.CsvExport, HealthSeverity.Degraded, "Health.Impact.CsvExport", e.ToString());
+                Stop();
+            }
         }
 
         /// <summary>Closes the file (if open). Safe to call when nothing is open.</summary>

@@ -63,7 +63,9 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(outer, result.SlipWheels.RearLeft, 6);
             Assert.Equal(inner, result.SlipWheels.RearRight, 6);
 
-            double expectedFrontRear = outer * 0.55 + inner * 0.45;
+            // REVISED (docs\slip-source-consistency-report.md): Slip's own axle blend WMax/WMin
+            // 0.55/0.45 -> 0.85/0.15.
+            double expectedFrontRear = outer * 0.85 + inner * 0.15;
             double expectedLeft = outer;
             double expectedRight = inner;
             double expectedAll = expectedFrontRear;
@@ -282,6 +284,70 @@ namespace QAdvanceFeedback.Tests
             string branch = WheelSlipBranchSelector.Select(raw, isLock: true);
             Assert.Equal(WheelSlipBranchNames.Rps, branch);
             Assert.NotEqual(WheelSlipBranchNames.BrakingVsSpeed, branch);
+        }
+
+        // ------------------------------------------------------------------------------------
+        // FULL-LOCK FIDELITY FIX (docs\raw-full-lock-fidelity-report.md): the SlipData branch's
+        // learned-percentile reference must be PER WHEEL for Lock, not shared/axle-pooled - two
+        // wheels on the same axle are not guaranteed to report WheelSlipRatio on the same native
+        // scale, and pooling them let one wheel's own extremes drag the other wheel's reference
+        // band away from its own history.
+        // ------------------------------------------------------------------------------------
+
+        private static RawWheelTelemetrySnapshot SlipDataOnlySnapshot(double flRatio, double frRatio)
+            => new RawWheelTelemetrySnapshot(
+                wheelSlipRatioFrontLeft: flRatio, wheelSlipRatioFrontRight: frRatio,
+                wheelSlipRatioRearLeft: frRatio, wheelSlipRatioRearRight: frRatio,
+                capabilityWheelsSlip: true);
+
+        /// <summary>
+        /// THE FIX, proven end to end through the real engine (not the private learner directly):
+        /// FrontLeft's own native <c>WheelSlipRatio</c> reaches +/-1.0 at a hard lock while
+        /// FrontRight's own native reading never exceeds +/-0.1 for the exact same car/session -
+        /// both wheels are, physically, at their OWN full lock on the test frame below. Before the
+        /// fix, Lock's FrontRight was judged against a learner POOLED with FrontLeft's much larger
+        /// scale (see <c>_slipRatioFront</c>) and read far below 100 despite being fully locked on
+        /// its own native scale; Slip used - and, being unchanged, still uses today - that exact
+        /// same pooled reference and behaviour, which this test also pins down as a mutation guard.
+        /// </summary>
+        [Fact]
+        public void Lock_SlipData_branch_judges_each_wheel_against_its_own_history_not_the_axle_pool()
+        {
+            var thresholds = LegacyThresholds.Defaults;
+            var engine = new RawCalculatorEngine();
+
+            // Train both wheels' references: FrontLeft alternates between a light reading and a hard
+            // +/-1.0 lock; FrontRight alternates between a light reading and ITS OWN, much smaller,
+            // +/-0.1 hard-lock ceiling - a realistic per-wheel-scale asymmetry, not a corner case.
+            for (int i = 0; i < 300; i++)
+            {
+                bool hardLockFrame = i % 2 == 0;
+                var raw = SlipDataOnlySnapshot(hardLockFrame ? -1.0 : -0.05, hardLockFrame ? -0.1 : -0.02);
+                var sample = Sample(newRpm: 5000.0, oldRpm: 5000.0, brake: 0.0, throttle: 0.0, clutch: 0.0,
+                                     lateralLocalVelocity: 0.0, speedKmh: 90.0);
+                engine.Compute(sample, thresholds, null, null, raw);
+            }
+
+            // Test frame: FrontRight is at its OWN full-lock reading (-0.1, its historical ceiling)
+            // at the exact same instant FrontLeft is at ITS full-lock reading (-1.0).
+            var testRaw = SlipDataOnlySnapshot(-1.0, -0.1);
+            var testSample = Sample(newRpm: 5000.0, oldRpm: 5000.0, brake: 0.0, throttle: 0.0, clutch: 0.0,
+                                     lateralLocalVelocity: 0.0, speedKmh: 90.0);
+            var result = engine.Compute(testSample, thresholds, null, null, testRaw);
+
+            Assert.Equal(WheelSlipBranchNames.SlipData, result.SelectedLockBranch);
+            Assert.Equal(WheelSlipBranchNames.SlipData, result.SelectedSlipBranch);
+
+            // THE FIX: judged against its own history, FrontRight's own full-lock reading publishes
+            // near 100 for Lock.
+            Assert.True(result.LockWheels.FrontRight > 90.0,
+                $"Lock.FrontRight should read near its own full-lock ceiling once judged against its own history, got {result.LockWheels.FrontRight}");
+
+            // MUTATION GUARD: Slip is untouched - still reading the OLD axle-pooled reference, so the
+            // exact same native input (-0.1, dwarfed by FrontLeft's own -1.0 in the shared pool)
+            // still reads far below 100 for Slip, unlike Lock now does.
+            Assert.True(result.SlipWheels.FrontRight < 50.0,
+                $"Slip.FrontRight must remain on the old axle-pooled reference (unchanged), got {result.SlipWheels.FrontRight}");
         }
     }
 }

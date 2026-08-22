@@ -1,3 +1,5 @@
+using System;
+using QAdvanceFeedback.Core.Health;
 using QAdvanceFeedback.Core.MotorsExport;
 using SimHub.Plugins;
 
@@ -39,7 +41,15 @@ namespace QAdvanceFeedback
         private static object SafeGet(PluginManager pluginManager, string name)
         {
             try { return pluginManager?.GetPropertyValue(name); }
-            catch { return null; }
+            catch (Exception e)
+            {
+                // Distinct from the resolver simply concluding "not configured yet" (the common,
+                // expected, NOT-a-fault case already surfaced via the inline UI note) - this is a real
+                // exception from GetPropertyValue itself, which IS a fault worth recording.
+                HealthRegistry.Report(HealthSubsystems.ShakeItExport, HealthSeverity.Degraded,
+                    "Health.Impact.ShakeItExport", e.ToString());
+                return null;
+            }
         }
 
         private void LogOnceUnavailable(bool isLockChannel)

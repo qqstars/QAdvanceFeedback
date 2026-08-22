@@ -54,7 +54,53 @@ namespace QAdvanceFeedback.Core.Runtime
         /// give (a Version-3 file simply lacks these keys; Newtonsoft's field-initialiser-then-overwrite
         /// convention already leaves them at their correct empty "nothing persisted yet" state).
         /// </remarks>
-        public int Version = 4;
+        /// <remarks>
+        /// BUMPED AGAIN, 4 -&gt; 5 (speed-aware-grip-report.md): <see cref="GripLearnerState.GMech"/>/
+        /// <see cref="GripLearnerState.K"/> (the speed-dependent grip model's two learned parameters -
+        /// see <c>Normalized.GripLearner</c>) are NEW fields on the EXISTING <see cref="GripLearnerState"/>
+        /// shape, not a new dictionary - exactly like the 2-&gt;3 bump's own reasoning: a Version-4 (or
+        /// earlier) file simply lacks these two keys inside each entry's own JSON object, and Newtonsoft's
+        /// construct-then-overwrite convention already leaves them at their correct "not learned yet"
+        /// sentinel (0.0), which <c>GripLearner.Load</c> already treats as "fall back to the flat PeakG,
+        /// k=0" - the exact bit-identical behaviour this feature guarantees for any document written
+        /// before it existed. No explicit one-time-import code needed.
+        /// </remarks>
+        /// <remarks>
+        /// BUMPED AGAIN, 5 -&gt; 6 (docs\adaptive-peak-learner-report.md): <see cref="GripLearnerState.RaiseCandidateG"/>/
+        /// <see cref="GripLearnerState.RaiseCandidateHits"/>/<see cref="GripLearnerState.LowerCandidateG"/>/
+        /// <see cref="GripLearnerState.LowerCandidateHits"/> (the evidence-weighted adaptive peak
+        /// estimator's own in-progress corroboration state, replacing the old fixed-gain decaying
+        /// maximum) are NEW fields on the EXISTING <see cref="GripLearnerState"/> shape, not a new
+        /// dictionary - exactly like the 4-&gt;5 bump's own reasoning: a Version-5 (or earlier) file
+        /// simply lacks these four keys inside each entry's own JSON object, and Newtonsoft's own
+        /// construct-then-overwrite convention already leaves them at their correct "no corroboration in
+        /// progress yet" defaults (0.0/0), which <c>GripLearner.Load</c> already treats as a no-op seed -
+        /// bit-identical to a freshly-constructed learner's own starting confidence state. No explicit
+        /// one-time-import code needed.
+        /// </remarks>
+        /// <remarks>
+        /// BUMPED AGAIN, 6 -&gt; 7 (docs\stability-confidence-fix-report.md - the cold-vs-converged
+        /// over-reporting safety fix): <see cref="GripLearnerState.QuietStreak"/> (the flat scalar's own
+        /// in-progress "reference has settled" streak, gating <c>GripLearner.MaturityConfidence</c>
+        /// alongside sample count) is a NEW field on the EXISTING <see cref="GripLearnerState"/> shape,
+        /// not a new dictionary - exactly like the 5-&gt;6 bump's own reasoning: a Version-6 (or
+        /// earlier) file simply lacks this one key inside each entry's own JSON object, and Newtonsoft's
+        /// construct-then-overwrite convention already leaves it at its correct "no settling evidence
+        /// yet this session" default (0.0), which <c>GripLearner.Load</c> already treats as a no-op seed
+        /// - bit-identical to a freshly-constructed learner's own starting stability state. No explicit
+        /// one-time-import code needed.
+        /// </remarks>
+        /// <remarks>
+        /// BUMPED AGAIN, 7 -&gt; 8 (docs\v1068-four-range-report.md, Feature C) - <see cref="LockAnchors"/>
+        /// (WheelLock's own learned S75/S90 anchors - <c>Normalized.LockAnchorLearner</c>) is a NEW
+        /// dictionary, not a shape change to anything that already existed - exactly like the 2-&gt;3 bump's
+        /// own reasoning: a Version-7 (or earlier) file simply lacks this key in its JSON at all, and
+        /// Newtonsoft's construct-then-overwrite convention already leaves it at its own field
+        /// initialiser's empty default - no explicit one-time-import code needed. No Slip equivalent - the
+        /// owner was explicit that the 30/60 anchors, and this entire four-range mapping, apply to
+        /// WheelLock only.
+        /// </remarks>
+        public int Version = 8;
 
         /// <summary>Per (gameId, carId) Lock-channel learner state - key format matches
         /// <see cref="KeyedGripLearner.MakeKey"/>.</summary>
@@ -93,6 +139,11 @@ namespace QAdvanceFeedback.Core.Runtime
 
         /// <summary>The Slip channel's equivalent of <see cref="LockScaleCrossCarSeed"/>.</summary>
         public Dictionary<string, ScaleLearnerState> SlipScaleCrossCarSeed = new Dictionary<string, ScaleLearnerState>();
+
+        /// <summary>Version 8 (docs\v1068-four-range-report.md, Feature C): WheelLock's own learned
+        /// S75/S90 anchors - see <c>LockAnchorLearner.ExportAll</c>/<c>ImportAll</c>. WHEELLOCK ONLY -
+        /// there is deliberately no Slip equivalent.</summary>
+        public Dictionary<string, LockAnchorState> LockAnchors = new Dictionary<string, LockAnchorState>();
     }
 
     /// <summary>

@@ -63,6 +63,30 @@ namespace QAdvanceFeedback.Tests
             }
         }
 
+        /// <summary>
+        /// INT32 OVERFLOW GUARD (docs\stability-confidence-fix-report.md, Part 2) - mirrors
+        /// <c>AdaptivePeakLearnerTests.Samples_counter_saturates_at_the_cap_while_learning_continues</c>'s
+        /// own precedent exactly: <see cref="OnlineDistributionLearner.Count"/> must freeze at
+        /// <see cref="OnlineDistributionLearner.SampleCountSaturationCap"/> while
+        /// <see cref="OnlineDistributionLearner.GetAverage"/> (backed by an entirely separate,
+        /// uncapped decaying-weighted-sum pair) keeps moving.
+        /// </summary>
+        [Fact]
+        public void Count_saturates_at_the_cap_while_the_decaying_average_keeps_learning()
+        {
+            var learner = new OnlineDistributionLearner();
+            for (int i = 0; i < OnlineDistributionLearner.SampleCountSaturationCap + 5; i++) learner.AddValue(2.0);
+
+            Assert.Equal(OnlineDistributionLearner.SampleCountSaturationCap, learner.Count);
+
+            double atCap = learner.GetAverage() ?? 0.0;
+            for (int i = 0; i < 500; i++) learner.AddValue(6.0);
+            double afterMore = learner.GetAverage() ?? 0.0;
+
+            Assert.True(afterMore > atCap, $"the decaying average must keep moving after Count saturates: {atCap} -> {afterMore}");
+            Assert.Equal(OnlineDistributionLearner.SampleCountSaturationCap, learner.Count); // still pinned
+        }
+
         /// <summary>A WEIGHTED fold-in contributes proportionally less/more than a fully-trusted one -
         /// the mechanism <see cref="Normalized.NormalizedWheelLockSlipEngine"/>'s own continuous
         /// physical-limit trust weighting depends on.</summary>

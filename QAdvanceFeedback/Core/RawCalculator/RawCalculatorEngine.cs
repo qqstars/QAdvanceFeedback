@@ -24,9 +24,11 @@ namespace QAdvanceFeedback.Core.RawCalculator
     /// STATE THIS INSTANCE OWNS (reset only by process restart): four long-lived
     /// <see cref="WheelRotationLockFilter"/> instances (one per wheel, each with its own smoothing
     /// state), two <see cref="IValueDistributionLearner"/> pools tracking a learned rotation-rate/speed
-    /// cruise ratio (front axle, rear axle), two more tracking a learned slip-ratio percentile band
-    /// (front/rear), and one gear-keyed dictionary of learners standing in for a per-gear cruise
-    /// reference used by the wheel-speed-delta branch.
+    /// cruise ratio (front axle, rear axle), two more tracking Slip's own learned slip-ratio percentile
+    /// band (front/rear, axle-pooled), four more tracking Lock's own learned slip-ratio percentile band
+    /// (one per wheel - see <see cref="_lockSlipRatioPerWheel"/>'s own remarks for why Lock does not
+    /// share Slip's axle-pooled pair), and one gear-keyed dictionary of learners standing in for a
+    /// per-gear cruise reference used by the wheel-speed-delta branch.
     /// </summary>
     internal sealed class RawCalculatorEngine : ILegacyWheelLockSlipEngine
     {
@@ -43,6 +45,29 @@ namespace QAdvanceFeedback.Core.RawCalculator
 
         private readonly IValueDistributionLearner _slipRatioFront = new StreamingPercentileLearner();
         private readonly IValueDistributionLearner _slipRatioRear = new StreamingPercentileLearner();
+
+        /// <summary>
+        /// FULL-LOCK FIDELITY FIX (Raw Layer 3, docs\raw-full-lock-fidelity-report.md): one learner PER
+        /// WHEEL, fed only that wheel's own <c>WheelSlipRatio</c> - used EXCLUSIVELY by the Lock channel
+        /// on the <see cref="WheelSlipBranchNames.SlipData"/> branch. <see cref="_slipRatioFront"/>/
+        /// <see cref="_slipRatioRear"/> above remain the Slip channel's own unchanged axle-POOLED
+        /// reference (mixing both wheels of an axle into one learner) - Slip's own published values are
+        /// bit-for-bit unaffected by this fix. Lock switched away from that same pooled reference because
+        /// a title's own per-wheel <c>WheelSlipRatio</c> field is not guaranteed to share one common
+        /// native scale across the two wheels of an axle (observed directly: one wheel's own field can
+        /// read all the way to +/-1.0 at a genuine lock event while the axle-mate's own field never
+        /// exceeds a small fraction of that, for the exact same physical car/session) - pooling two
+        /// different native scales into one learner lets whichever wheel locks harder/more often drag the
+        /// SHARED high percentile toward its own scale, so the OTHER wheel's genuine full-lock reading
+        /// (small on its own native scale) is judged against a reference calibrated to a different
+        /// wheel's scale and reads far below 100 even though every wheel is, in fact, fully locked. A
+        /// per-wheel reference judges each wheel only against its own history, which is what
+        /// <see cref="DispatchBranchFormulas.SlipFromLearnedDistribution"/>'s own doc comment ("a per-wheel
+        /// slip ratio against a LEARNED percentile band of THAT SAME SIGNAL") already says this formula is
+        /// supposed to do.
+        /// </summary>
+        private readonly IValueDistributionLearner[] _lockSlipRatioPerWheel =
+            { new StreamingPercentileLearner(), new StreamingPercentileLearner(), new StreamingPercentileLearner(), new StreamingPercentileLearner() };
 
         private readonly Dictionary<string, IValueDistributionLearner> _gearCruiseAverage =
             new Dictionary<string, IValueDistributionLearner>(StringComparer.Ordinal);
@@ -221,7 +246,10 @@ namespace QAdvanceFeedback.Core.RawCalculator
 
             if (branch == WheelSlipBranchNames.SlipData)
             {
-                IValueDistributionLearner pool = wheelIndex < 2 ? _slipRatioFront : _slipRatioRear;
+                // FULL-LOCK FIDELITY FIX: Lock reads its own PER-WHEEL learner (see
+                // _lockSlipRatioPerWheel's own remarks); Slip is untouched, still reading the axle-pooled
+                // learner exactly as before.
+                IValueDistributionLearner pool = isLock ? _lockSlipRatioPerWheel[wheelIndex] : (wheelIndex < 2 ? _slipRatioFront : _slipRatioRear);
                 return DispatchBranchFormulas.SlipFromLearnedDistribution(
                     WheelSlipRatio(raw, wheelIndex), pool, newFrame?.BrakePercent, raw.CapabilityWheelsRPS == true,
                     raw.WheelRpsFrontLeft, raw.WheelRpsFrontRight, raw.WheelRpsRearLeft, raw.WheelRpsRearRight);
@@ -339,6 +367,14 @@ namespace QAdvanceFeedback.Core.RawCalculator
                     if (raw.WheelSlipRatioRearLeft.HasValue) _slipRatioRear.Observe(raw.WheelSlipRatioRearLeft.Value);
                     if (raw.WheelSlipRatioRearRight.HasValue) _slipRatioRear.Observe(raw.WheelSlipRatioRearRight.Value);
                 }
+
+                // FULL-LOCK FIDELITY FIX: same gate, same values, but fed one-per-wheel instead of
+                // pooled per axle - see _lockSlipRatioPerWheel's own remarks. Lock-only; Slip keeps
+                // reading the pooled learners fed just above, untouched.
+                FeedPerWheelSlipRatio(Corners.FL, raw.WheelSlipRatioFrontLeft);
+                FeedPerWheelSlipRatio(Corners.FR, raw.WheelSlipRatioFrontRight);
+                FeedPerWheelSlipRatio(Corners.RL, raw.WheelSlipRatioRearLeft);
+                FeedPerWheelSlipRatio(Corners.RR, raw.WheelSlipRatioRearRight);
             }
 
             // Gear-keyed cruise average for the wheel-speed-delta branch - see
@@ -362,6 +398,16 @@ namespace QAdvanceFeedback.Core.RawCalculator
         {
             if (!wheelRotationRateHz.HasValue || learner.Count >= LearnerSampleCap) return;
             learner.Observe(Math.Abs(wheelRotationRateHz.Value / speedKmh));
+        }
+
+        /// <summary>Feeds one wheel's own <see cref="_lockSlipRatioPerWheel"/> learner - see that
+        /// field's own remarks for why Lock needs a per-wheel reference distinct from Slip's axle-pooled
+        /// one.</summary>
+        private void FeedPerWheelSlipRatio(int wheelIndex, double? wheelSlipRatio)
+        {
+            if (!wheelSlipRatio.HasValue) return;
+            IValueDistributionLearner learner = _lockSlipRatioPerWheel[wheelIndex];
+            if (learner.Count < LearnerSampleCap) learner.Observe(wheelSlipRatio.Value);
         }
 
         private IValueDistributionLearner GetOrAddGearLearner(string gearKey)

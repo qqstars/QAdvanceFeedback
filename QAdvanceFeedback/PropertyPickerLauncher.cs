@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
+using QAdvanceFeedback.Core.Health;
 
 namespace QAdvanceFeedback
 {
@@ -83,6 +84,8 @@ namespace QAdvanceFeedback
             {
                 _available = false;
                 LogOnce("property picker failed while showing, falling back to the text box - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.PropertyPicker, HealthSeverity.Degraded,
+                    "Health.Impact.PropertyPicker", e.ToString());
                 return null;
             }
         }
@@ -119,6 +122,8 @@ namespace QAdvanceFeedback
             {
                 _available = false;
                 LogOnce("property picker unavailable, settings UI will use a plain text box - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.PropertyPicker, HealthSeverity.Degraded,
+                    "Health.Impact.PropertyPicker", e.ToString(), isSimHubCompatibilityIssue: true);
             }
         }
 

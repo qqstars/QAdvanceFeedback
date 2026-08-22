@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Regenerates docs\images\settings-*.png from the REAL Settings\SettingsControl, styled with
+    SimHub's actual MahApps-based dark theme (not default WPF/Aero chrome).
+
+    DELIBERATELY NOT part of QAdvanceFeedback.sln (see ..\..\docs\screenshot-styling-report.md) -
+    this keeps the shipped solution's single-DLL/0-warning build untouched. Build/run this project
+    directly, never via `dotnet build QAdvanceFeedback.sln`.
+
+    DEPENDS ON ..\..\lib\*.dll (SimHub.Plugins, MahApps.Metro, System.Windows.Interactivity,
+    GameReaderCommon, SimHub.Logging, Newtonsoft.Json, log4net) - run ..\fetch-simhub-refs.sh first
+    if lib\ is missing or stale. Unlike QAdvanceFeedback.csproj's own references to these same DLLs
+    (all <Private>false</Private> there, since SimHub's host process supplies them at runtime),
+    every reference here is copy-local (the default - no <Private> override) because this harness
+    runs standalone, with no SimHub host process to supply them.
+
+    Usage (from repo root; build then run the exe directly, to avoid the "run with a project
+    switch" form of the dotnet CLI, which cannot be spelled inside an XML comment):
+      dotnet build QAdvanceFeedback.sln -c Release
+      dotnet build tools\screenshot-harness\ScreenshotHarness.csproj -c Release
+      tools\screenshot-harness\bin\Release\net48\ScreenshotHarness.exe
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>ScreenshotHarness</AssemblyName>
+    <RootNamespace>ScreenshotHarness</RootNamespace>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\QAdvanceFeedback\QAdvanceFeedback.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="SimHub.Plugins">
+      <HintPath>..\..\lib\SimHub.Plugins.dll</HintPath>
+    </Reference>
+    <Reference Include="GameReaderCommon">
+      <HintPath>..\..\lib\GameReaderCommon.dll</HintPath>
+    </Reference>
+    <Reference Include="SimHub.Logging">
+      <HintPath>..\..\lib\SimHub.Logging.dll</HintPath>
+    </Reference>
+    <Reference Include="log4net">
+      <HintPath>..\..\lib\log4net.dll</HintPath>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>..\..\lib\Newtonsoft.Json.dll</HintPath>
+    </Reference>
+    <Reference Include="MahApps.Metro">
+      <HintPath>..\..\lib\MahApps.Metro.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Windows.Interactivity">
+      <HintPath>..\..\lib\System.Windows.Interactivity.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

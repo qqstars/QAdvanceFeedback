@@ -1,13 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
+using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.GForce;
+using QAdvanceFeedback.Core.Health;
 using QAdvanceFeedback.Core.Localization;
 using QAdvanceFeedback.Core.Projection;
 using SimHub.Plugins;
@@ -74,6 +78,31 @@ namespace QAdvanceFeedback.Settings
         private readonly List<SourceRow> _lockRows = new List<SourceRow>();
         private readonly List<SourceRow> _slipRows = new List<SourceRow>();
 
+        /// <summary>
+        /// G-FORCE READOUT LIVE-REFRESH FIX (docs\v1068-curve-ui-port-and-gforce-readout-report.md):
+        /// <see cref="RefreshGForceLearnedText"/> used to be invoked ONLY at construction
+        /// (<see cref="LoadFromSettings"/>) and whenever the Accel/Decel mode combo's own selection
+        /// actually changed - never on a timer. The underlying <c>GForceMaxLearner</c> instances keep
+        /// accumulating correctly every frame regardless (confirmed against the <c>1.0.6_logs</c>
+        /// sessions: <c>Diag.GForce.LearnedDecelMaxG</c> genuinely reaches 3.85-3.94g), and
+        /// <see cref="Settings.GForceSettings.EffectiveAccelMaxG"/>/<c>EffectiveDecelMaxG</c> - the
+        /// values that actually FEED the live G-derived severity path - are queried fresh every single
+        /// telemetry frame, so THAT path was never affected. Only this settings-panel TEXT was a
+        /// one-shot snapshot: once the panel loaded (typically before the driver had done a single lap,
+        /// still "no data yet") nothing ever told it to look again, so it read as permanently stuck
+        /// even after evidence existed - a driver who left the panel open while driving would never see
+        /// it update. This is a PURELY COSMETIC bug (confirmed - the behavioural path never read a
+        /// stale/cached value; only this label's own text did), unlike the class of bug it superficially
+        /// resembles (a wrong/empty lookup KEY causing a frozen readout - see
+        /// docs\shakeit-silence-diagnosis-report.md's own surface-bucket precedent) - here every key/
+        /// channel/learner reference was already correct throughout (verified byte-for-byte identical
+        /// across 1.0.6.5 through 1.0.6.8's own G-Force settings/engine/wiring files); the defect was
+        /// simply the absence of any periodic re-query. Fixed with a lightweight one-second
+        /// <see cref="DispatcherTimer"/>, started in the constructor and stopped on <see cref="FrameworkElement.Unloaded"/>
+        /// so it cannot outlive this control or accumulate across repeated settings-panel opens.
+        /// </summary>
+        private readonly DispatcherTimer _gforceRefreshTimer;
+
         public SettingsControl(QAdvanceFeedback plugin, PluginManager pluginManager)
         {
             InitializeComponent();
@@ -89,19 +118,42 @@ namespace QAdvanceFeedback.Settings
             WireSourceModeToggles();
             WireDirtyTracking();
 
-            WireAnchorEvents(_workingLockProjector, LockStartRaw, LockSlightlyRaw, LockSlightlyOutput,
-                LockModerateRaw, LockModerateOutput, LockCriticalRaw, LockCriticalOutput, LockEndRaw,
+            WireAnchorEvents(_workingLockProjector, LockStartRaw, LockStartOutput, LockSlightlyRaw, LockSlightlyOutput,
+                LockModerateRaw, LockModerateOutput, LockCriticalRaw, LockCriticalOutput, LockEndRaw, LockEndOutput,
                 LockPresetCombo, ProjectionChannel.Lock);
-            WireAnchorEvents(_workingSlipProjector, SlipStartRaw, SlipSlightlyRaw, SlipSlightlyOutput,
-                SlipModerateRaw, SlipModerateOutput, SlipCriticalRaw, SlipCriticalOutput, SlipEndRaw,
+            WireAnchorEvents(_workingSlipProjector, SlipStartRaw, SlipStartOutput, SlipSlightlyRaw, SlipSlightlyOutput,
+                SlipModerateRaw, SlipModerateOutput, SlipCriticalRaw, SlipCriticalOutput, SlipEndRaw, SlipEndOutput,
                 SlipPresetCombo, ProjectionChannel.Slip);
+
+            WireFlattenRangeEvents(_workingLockProjector, LockSlightlyFlattenRange, LockModerateFlattenRange, LockCriticalFlattenRange, ProjectionChannel.Lock);
+            WireFlattenRangeEvents(_workingSlipProjector, SlipSlightlyFlattenRange, SlipModerateFlattenRange, SlipCriticalFlattenRange, ProjectionChannel.Slip);
 
             LoadFromSettings();
 
-            ApplyButton.Click += (s, e) => SaveToSettings();
-            RestoreAllDefaultsButton.Click += (s, e) => RestoreAllDefaults();
-            LockResetSources.Click += (s, e) => ResetSourcesToDefault(isLock: true);
-            SlipResetSources.Click += (s, e) => ResetSourcesToDefault(isLock: false);
+            // G-FORCE READOUT LIVE-REFRESH FIX - see _gforceRefreshTimer's own remarks for the root
+            // cause. One second is frequent enough to feel live without meaningfully taxing the UI
+            // thread; DispatcherPriority.Background keeps it from competing with anything more urgent
+            // SimHub's own Dispatcher queue is doing. Guarded by SafeUiAction like every other UI-thread
+            // entry point in this control (see this constructor's own remarks below), and stopped on
+            // Unloaded so a torn-down settings panel cannot leave a ticking timer behind.
+            _gforceRefreshTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromSeconds(1)
+            };
+            _gforceRefreshTimer.Tick += (s, e) => SafeUiAction(RefreshGForceLearnedText, HealthSubsystems.SettingsUi);
+            _gforceRefreshTimer.Start();
+            Unloaded += (s, e) => _gforceRefreshTimer.Stop();
+
+            // PIPELINE-EXCEPTION-SAFETY (docs\pipeline-exception-safety-report.md): unlike this
+            // control's own CONSTRUCTOR (already guarded by QAdvanceFeedback.GetWPFSettingsControl's
+            // try/catch), these are WPF Button.Click handlers invoked directly off SimHub's own
+            // Dispatcher, well after construction - nothing upstream of THEM would catch a throw. Each
+            // is wrapped in SafeUiAction so a fault here degrades to "this click did nothing, see the
+            // health section" rather than reaching SimHub's own UI thread unguarded.
+            ApplyButton.Click += (s, e) => SafeUiAction(SaveToSettings, HealthSubsystems.SettingsUi);
+            RestoreAllDefaultsButton.Click += (s, e) => SafeUiAction(RestoreAllDefaults, HealthSubsystems.SettingsUi);
+            LockResetSources.Click += (s, e) => SafeUiAction(() => ResetSourcesToDefault(isLock: true), HealthSubsystems.SettingsUi);
+            SlipResetSources.Click += (s, e) => SafeUiAction(() => ResetSourcesToDefault(isLock: false), HealthSubsystems.SettingsUi);
 
             // Under Auto, the fixed-value spinner stays visible but read-only (IsEnabled=false, not
             // Collapsed) - the brief's own wording - and its value is refreshed to the currently
@@ -113,6 +165,9 @@ namespace QAdvanceFeedback.Settings
             GForceAccelModeCombo.SelectionChanged += (s, e) => { MarkDirty(); RefreshGForceModeControls(); };
             GForceDecelModeCombo.SelectionChanged += (s, e) => { MarkDirty(); RefreshGForceModeControls(); };
             GForceLateralDirectionCombo.SelectionChanged += (s, e) => MarkDirty();
+            // 1.0.6.0 (docs\release-1060-report.md, Part 2's UI half) - Lock only; see
+            // RefreshLockAnchorLabelsForPattern's own remarks.
+            LockNormalizePatternCombo.SelectionChanged += (s, e) => { MarkDirty(); RefreshLockAnchorLabelsForPattern(); };
             RefreshGForceModeControls();
 
             // While the shake feature is OFF, the settings it governs (frequency, both scales) are
@@ -131,6 +186,91 @@ namespace QAdvanceFeedback.Settings
             // GUARANTEES a fresh control starts with Apply disabled, even if some future load path
             // forgets its own guard.
             MarkClean();
+
+            // LAST, deliberately: every reflection wrapper this control uses (SimHubScriptEditor/
+            // PropertyPickerLauncher/SimHubExpressionEvaluator/MotorsExportAvailabilityProvider) has
+            // already been force-resolved above (WireSourceButtons -> RefreshRowButton -> ResolveMode
+            // reads SimHubScriptEditor.IsAvailable/_picker.IsAvailable for every row;
+            // LocalizeStaticText/WireScriptTypeToggles read _evaluator.IsAvailable; the constructor's
+            // own _lockMotorsExportAvailable/_slipMotorsExportAvailable fields already probed
+            // MotorsExportAvailabilityProvider) - so any fault any of them hit has already been
+            // recorded into HealthRegistry by the time we get here, and this reads a fully up-to-date
+            // snapshot rather than a stale one.
+            HealthCopyDetailsButton.Click += (s, e) => CopyHealthDetailsToClipboard();
+            RefreshHealthUi();
+        }
+
+        // ------------------------------------------------------------------------------------
+        // Plugin health section (Core.Health.HealthRegistry) - invisible/one-line when nothing is
+        // wrong; expands to one warning block per degraded subsystem otherwise. See this control's own
+        // constructor remarks for why this is refreshed exactly once, last, rather than reactively.
+        // ------------------------------------------------------------------------------------
+
+        private void RefreshHealthUi()
+        {
+            IReadOnlyList<HealthEntry> entries = HealthRegistry.Snapshot();
+            HealthIssuesPanel.Children.Clear();
+
+            if (entries.Count == 0)
+            {
+                HealthAllGoodText.Visibility = Visibility.Visible;
+                HealthAllGoodText.Text = Strings.Get("Health.AllGood");
+                HealthCopyDetailsButton.Visibility = Visibility.Collapsed;
+                HealthCopyDetailsDoneText.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            HealthAllGoodText.Visibility = Visibility.Collapsed;
+            HealthCopyDetailsButton.Visibility = Visibility.Visible;
+
+            foreach (HealthEntry entry in entries)
+            {
+                string subsystemName = Strings.Get("Health.Subsystem." + entry.Subsystem);
+                string impact = Strings.Get(entry.ImpactKey);
+                string text = subsystemName + ": " + impact;
+                // THE CASE THE OWNER NAMED EXPLICITLY: a reflection target moved/a SimHub dependency
+                // changed - say so plainly rather than showing an opaque failure.
+                if (entry.IsSimHubCompatibilityIssue)
+                    text += " " + Strings.Get("Health.SimHubUpdateNeeded");
+
+                var block = new TextBlock
+                {
+                    Text = "⚠ " + text,
+                    TextWrapping = TextWrapping.Wrap,
+                    FontWeight = FontWeights.Bold,
+                    Foreground = entry.Severity == HealthSeverity.Failed ? Brushes.Firebrick : Brushes.DarkOrange,
+                    Margin = new Thickness(4, 0, 4, 8),
+                };
+                HealthIssuesPanel.Children.Add(block);
+            }
+        }
+
+        /// <summary>Copies every current entry's raw technical detail (subsystem, severity, timestamps,
+        /// occurrence count, exception text) to the clipboard - deliberately English/unlocalized, since
+        /// this exists purely so the owner can paste it into a bug report, not for a driver to read as
+        /// prose (see <see cref="HealthEntry.Detail"/>'s own remarks). Clipboard access itself is
+        /// wrapped - a locked clipboard (another app mid-copy) must not throw out of a settings-UI
+        /// button click.</summary>
+        private void CopyHealthDetailsToClipboard()
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (HealthEntry entry in HealthRegistry.Snapshot())
+            {
+                sb.Append('[').Append(entry.Severity).Append("] ").Append(entry.Subsystem);
+                if (entry.IsSimHubCompatibilityIssue) sb.Append(" (possible SimHub version mismatch)");
+                sb.Append(" - first: ").Append(entry.FirstOccurredUtc.ToString("u", CultureInfo.InvariantCulture));
+                sb.Append(", last: ").Append(entry.LastOccurredUtc.ToString("u", CultureInfo.InvariantCulture));
+                sb.Append(", occurrences: ").Append(entry.OccurrenceCount);
+                sb.AppendLine();
+                sb.AppendLine(entry.Detail);
+                sb.AppendLine();
+            }
+
+            try { Clipboard.SetText(sb.ToString()); }
+            catch (Exception) { /* clipboard can be locked by another process - never let this throw */ }
+
+            HealthCopyDetailsDoneText.Visibility = Visibility.Visible;
+            HealthCopyDetailsDoneText.Text = Strings.Get("Health.CopyDetails.Done");
         }
 
         // ------------------------------------------------------------------------------------
@@ -190,6 +330,7 @@ namespace QAdvanceFeedback.Settings
                 GForceBrakeBottomRearSustain, GForceBrakeBackLowSustain,
                 GForceAccelBottomRearSustain, GForceAccelBackLowSustain,
                 GForceSustainTau, GForceTransientTau, GForceTransientGain,
+                GForceAutoTransitionScale, GForceFixedTransitionScale,
                 GForceShakeFrequency, GForceShakeLockScale, GForceShakeSlipScale
             };
             foreach (MahApps.Metro.Controls.NumericUpDown spinner in spinners)
@@ -227,23 +368,21 @@ namespace QAdvanceFeedback.Settings
             }
         }
 
+        /// <summary>
+        /// Refreshes the mode-dependent bits of the G-Force Maxima group (docs\robust-auto-gforce-report.md,
+        /// UI readout requirement). UNLIKE this control's previous revision: the FIXED-value spinner is
+        /// now ALWAYS enabled/editable in BOTH modes (never disabled, never overwritten with the learned
+        /// value) - it is what AUTO falls back to below the evidence threshold, so hiding or overwriting
+        /// it would make that fallback value impossible to see or change. The readout label to its right
+        /// is what actually communicates AUTO's own state - see <see cref="RefreshGForceLearnedText"/>.
+        /// </summary>
         private void RefreshGForceModeControls()
         {
-            // Self-guarded - see RefreshGForceShakeControls's own remarks; the learned-value spinner
-            // assignments below are a DERIVED refresh, never themselves "the user's edit".
+            // Self-guarded - see RefreshGForceShakeControls's own remarks; the readout-text refresh below
+            // is a DERIVED refresh, never itself "the user's edit".
             using (_dirty.BeginLoading())
             {
-                bool accelAuto = string.Equals(GetSelectedTag(GForceAccelModeCombo, "Fixed"), "Auto", StringComparison.Ordinal);
-                bool decelAuto = string.Equals(GetSelectedTag(GForceDecelModeCombo, "Fixed"), "Auto", StringComparison.Ordinal);
-
-                GForceFixedAccelMax.IsEnabled = !accelAuto;
-                GForceFixedDecelMax.IsEnabled = !decelAuto;
-
-                if (accelAuto) GForceFixedAccelMax.Value = _plugin.Settings.GForce.CurrentLearnedAccelMaxG;
-                if (decelAuto) GForceFixedDecelMax.Value = _plugin.Settings.GForce.CurrentLearnedDecelMaxG;
-
-                GForceAccelLearnedText.Visibility = accelAuto ? Visibility.Visible : Visibility.Collapsed;
-                GForceDecelLearnedText.Visibility = decelAuto ? Visibility.Visible : Visibility.Collapsed;
+                RefreshGForceLearnedText();
             }
         }
 
@@ -333,12 +472,23 @@ namespace QAdvanceFeedback.Settings
             SlipLblFloorFactor.ToolTip = SlipFloorFactor.ToolTip = Strings.Get("Aggregation.FloorFactor.Note");
 
             LockCurveGroup.Header = SlipCurveGroup.Header = Strings.Get("Group.Curve");
+
+            // 1.0.6.0 (docs\release-1060-report.md, Part 2's UI half) - Lock ONLY; Slip has no selector.
+            LockLblNormalizePattern.Text = Strings.Get("Curve.NormalizePattern.Label");
+            LockNormalizePatternMaxGripOnly.Content = Strings.Get("Curve.NormalizePattern.MaxGripOnly");
+            LockNormalizePatternMapping.Content = Strings.Get("Curve.NormalizePattern.Mapping");
+
             LockLblPreset.Text = SlipLblPreset.Text = Strings.Get("Curve.Preset.Label");
             LockPresetLinear.Content = SlipPresetLinear.Content = Strings.Get("Curve.Preset.Linear");
             LockPresetCurve.Content = SlipPresetCurve.Content = Strings.Get("Curve.Preset.Curve");
             LockPresetCustom.Content = SlipPresetCustom.Content = Strings.Get("Curve.Preset.Custom");
             LockColRawHeader.Text = SlipColRawHeader.Text = Strings.Get("Curve.Column.RawValue");
             LockColOutputHeader.Text = SlipColOutputHeader.Text = Strings.Get("Curve.Column.OutputValue");
+            LockColFlattenRangeHeader.Text = SlipColFlattenRangeHeader.Text = Strings.Get("Curve.Column.FlattenRange");
+            LockColFlattenRangeHeader.ToolTip = SlipColFlattenRangeHeader.ToolTip
+                = LockSlightlyFlattenRange.ToolTip = LockModerateFlattenRange.ToolTip = LockCriticalFlattenRange.ToolTip
+                = SlipSlightlyFlattenRange.ToolTip = SlipModerateFlattenRange.ToolTip = SlipCriticalFlattenRange.ToolTip
+                = Strings.Get("Curve.Column.FlattenRange.Note");
 
             // Start/End's own Desc text quotes this channel's shipped DEFAULT input threshold (Ships
             // at {0} by default) - read from ProjectorSettings.CreateShippedDefault, the single source
@@ -349,31 +499,33 @@ namespace QAdvanceFeedback.Settings
 
             LockAnchorNoteText.Text = Strings.Get("Curve.Lock.AnchorNote");
             LockLblStart.Text = Strings.Get("Curve.StartPoint.Label");
-            LockStartOutputStatic.Text = Strings.Get("Curve.StartPoint.AlwaysZero");
+            LockStartOutput.ToolTip = Strings.Get("Curve.StartOutput.Help");
             LockDescStart.Text = string.Format(Strings.Get("Curve.Lock.StartPoint.Desc"), FormatNum(lockDefaults.StartInput));
-            LockLblSlightly.Text = Strings.Get("Curve.Anchor.Slightly") + ":";
-            LockDescSlightly.Text = Strings.Get("Curve.Lock.Slightly.Desc");
-            LockLblModerate.Text = Strings.Get("Curve.Anchor.Ideal") + ":";
-            LockDescModerate.Text = Strings.Get("Curve.Lock.Ideal.Desc");
+            // Lock's Slightly/Ideal label+description LIVE-SWITCH with the Normalize Pattern selector -
+            // set by RefreshLockAnchorLabelsForPattern (called once below, then again on every
+            // LockNormalizePatternCombo.SelectionChanged and LoadFromSettings), not here.
             LockLblCritical.Text = Strings.Get("Curve.Anchor.Critical") + ":";
             LockDescCritical.Text = Strings.Get("Curve.Lock.Critical.Desc");
             LockLblEnd.Text = Strings.Get("Curve.EndPoint.Label");
-            LockEndOutputStatic.Text = Strings.Get("Curve.EndPoint.AlwaysFull");
+            LockEndOutput.ToolTip = Strings.Get("Curve.EndOutput.Help");
             LockDescEnd.Text = string.Format(Strings.Get("Curve.Lock.EndPoint.Desc"), FormatNum(lockDefaults.EndInput));
 
             SlipAnchorNoteText.Text = Strings.Get("Curve.Slip.AnchorNote");
             SlipLblStart.Text = Strings.Get("Curve.StartPoint.Label");
-            SlipStartOutputStatic.Text = Strings.Get("Curve.StartPoint.AlwaysZero");
+            SlipStartOutput.ToolTip = Strings.Get("Curve.StartOutput.Help");
             SlipDescStart.Text = string.Format(Strings.Get("Curve.Slip.StartPoint.Desc"), FormatNum(slipDefaults.StartInput));
-            SlipLblSlightly.Text = Strings.Get("Curve.Anchor.Slightly") + ":";
+            // Slip has NO Normalize Pattern selector - always the same fixed labels/descriptions.
+            SlipLblSlightly.Text = Strings.Get("Curve.Anchor.Slip.Slightly") + ":";
             SlipDescSlightly.Text = Strings.Get("Curve.Slip.Slightly.Desc");
-            SlipLblModerate.Text = Strings.Get("Curve.Anchor.Ideal") + ":";
+            SlipLblModerate.Text = Strings.Get("Curve.Anchor.Slip.Ideal") + ":";
             SlipDescModerate.Text = Strings.Get("Curve.Slip.Ideal.Desc");
             SlipLblCritical.Text = Strings.Get("Curve.Anchor.Critical") + ":";
             SlipDescCritical.Text = Strings.Get("Curve.Slip.Critical.Desc");
             SlipLblEnd.Text = Strings.Get("Curve.EndPoint.Label");
-            SlipEndOutputStatic.Text = Strings.Get("Curve.EndPoint.AlwaysFull");
+            SlipEndOutput.ToolTip = Strings.Get("Curve.EndOutput.Help");
             SlipDescEnd.Text = string.Format(Strings.Get("Curve.Slip.EndPoint.Desc"), FormatNum(slipDefaults.EndInput));
+
+            RefreshLockAnchorLabelsForPattern();
 
             LockPulseGroup.Header = SlipPulseGroup.Header = Strings.Get("Group.Pulse");
             LockPulseEnabled.Content = SlipPulseEnabled.Content = Strings.Get("Pulse.Enable");
@@ -400,6 +552,9 @@ namespace QAdvanceFeedback.Settings
             GForceLblSustainTau.Text = Strings.Get("GForce.SustainTau.Label");
             GForceLblTransientTau.Text = Strings.Get("GForce.TransientTau.Label");
             GForceLblTransientGain.Text = Strings.Get("GForce.TransientGain.Label");
+            GForceLblAutoTransitionScale.Text = Strings.Get("GForce.TransitionScale.Auto.Label");
+            GForceLblFixedTransitionScale.Text = Strings.Get("GForce.TransitionScale.Fixed.Label");
+            GForceTransitionScaleNote.Text = Strings.Get("GForce.TransitionScale.Note");
 
             GForceLateralGroup.Header = Strings.Get("Group.GForceLateral");
             GForceLblLateralDirection.Text = Strings.Get("GForce.LateralDirection.Label");
@@ -425,6 +580,48 @@ namespace QAdvanceFeedback.Settings
             EnableDiagnosticsRestartNote.Text = Strings.Get("General.EnableDiagnostics.RestartNote");
             ExportCsvCheckBox.Content = Strings.Get("General.ExportCsv");
             ExportCsvNote.Text = Strings.Get("General.ExportCsv.Note");
+            GeneralVersionText.Text = string.Format(Strings.Get("General.Version.Label"), GetRunningAssemblyFileVersion());
+
+            HealthGroup.Header = Strings.Get("Group.Health");
+            HealthCopyDetailsButton.Content = Strings.Get("Health.CopyDetails");
+        }
+
+        /// <summary>
+        /// 1.0.6.0 (docs\release-1060-report.md, Part 2's UI half) - LIVE-SWITCHES Wheel Lock's own
+        /// Slightly/Ideal anchor label AND description, plus the pattern's own short explanatory text,
+        /// to match whichever <see cref="NormalizePattern"/> is currently selected in
+        /// <see cref="LockNormalizePatternCombo"/>. Called once from <see cref="LocalizeStaticText"/>
+        /// (culture switch), again from <see cref="LoadFromSettings"/> (a driver's persisted choice),
+        /// and on every <see cref="LockNormalizePatternCombo"/>.SelectionChanged (a live edit) - see
+        /// this control's constructor. Self-guarded with <see cref="_dirty"/>.BeginLoading() so calling
+        /// it from a pure reload path never marks the panel dirty; the SelectionChanged handler itself
+        /// calls MarkDirty() explicitly first, mirroring GForceAccelModeCombo's own convention.
+        /// <para/>
+        /// Wheel Slip has NO equivalent - its own Slightly/Ideal label+description are set once, always,
+        /// in <see cref="LocalizeStaticText"/> above.
+        /// </summary>
+        private void RefreshLockAnchorLabelsForPattern()
+        {
+            using (_dirty.BeginLoading())
+            {
+                bool mapping = GetSelectedTag(LockNormalizePatternCombo, "Mapping") != "MaxGripOnly";
+                if (mapping)
+                {
+                    LockLblSlightly.Text = Strings.Get("Curve.Anchor.Lock.Mapping.Slightly") + ":";
+                    LockDescSlightly.Text = Strings.Get("Curve.Lock.Mapping.Slightly.Desc");
+                    LockLblModerate.Text = Strings.Get("Curve.Anchor.Lock.Mapping.Ideal") + ":";
+                    LockDescModerate.Text = Strings.Get("Curve.Lock.Mapping.Ideal.Desc");
+                    LockNormalizePatternDesc.Text = Strings.Get("Curve.NormalizePattern.Mapping.Desc");
+                }
+                else
+                {
+                    LockLblSlightly.Text = Strings.Get("Curve.Anchor.Lock.MaxGripOnly.Slightly") + ":";
+                    LockDescSlightly.Text = Strings.Get("Curve.Lock.MaxGripOnly.Slightly.Desc");
+                    LockLblModerate.Text = Strings.Get("Curve.Anchor.Lock.MaxGripOnly.Ideal") + ":";
+                    LockDescModerate.Text = Strings.Get("Curve.Lock.MaxGripOnly.Ideal.Desc");
+                    LockNormalizePatternDesc.Text = Strings.Get("Curve.NormalizePattern.MaxGripOnly.Desc");
+                }
+            }
         }
 
         // ------------------------------------------------------------------------------------
@@ -447,7 +644,7 @@ namespace QAdvanceFeedback.Settings
 
             foreach (SourceRow row in Rows())
             {
-                row.ActionButton.Click += async (s, e) => await OnActionButtonClickAsync(row);
+                row.ActionButton.Click += async (s, e) => await SafeUiActionAsync(() => OnActionButtonClickAsync(row), HealthSubsystems.SettingsUi);
                 RefreshRowButton(row);
             }
         }
@@ -624,7 +821,7 @@ namespace QAdvanceFeedback.Settings
         /// </summary>
         private void ResetSourcesToDefault(bool isLock)
         {
-            SourceMode currentMode = ParseEnum(GetSelectedTag(isLock ? LockSourceModeCombo : SlipSourceModeCombo, "ShakeIt"), SourceMode.ShakeIt);
+            SourceMode currentMode = ParseEnum(GetSelectedTag(isLock ? LockSourceModeCombo : SlipSourceModeCombo, "Manual"), SourceMode.Manual);
             ApplySourceDefaultsForMode(isLock, currentMode);
         }
 
@@ -647,7 +844,7 @@ namespace QAdvanceFeedback.Settings
             if (_dirty.IsLoading) return;
 
             ComboBox combo = isLock ? LockSourceModeCombo : SlipSourceModeCombo;
-            SourceMode mode = ParseEnum(GetSelectedTag(combo, "ShakeIt"), SourceMode.ShakeIt);
+            SourceMode mode = ParseEnum(GetSelectedTag(combo, "Manual"), SourceMode.Manual);
             ApplySourceDefaultsForMode(isLock, mode);
         }
 
@@ -700,7 +897,7 @@ namespace QAdvanceFeedback.Settings
         private void RefreshSourceModeUi(bool isLock)
         {
             ComboBox combo = isLock ? LockSourceModeCombo : SlipSourceModeCombo;
-            SourceMode mode = ParseEnum(GetSelectedTag(combo, "ShakeIt"), SourceMode.ShakeIt);
+            SourceMode mode = ParseEnum(GetSelectedTag(combo, "Manual"), SourceMode.Manual);
             bool available = isLock ? _lockMotorsExportAvailable : _slipMotorsExportAvailable;
             bool isShakeIt = mode == SourceMode.ShakeIt;
 
@@ -764,11 +961,11 @@ namespace QAdvanceFeedback.Settings
 
         private void WireAnchorEvents(
             ProjectorSettings working,
-            MahApps.Metro.Controls.NumericUpDown startRaw,
+            MahApps.Metro.Controls.NumericUpDown startRaw, MahApps.Metro.Controls.NumericUpDown startOutput,
             MahApps.Metro.Controls.NumericUpDown slightlyRaw, MahApps.Metro.Controls.NumericUpDown slightlyOutput,
             MahApps.Metro.Controls.NumericUpDown moderateRaw, MahApps.Metro.Controls.NumericUpDown moderateOutput,
             MahApps.Metro.Controls.NumericUpDown criticalRaw, MahApps.Metro.Controls.NumericUpDown criticalOutput,
-            MahApps.Metro.Controls.NumericUpDown endRaw,
+            MahApps.Metro.Controls.NumericUpDown endRaw, MahApps.Metro.Controls.NumericUpDown endOutput,
             ComboBox presetCombo, ProjectionChannel channel)
         {
             startRaw.ValueChanged += (s, e) => OnAnchorRawChanged(working, AnchorSlot.Start, e.NewValue, channel);
@@ -777,20 +974,53 @@ namespace QAdvanceFeedback.Settings
             criticalRaw.ValueChanged += (s, e) => OnAnchorRawChanged(working, AnchorSlot.Critical, e.NewValue, channel);
             endRaw.ValueChanged += (s, e) => OnAnchorRawChanged(working, AnchorSlot.End, e.NewValue, channel);
 
+            // PRE-RELEASE ADDITION: Start/End output funnel through the SAME ProjectorAnchorEditor
+            // "editing switches the preset to Custom" rule as every other output cell - see
+            // ProjectorAnchorEditor.SetOutput's own remarks for why Start/End are no longer rejected
+            // there.
+            startOutput.ValueChanged += (s, e) => OnAnchorOutputChanged(working, AnchorSlot.Start, e.NewValue, channel);
             slightlyOutput.ValueChanged += (s, e) => OnAnchorOutputChanged(working, AnchorSlot.Slightly, e.NewValue, channel);
             moderateOutput.ValueChanged += (s, e) => OnAnchorOutputChanged(working, AnchorSlot.Moderate, e.NewValue, channel);
             criticalOutput.ValueChanged += (s, e) => OnAnchorOutputChanged(working, AnchorSlot.Critical, e.NewValue, channel);
+            endOutput.ValueChanged += (s, e) => OnAnchorOutputChanged(working, AnchorSlot.End, e.NewValue, channel);
 
             presetCombo.SelectionChanged += (s, e) =>
             {
                 if (_dirty.IsLoading) return;
                 ProjectorPreset preset = ParseEnum(GetSelectedTag(presetCombo, "Custom"), ProjectorPreset.Custom);
                 working.ApplyPreset(preset, channel);
-                LoadAnchorControls(working, startRaw, slightlyRaw, slightlyOutput, moderateRaw, moderateOutput,
-                    criticalRaw, criticalOutput, endRaw, presetCombo);
+                LoadAnchorControls(working, startRaw, startOutput, slightlyRaw, slightlyOutput, moderateRaw, moderateOutput,
+                    criticalRaw, criticalOutput, endRaw, endOutput, presetCombo);
                 RefreshCurvePlot(working, channel);
                 MarkDirty();
             };
+        }
+
+        /// <summary>
+        /// PRE-RELEASE Change 2b (configurable per-setpoint flatten ranges): unlike the eight anchor
+        /// spinners above, a range edit does NOT switch the preset to Custom (the range is a plateau-
+        /// width tuning knob, not part of what defines Linear/Curve/Custom's own anchor shape) - it only
+        /// updates the working settings object and refreshes the live curve plot so the driver sees the
+        /// plateau widen/narrow immediately.
+        /// </summary>
+        private void WireFlattenRangeEvents(
+            ProjectorSettings working,
+            MahApps.Metro.Controls.NumericUpDown slightlyRange,
+            MahApps.Metro.Controls.NumericUpDown moderateRange,
+            MahApps.Metro.Controls.NumericUpDown criticalRange,
+            ProjectionChannel channel)
+        {
+            slightlyRange.ValueChanged += (s, e) => OnFlattenRangeChanged(working, channel, v => working.SlightlyFlattenRange = v, e.NewValue);
+            moderateRange.ValueChanged += (s, e) => OnFlattenRangeChanged(working, channel, v => working.ModerateFlattenRange = v, e.NewValue);
+            criticalRange.ValueChanged += (s, e) => OnFlattenRangeChanged(working, channel, v => working.CriticalFlattenRange = v, e.NewValue);
+        }
+
+        private void OnFlattenRangeChanged(ProjectorSettings working, ProjectionChannel channel, Action<double> assign, double? value)
+        {
+            if (_dirty.IsLoading || !value.HasValue) return;
+            assign(value.Value);
+            RefreshCurvePlot(working, channel);
+            MarkDirty();
         }
 
         private void OnAnchorRawChanged(ProjectorSettings working, AnchorSlot slot, double? value, ProjectionChannel channel)
@@ -822,15 +1052,16 @@ namespace QAdvanceFeedback.Settings
 
         private void LoadAnchorControls(
             ProjectorSettings working,
-            MahApps.Metro.Controls.NumericUpDown startRaw,
+            MahApps.Metro.Controls.NumericUpDown startRaw, MahApps.Metro.Controls.NumericUpDown startOutput,
             MahApps.Metro.Controls.NumericUpDown slightlyRaw, MahApps.Metro.Controls.NumericUpDown slightlyOutput,
             MahApps.Metro.Controls.NumericUpDown moderateRaw, MahApps.Metro.Controls.NumericUpDown moderateOutput,
             MahApps.Metro.Controls.NumericUpDown criticalRaw, MahApps.Metro.Controls.NumericUpDown criticalOutput,
-            MahApps.Metro.Controls.NumericUpDown endRaw, ComboBox presetCombo)
+            MahApps.Metro.Controls.NumericUpDown endRaw, MahApps.Metro.Controls.NumericUpDown endOutput, ComboBox presetCombo)
         {
             using (_dirty.BeginLoading())
             {
                 startRaw.Value = ProjectorAnchorEditor.GetRaw(working, AnchorSlot.Start);
+                startOutput.Value = ProjectorAnchorEditor.GetOutput(working, AnchorSlot.Start);
                 slightlyRaw.Value = ProjectorAnchorEditor.GetRaw(working, AnchorSlot.Slightly);
                 slightlyOutput.Value = ProjectorAnchorEditor.GetOutput(working, AnchorSlot.Slightly);
                 moderateRaw.Value = ProjectorAnchorEditor.GetRaw(working, AnchorSlot.Moderate);
@@ -838,6 +1069,7 @@ namespace QAdvanceFeedback.Settings
                 criticalRaw.Value = ProjectorAnchorEditor.GetRaw(working, AnchorSlot.Critical);
                 criticalOutput.Value = ProjectorAnchorEditor.GetOutput(working, AnchorSlot.Critical);
                 endRaw.Value = ProjectorAnchorEditor.GetRaw(working, AnchorSlot.End);
+                endOutput.Value = ProjectorAnchorEditor.GetOutput(working, AnchorSlot.End);
                 SelectComboItemByTag(presetCombo, working.Preset.ToString());
             }
         }
@@ -936,6 +1168,9 @@ namespace QAdvanceFeedback.Settings
                 RefreshSourceModeUi(isLock: true);
                 LockBrakeThreshold.Value = s.Lock.BrakeThresholdPercent;
                 LockSensibility.Value = s.Lock.LockSensibility;
+                // 1.0.6.0 (docs\release-1060-report.md, Part 2's UI half) - Lock only.
+                SelectComboItemByTag(LockNormalizePatternCombo, s.Lock.NormalizePattern.ToString());
+                RefreshLockAnchorLabelsForPattern();
 
                 LockWMax.Value = s.Lock.AggregationWMax;
                 LockWMin.Value = s.Lock.AggregationWMin;
@@ -945,14 +1180,22 @@ namespace QAdvanceFeedback.Settings
                 _workingLockProjector.Preset = s.Lock.Projector.Preset;
                 _workingLockProjector.StartInput = s.Lock.Projector.StartInput;
                 _workingLockProjector.EndInput = s.Lock.Projector.EndInput;
+                _workingLockProjector.StartOutput = s.Lock.Projector.StartOutput;
+                _workingLockProjector.EndOutput = s.Lock.Projector.EndOutput;
                 _workingLockProjector.SlightlyInput = s.Lock.Projector.SlightlyInput;
                 _workingLockProjector.SlightlyOutput = s.Lock.Projector.SlightlyOutput;
                 _workingLockProjector.ModerateInput = s.Lock.Projector.ModerateInput;
                 _workingLockProjector.ModerateOutput = s.Lock.Projector.ModerateOutput;
                 _workingLockProjector.CriticalInput = s.Lock.Projector.CriticalInput;
                 _workingLockProjector.CriticalOutput = s.Lock.Projector.CriticalOutput;
-                LoadAnchorControls(_workingLockProjector, LockStartRaw, LockSlightlyRaw, LockSlightlyOutput,
-                    LockModerateRaw, LockModerateOutput, LockCriticalRaw, LockCriticalOutput, LockEndRaw, LockPresetCombo);
+                _workingLockProjector.SlightlyFlattenRange = s.Lock.Projector.SlightlyFlattenRange;
+                _workingLockProjector.ModerateFlattenRange = s.Lock.Projector.ModerateFlattenRange;
+                _workingLockProjector.CriticalFlattenRange = s.Lock.Projector.CriticalFlattenRange;
+                LoadAnchorControls(_workingLockProjector, LockStartRaw, LockStartOutput, LockSlightlyRaw, LockSlightlyOutput,
+                    LockModerateRaw, LockModerateOutput, LockCriticalRaw, LockCriticalOutput, LockEndRaw, LockEndOutput, LockPresetCombo);
+                LockSlightlyFlattenRange.Value = _workingLockProjector.SlightlyFlattenRange;
+                LockModerateFlattenRange.Value = _workingLockProjector.ModerateFlattenRange;
+                LockCriticalFlattenRange.Value = _workingLockProjector.CriticalFlattenRange;
                 RefreshCurvePlot(_workingLockProjector, ProjectionChannel.Lock);
 
                 LoadChannel(s.Slip, _slipRows, SlipPulseEnabled, SlipPulseGapMs, SlipPulseMinValue);
@@ -970,14 +1213,22 @@ namespace QAdvanceFeedback.Settings
                 _workingSlipProjector.Preset = s.Slip.Projector.Preset;
                 _workingSlipProjector.StartInput = s.Slip.Projector.StartInput;
                 _workingSlipProjector.EndInput = s.Slip.Projector.EndInput;
+                _workingSlipProjector.StartOutput = s.Slip.Projector.StartOutput;
+                _workingSlipProjector.EndOutput = s.Slip.Projector.EndOutput;
                 _workingSlipProjector.SlightlyInput = s.Slip.Projector.SlightlyInput;
                 _workingSlipProjector.SlightlyOutput = s.Slip.Projector.SlightlyOutput;
                 _workingSlipProjector.ModerateInput = s.Slip.Projector.ModerateInput;
                 _workingSlipProjector.ModerateOutput = s.Slip.Projector.ModerateOutput;
                 _workingSlipProjector.CriticalInput = s.Slip.Projector.CriticalInput;
                 _workingSlipProjector.CriticalOutput = s.Slip.Projector.CriticalOutput;
-                LoadAnchorControls(_workingSlipProjector, SlipStartRaw, SlipSlightlyRaw, SlipSlightlyOutput,
-                    SlipModerateRaw, SlipModerateOutput, SlipCriticalRaw, SlipCriticalOutput, SlipEndRaw, SlipPresetCombo);
+                _workingSlipProjector.SlightlyFlattenRange = s.Slip.Projector.SlightlyFlattenRange;
+                _workingSlipProjector.ModerateFlattenRange = s.Slip.Projector.ModerateFlattenRange;
+                _workingSlipProjector.CriticalFlattenRange = s.Slip.Projector.CriticalFlattenRange;
+                LoadAnchorControls(_workingSlipProjector, SlipStartRaw, SlipStartOutput, SlipSlightlyRaw, SlipSlightlyOutput,
+                    SlipModerateRaw, SlipModerateOutput, SlipCriticalRaw, SlipCriticalOutput, SlipEndRaw, SlipEndOutput, SlipPresetCombo);
+                SlipSlightlyFlattenRange.Value = _workingSlipProjector.SlightlyFlattenRange;
+                SlipModerateFlattenRange.Value = _workingSlipProjector.ModerateFlattenRange;
+                SlipCriticalFlattenRange.Value = _workingSlipProjector.CriticalFlattenRange;
                 RefreshCurvePlot(_workingSlipProjector, ProjectionChannel.Slip);
 
                 SelectComboItemByTag(GForceAccelModeCombo, s.GForce.AccelMaxMode.ToString());
@@ -995,6 +1246,8 @@ namespace QAdvanceFeedback.Settings
                 GForceSustainTau.Value = s.GForce.SustainTimeConstantSeconds;
                 GForceTransientTau.Value = s.GForce.TransientTimeConstantSeconds;
                 GForceTransientGain.Value = s.GForce.TransientGain;
+                GForceAutoTransitionScale.Value = s.GForce.AutoTransitionAnimationScale;
+                GForceFixedTransitionScale.Value = s.GForce.FixedTransitionAnimationScale;
 
                 SelectComboItemByTag(GForceLateralDirectionCombo, s.GForce.LateralDirection.ToString());
 
@@ -1008,11 +1261,35 @@ namespace QAdvanceFeedback.Settings
             }
         }
 
+        /// <summary>
+        /// Builds the readout label to the right of each Fixed-value spinner (docs\robust-auto-gforce-report.md,
+        /// UI requirement, one-decimal formatting):
+        /// <list type="bullet">
+        /// <item>FIXED mode: "Fixed: 1.5G".</item>
+        /// <item>AUTO mode, no evidence yet for the current game/car: "Default: 1.5G. Auto: still using
+        /// default (no data yet)" - so the driver can tell "auto hasn't kicked in" apart from "auto
+        /// agrees with the default".</item>
+        /// <item>AUTO mode, evidence exists: "Default: 1.5G. Auto detected: 2.3G".</item>
+        /// </list>
+        /// The FIXED-value spinner itself is untouched by mode (see <see cref="RefreshGForceModeControls"/>'s
+        /// own remarks) - this label is the ONLY thing that changes with mode/evidence.
+        /// </summary>
         private void RefreshGForceLearnedText()
         {
             QAdvanceFeedbackSettings s = _plugin.Settings;
-            GForceAccelLearnedText.Text = string.Format(Strings.Get("GForce.LearnedValueFormat"), s.GForce.CurrentLearnedAccelMaxG);
-            GForceDecelLearnedText.Text = string.Format(Strings.Get("GForce.LearnedValueFormat"), s.GForce.CurrentLearnedDecelMaxG);
+            bool accelAuto = string.Equals(GetSelectedTag(GForceAccelModeCombo, "Fixed"), "Auto", StringComparison.Ordinal);
+            bool decelAuto = string.Equals(GetSelectedTag(GForceDecelModeCombo, "Fixed"), "Auto", StringComparison.Ordinal);
+
+            GForceAccelLearnedText.Text = BuildGForceReadoutText(accelAuto, s.GForce.FixedAccelMaxG, s.GForce.TryGetCurrentAccelAutoDetected(out double accelDetected), accelDetected);
+            GForceDecelLearnedText.Text = BuildGForceReadoutText(decelAuto, s.GForce.FixedDecelMaxG, s.GForce.TryGetCurrentDecelAutoDetected(out double decelDetected), decelDetected);
+        }
+
+        private static string BuildGForceReadoutText(bool autoMode, double fixedValue, bool hasDetected, double detectedValue)
+        {
+            if (!autoMode) return string.Format(Strings.Get("GForce.Readout.Fixed"), fixedValue);
+            return hasDetected
+                ? string.Format(Strings.Get("GForce.Readout.Auto.Detected"), fixedValue, detectedValue)
+                : string.Format(Strings.Get("GForce.Readout.Auto.NoDataYet"), fixedValue);
         }
 
         private void LoadChannel(
@@ -1042,6 +1319,8 @@ namespace QAdvanceFeedback.Settings
             s.Lock.AggregationWMin = LockWMin.Value ?? s.Lock.AggregationWMin;
             s.Lock.AggregationWFront = LockWFront.Value ?? s.Lock.AggregationWFront;
             s.Lock.AggregationWRear = LockWRear.Value ?? s.Lock.AggregationWRear;
+            // 1.0.6.0 (docs\release-1060-report.md, Part 2's UI half) - Lock only.
+            s.Lock.NormalizePattern = ParseEnum(GetSelectedTag(LockNormalizePatternCombo, s.Lock.NormalizePattern.ToString()), s.Lock.NormalizePattern);
             CopyProjector(_workingLockProjector, s.Lock.Projector);
 
             SaveChannel(s.Slip, _slipRows, SlipPulseEnabled, SlipPulseGapMs, SlipPulseMinValue);
@@ -1068,6 +1347,8 @@ namespace QAdvanceFeedback.Settings
             s.GForce.SustainTimeConstantSeconds = GForceSustainTau.Value ?? s.GForce.SustainTimeConstantSeconds;
             s.GForce.TransientTimeConstantSeconds = GForceTransientTau.Value ?? s.GForce.TransientTimeConstantSeconds;
             s.GForce.TransientGain = GForceTransientGain.Value ?? s.GForce.TransientGain;
+            s.GForce.AutoTransitionAnimationScale = GForceAutoTransitionScale.Value ?? s.GForce.AutoTransitionAnimationScale;
+            s.GForce.FixedTransitionAnimationScale = GForceFixedTransitionScale.Value ?? s.GForce.FixedTransitionAnimationScale;
 
             s.GForce.LateralDirection = ParseEnum(GetSelectedTag(GForceLateralDirectionCombo, s.GForce.LateralDirection.ToString()), s.GForce.LateralDirection);
 
@@ -1121,12 +1402,17 @@ namespace QAdvanceFeedback.Settings
             to.Preset = from.Preset;
             to.StartInput = from.StartInput;
             to.EndInput = from.EndInput;
+            to.StartOutput = from.StartOutput;
+            to.EndOutput = from.EndOutput;
             to.SlightlyInput = from.SlightlyInput;
             to.SlightlyOutput = from.SlightlyOutput;
             to.ModerateInput = from.ModerateInput;
             to.ModerateOutput = from.ModerateOutput;
             to.CriticalInput = from.CriticalInput;
             to.CriticalOutput = from.CriticalOutput;
+            to.SlightlyFlattenRange = from.SlightlyFlattenRange;
+            to.ModerateFlattenRange = from.ModerateFlattenRange;
+            to.CriticalFlattenRange = from.CriticalFlattenRange;
         }
 
         // ------------------------------------------------------------------------------------
@@ -1148,6 +1434,67 @@ namespace QAdvanceFeedback.Settings
 
         private static string GetSelectedTag(ComboBox box, string fallback)
             => (box.SelectedItem as ComboBoxItem)?.Tag as string ?? fallback;
+
+        /// <summary>
+        /// 1.0.6.0 (docs\release-1060-report.md, Part 4f) - the General tab's own version label reads
+        /// THIS, never a hand-typed literal, so it can never drift from the DLL actually loaded (the
+        /// exact failure mode docs\curve-help-text-report.md already documented for a hand-copied
+        /// number elsewhere in this control - see ProjectorSettings.CreateShippedDefault's own remarks).
+        /// Reads the running assembly's own <see cref="FileVersionInfo.FileVersion"/> (the csproj's
+        /// <c>&lt;FileVersion&gt;</c>, i.e. exactly what a driver sees in Windows Explorer's own
+        /// "Details" tab for this DLL) rather than <see cref="Assembly.GetName"/>'s Version (the
+        /// AssemblyVersion, which happens to be numerically identical today but is a semantically
+        /// different field .NET does not guarantee stays in lockstep). Falls back to the
+        /// AssemblyVersion, then to a literal "unknown", only if the file-version query itself throws
+        /// (e.g. a locked-down environment that denies FileVersionInfo) - this label must never take
+        /// down the whole settings panel merely to report its own version.
+        /// </summary>
+        private static string GetRunningAssemblyFileVersion()
+        {
+            try
+            {
+                Assembly assembly = Assembly.GetExecutingAssembly();
+                string fileVersion = FileVersionInfo.GetVersionInfo(assembly.Location)?.FileVersion;
+                if (!string.IsNullOrWhiteSpace(fileVersion)) return fileVersion;
+                return assembly.GetName().Version?.ToString() ?? "unknown";
+            }
+            catch
+            {
+                return "unknown";
+            }
+        }
+
+        /// <summary>
+        /// Guards a top-level UI action (Apply/Restore/per-source reset) invoked directly off a WPF
+        /// <c>Button.Click</c> event - see this control's own constructor remarks for why these
+        /// specifically need their own guard distinct from the constructor's. Any fault degrades to
+        /// "this click did nothing" (plus a health-registry entry the General tab's own health section
+        /// surfaces) rather than reaching SimHub's Dispatcher unguarded.
+        /// </summary>
+        private void SafeUiAction(Action action, string subsystem)
+        {
+            try { action(); }
+            catch (Exception e)
+            {
+                SimHub.Logging.Current.Error("QAdvanceFeedback: settings UI action failed - " + e);
+                HealthRegistry.Report(subsystem, HealthSeverity.Degraded, "Health.Impact.SettingsUi", e.ToString());
+                RefreshHealthUi();
+            }
+        }
+
+        /// <summary>Async counterpart of <see cref="SafeUiAction"/>, for the per-source action button
+        /// (script editor/property picker) - assigned as <c>async void</c>-equivalent event handlers,
+        /// where an unhandled exception cannot be caught by any caller at all.</summary>
+        private async Task SafeUiActionAsync(Func<Task> action, string subsystem)
+        {
+            try { await action(); }
+            catch (Exception e)
+            {
+                SimHub.Logging.Current.Error("QAdvanceFeedback: settings UI action failed - " + e);
+                HealthRegistry.Report(subsystem, HealthSeverity.Degraded, "Health.Impact.SettingsUi", e.ToString());
+                RefreshHealthUi();
+            }
+        }
 
         private static string FormatNum(double value) => value.ToString("0.#", CultureInfo.InvariantCulture);
 

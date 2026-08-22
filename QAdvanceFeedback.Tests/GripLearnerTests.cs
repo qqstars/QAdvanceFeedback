@@ -5,6 +5,27 @@ namespace QAdvanceFeedback.Tests
 {
     public class GripLearnerTests
     {
+        /// <summary>
+        /// NO MINIMUM-SAMPLE GATE (docs\robust-auto-gforce-report.md, owner's hard constraint) - this
+        /// class has never had one: <see cref="GripLearner.Observe"/> updates <see cref="GripLearner.LearnedPeakG"/>
+        /// UNCONDITIONALLY on every valid call, immediately, with no "wait for N observations before this
+        /// counts" gate anywhere. <see cref="GripLearner.Confidence"/> is a smooth 0..1 ramp that only
+        /// ever CEILINGS <see cref="GripLearner.Ratio"/>'s result while low - it never blocks
+        /// <see cref="GripLearner.Observe"/> from updating the peak itself. MUTATION EVIDENCE: if a
+        /// minimum-sample gate were introduced (e.g. "do not update LearnedPeakG below N observations"),
+        /// this test fails immediately, since a single observation would incorrectly still read
+        /// <see cref="GripLearner.SeedPeakG"/> instead of having moved toward the real observation.
+        /// </summary>
+        [Fact]
+        public void A_single_observation_immediately_moves_the_learned_peak_no_minimum_sample_gate()
+        {
+            var learner = new GripLearner();
+            learner.Observe(5.0);
+
+            Assert.NotEqual(GripLearner.SeedPeakG, learner.LearnedPeakG, 6);
+            Assert.Equal(1, learner.Samples);
+        }
+
         [Fact]
         public void Fresh_learner_has_zero_confidence_and_the_seed_peak()
         {
@@ -25,20 +46,36 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(GripLearner.ColdStartCeilingRatio, ratio, 6);
         }
 
+        /// <summary>
+        /// RE-EXPRESSED, not weakened (docs\stability-confidence-fix-report.md - the cold-vs-converged
+        /// over-reporting safety fix): reaching <see cref="GripLearner.MaturitySamples"/> qualifying
+        /// observations no longer, by itself, removes the ceiling - <see cref="GripLearner.Ratio"/> now
+        /// gates on <see cref="GripLearner.MaturityConfidence"/> (sample count AND stability), per that
+        /// property's own remarks. This fixture's own peak settles to a fixed 0.5 well before
+        /// MaturitySamples (200) is reached, so feeding a comfortable margin PAST 200 (still one
+        /// ordinary session, nowhere near forbidden-forever-conservative) lets BOTH terms reach 1.0,
+        /// reproducing the original "no ceiling once genuinely mature" guarantee - now honestly
+        /// requiring the reference to have actually settled, not merely to have been observed enough
+        /// times.
+        /// </summary>
         [Fact]
         public void Ceiling_relaxes_as_confidence_matures_and_disappears_at_full_confidence()
         {
             var learner = new GripLearner();
 
-            // Feed exactly MaturitySamples qualifying observations, all at a magnitude far below the
-            // (also-rising) learned peak, so the ratio computed for a FRESH large magnitude at the
-            // end is governed by the ceiling formula, not by the peak having chased the magnitude.
-            for (int i = 0; i < GripLearner.MaturitySamples; i++)
+            // Feed comfortably more than MaturitySamples qualifying observations, all at a magnitude far
+            // below the (also-rising) learned peak, so the ratio computed for a FRESH large magnitude at
+            // the end is governed by the ceiling formula, not by the peak having chased the magnitude -
+            // and comfortably more than StabilityScaleSamples of quiet room AFTER the peak settles, so
+            // the reference has had time to actually settle (QuietStreak), not merely accumulate samples.
+            int total = GripLearner.MaturitySamples + (int)GripLearner.StabilityScaleSamples + 100;
+            for (int i = 0; i < total; i++)
                 learner.Observe(0.5);
 
             Assert.Equal(1.0, learner.Confidence, 6);
 
-            // Once mature, a magnitude equal to the learned peak reads ratio 1.0 - no ceiling at all.
+            // Once genuinely mature (enough samples AND settled), a magnitude equal to the learned peak
+            // reads ratio 1.0 - no ceiling at all.
             double ratio = learner.Ratio(learner.LearnedPeakG);
             Assert.Equal(1.0, ratio, 3);
         }
@@ -223,7 +260,11 @@ namespace QAdvanceFeedback.Tests
         public void Ratio_clamps_an_impact_magnitude_reading_against_the_higher_LiveClampG_instead_of_rejecting_it()
         {
             var learner = new GripLearner(learnCapG: 6.0); // e.g. the Slip channel
-            for (int i = 0; i < GripLearner.MaturitySamples; i++) learner.Observe(2.0); // mature, no cold-start ceiling
+            // Comfortably more than MaturitySamples AND StabilityScaleSamples (docs\stability-
+            // confidence-fix-report.md) so the reference has both enough evidence and enough settled,
+            // quiet time - mature, no cold-start ceiling.
+            int total = GripLearner.MaturitySamples + (int)GripLearner.StabilityScaleSamples + 50;
+            for (int i = 0; i < total; i++) learner.Observe(2.0);
 
             // 18g exceeds BOTH LearnCapG (6.0) and would have exceeded the old, single MaxPlausibleG
             // (8.0) too - but Ratio must still produce a real, finite, clamped-not-rejected number

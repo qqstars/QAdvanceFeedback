@@ -2,6 +2,7 @@ using System;
 using GameReaderCommon;
 using GameReaderCommon.Feedback;
 using QAdvanceFeedback.Core;
+using QAdvanceFeedback.Core.Health;
 using SimHub.Plugins;
 
 namespace QAdvanceFeedback
@@ -73,7 +74,7 @@ namespace QAdvanceFeedback
         public RawWheelTelemetrySnapshot CaptureRawTelemetry(GameData data, PluginManager pluginManager)
         {
             FeedbackData fb = data?.NewData?.FeedbackData;
-            FeedbackCapabilities caps = pluginManager?.GameManager?.GetFeedbackCapabilities();
+            FeedbackCapabilities caps = SafeGetFeedbackCapabilities(pluginManager);
 
             if (caps == null)
             {
@@ -97,6 +98,31 @@ namespace QAdvanceFeedback
                 capabilityRpm: caps.RPM,
                 capabilityGameFamily: caps.GameFamily.ToString(),
                 capabilityWheelSlipCalibrationProviderSlipScale: caps.WheelSlipCalibrationProvider?.SlipScale);
+        }
+
+        /// <summary>
+        /// PIPELINE-EXCEPTION-SAFETY (docs\pipeline-exception-safety-report.md): <c>GetFeedbackCapabilities</c>
+        /// is a real, directly-referenced SimHub API (not reflection), but it is exactly the kind of
+        /// undocumented-shape SimHub internal the brief calls a realistic failure mode - a future SimHub
+        /// version could throw here (an unsupported/uninitialised game manager state) just as easily as
+        /// a reflection target could move. <see cref="CaptureRawTelemetry"/>'s own contract ("must never
+        /// throw", see <see cref="ITelemetryAdapter"/>) already required this to degrade to null rather
+        /// than propagate - this wraps the call itself so that contract actually holds, and records the
+        /// fault once via <see cref="HealthRegistry"/> so the settings UI can tell a driver "diagnostics
+        /// only" rather than staying silently blank.
+        /// </summary>
+        private static FeedbackCapabilities SafeGetFeedbackCapabilities(PluginManager pluginManager)
+        {
+            try
+            {
+                return pluginManager?.GameManager?.GetFeedbackCapabilities();
+            }
+            catch (Exception e)
+            {
+                HealthRegistry.Report(HealthSubsystems.CapabilityDetection, HealthSeverity.Degraded,
+                    "Health.Impact.CapabilityDetection", e.ToString(), isSimHubCompatibilityIssue: true);
+                return null;
+            }
         }
 
         private static TelemetryFrame ToFrame(StatusDataBase d)

@@ -94,15 +94,43 @@ namespace QAdvanceFeedback.Core.Normalized
     /// gated use. A source never seen before in this game at all (no seed either) still falls back to
     /// plain identity.</item>
     /// </list>
+    /// <para/>
+    /// NOT MIGRATED TO THE SHARED ROBUST-BAND ESTIMATOR (docs\robust-auto-gforce-report.md, evaluated
+    /// and explicitly declined for THIS class): the auto max-G/grip-peak swap to
+    /// <see cref="Core.RobustBandEstimator"/> was adopted because it measurably reduced outlier
+    /// sensitivity on this plugin's own captured logs. THIS class's own PRIMARY tier already only ever
+    /// observes a raw reading at a moment independently detected as "physically at this car's own
+    /// learned limit" (<see cref="ObserveAtPhysicalLimit"/>) - i.e. it is already anchored to rare,
+    /// pre-filtered physical events rather than a raw noisy G stream, which is a different and already
+    /// much more outlier-resistant mechanism than what the auto max-G/grip-peak learners had. Its own
+    /// cross-car seeding, cold/warm blend and concave confidence ramp (all extensively re-tuned across
+    /// multiple prior passes - see this class's own remarks above) are tightly coupled to
+    /// <see cref="OnlineDistributionLearner"/>'s specific weighted-average shape; swapping that
+    /// foundation for a windowed trimmed-band estimate would risk exactly the regression the owner asked
+    /// this task NOT to introduce, for a call site the measured evidence does not show is actually
+    /// suffering from the blind-maximum failure mode. Left as-is.
     /// </summary>
     public sealed class KeyedScaleLearner
     {
         /// <summary>Where the physically-anchored reading is mapped to on the canonical 0-100 scale -
-        /// see <see cref="NormalizedWheelLockSlipEngine"/>'s own band description ("60-80: starting to
-        /// lock-or-spin, very close but not yet") - deliberately just below the 80 boundary so genuine
-        /// full lock/spin (which every source maps to 100, per the owner's own examples) still has
-        /// headroom above this anchor.</summary>
-        public const double CanonicalAtLimitAnchor = 75.0;
+        /// see <see cref="NormalizedWheelLockSlipEngine"/>'s own band description ("60-80: the ideal
+        /// band, up to the measured grip limit; 80-100: past the limit - locking/spinning").
+        /// RESCALED (docs\anchor-rescale-report.md) from the original 75.0 to 80.0 so this value
+        /// COINCIDES EXACTLY with Layer 5's own top curve anchor input (<see cref="Settings.WheelChannelSettings"/>'s
+        /// shipped Curve preset already places its "Critical"/"Max Grip" anchor at input 80 for BOTH
+        /// channels - see <see cref="Projection.ProjectorSettings.ApplyPreset"/> - this class's own
+        /// anchor previously did NOT coincide with that value, at 75, which is exactly why the top
+        /// curve anchor used to describe a point ABOVE the true physical limit, "on the verge of
+        /// locking - not locked yet", rather than the limit itself). A rawValue observed exactly AT the
+        /// physical limit (rawValue == the learned ceiling) now Rescales to exactly 80, landing
+        /// precisely on that top anchor - which is the entire point of this constant's value:
+        /// wherever it sits IS what "at the grip limit" means on the canonical scale, and the top curve
+        /// anchor's input position is what must coincide with it, not the other way around. Full
+        /// lock/spin (native 100 from every source, per the owner's own examples) still calibrates
+        /// somewhat above 80 whenever the learned ceiling is below 100 in the source's own native units
+        /// (the common case - see docs\anchor-rescale-report.md's own worked numbers), preserving
+        /// headroom for "past the limit" above this anchor.</summary>
+        public const double CanonicalAtLimitAnchor = 80.0;
 
         /// <summary>
         /// A discrete "is this worth labelling isPrimaryTier for persistence" cutoff - see
@@ -189,7 +217,15 @@ namespace QAdvanceFeedback.Core.Normalized
             if (!ClampMath.IsFinite(rawValue) || rawValue <= 0.0) return;
             if (!ClampMath.IsFinite(observationWeight) || observationWeight <= 0.0) return;
             OnlineDistributionLearner primary = GetOrCreate(_physicalAnchor, gameId, carId, sourceIdentity);
-            primary.AddValue(rawValue, observationWeight);
+            // 1.0.6.0 (docs\release-1060-report.md, Part 5) - the call-site gate OnlineDistributionLearner's
+            // own remarks on MaxSamples describe ("mirroring SimHub's own CalibrationPointsAdded <= 7000
+            // gate at the CALL site rather than inside AddValue") was never actually wired up anywhere - a
+            // genuine gap found during the 1.0.6.0 overflow audit, since without it this tier's own
+            // internal _histogram dictionary keeps accepting new distinct rounded buckets for the entire
+            // life of the session with no ceiling at all. Wired up here, at the one call site that ever
+            // feeds this tier.
+            if (primary.Count < OnlineDistributionLearner.MaxSamples)
+                primary.AddValue(rawValue, observationWeight);
 
             string key = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity);
             WelfordAccumulator dispersion = _hotDispersion.TryGetValue(key, out WelfordAccumulator existing) ? existing : WelfordAccumulator.Empty;
@@ -339,7 +375,11 @@ namespace QAdvanceFeedback.Core.Normalized
         public void ObserveGeneral(string gameId, string carId, string sourceIdentity, double rawValue)
         {
             if (!ClampMath.IsFinite(rawValue) || rawValue <= 0.0) return;
-            GetOrCreate(_generalDistribution, gameId, carId, sourceIdentity).AddValue(rawValue);
+            // 1.0.6.0 (docs\release-1060-report.md, Part 5) - same call-site gate as ObserveAtPhysicalLimit
+            // above; see that method's own remarks.
+            OnlineDistributionLearner secondary = GetOrCreate(_generalDistribution, gameId, carId, sourceIdentity);
+            if (secondary.Count < OnlineDistributionLearner.MaxSamples)
+                secondary.AddValue(rawValue);
         }
 
         /// <summary>This source's own learned near-the-limit ceiling, in the SOURCE'S OWN native units -
@@ -378,6 +418,34 @@ namespace QAdvanceFeedback.Core.Normalized
                 // remarks).
                 double weight = ColdWarmBlend.ConcaveHotWeight(primary.Count, dispersion.CoefficientOfVariation, CalibrationConfidenceScaleSamples);
 
+                // FULL-TRUST FLOOR AT THE DOCUMENTED SAMPLE SCALE (docs\anchor-rescale-report.md - a
+                // safety-relevant fix found while verifying the anchor rescale): this class's own
+                // <see cref="CalibrationConfidenceScaleSamples"/> XML doc quotes the owner's own worked
+                // example ending "...&gt;=200 samples -&gt; weight 1.0" - but <see cref="ColdWarmBlend.ConcaveHotWeight"/>
+                // is a PRODUCT of the concave count term (which DOES reach exactly 1.0 at
+                // CalibrationConfidenceScaleSamples) and <see cref="ColdWarmBlend.DispersionQuality"/>
+                // (which is STRICTLY LESS THAN 1.0 for any nonzero coefficient of variation - i.e. any
+                // real driving session, which never repeats the exact same G/pedal/speed at every
+                // physically-at-the-limit moment) - so the PRODUCT never actually reaches 1.0 for real
+                // data, no matter how many additional qualifying samples accumulate afterward (measured:
+                // a session with a realistic CV of 0.05-0.15 permanently plateaus at weight 0.43-0.75,
+                // however many hundreds of further samples arrive - see docs\anchor-rescale-report.md's
+                // own worked numbers). That silently leaves Rescale's output for a genuine
+                // physically-at-the-limit reading meaningfully off <see cref="CanonicalAtLimitAnchor"/>
+                // FOREVER, not just during an honestly-disclosed cold-start ramp - which defeats the
+                // point of the anchor for a safety-relevant cue. Fixed narrowly, HERE ONLY (not in the
+                // shared <see cref="ColdWarmBlend"/> - <see cref="Normalized.GripLearner"/>'s own use of
+                // it, and every one of its own already-tuned thresholds/tests, is deliberately left
+                // untouched): once genuinely abundant primary-tier evidence exists
+                // (<c>primary.Count &gt;= CalibrationConfidenceScaleSamples</c>), this key's own
+                // accumulated <c>average</c> is trusted FULLY (weight 1.0), matching this class's own
+                // documented contract literally, regardless of dispersion - a real, if noisy, cluster of
+                // 200+ physically-at-the-limit observations IS this source's own true native ceiling,
+                // not a value that should stay partially anchored to the canonical constant forever.
+                // Below that sample count the existing concave, dispersion-weighted ramp is unchanged -
+                // this only removes the PERMANENT asymptotic cap, not the graceful early ramp.
+                if (primary.Count >= (int)CalibrationConfidenceScaleSamples) weight = 1.0;
+
                 // CROSS-CAR SEED, GATED TO NEVER AMPLIFY A COLD READING (docs\regression-fix-report.md,
                 // Regression 3 - the owner's own explicit requirement after the hard-shake-on-first-brake
                 // report): the ramp's own "cold" starting point is bare IDENTITY
@@ -388,9 +456,9 @@ namespace QAdvanceFeedback.Core.Normalized
                 // scale" rule) and only nudges the ramp's own starting point as THIS car's own local
                 // evidence begins accumulating - continuous, not a second step (composing two continuous
                 // blends stays continuous). Capped at CanonicalAtLimitAnchor so the BORROWED portion can
-                // only ever REDUCE Rescale's factor (anchor/ceiling &lt;= 1 whenever the anchor is >= 75),
+                // only ever REDUCE Rescale's factor (anchor/ceiling &lt;= 1 whenever the anchor is >= 80),
                 // never amplify - only THIS car's own genuinely-earned <c>average</c> below (blended in by
-                // the SAME weight) may push the ceiling below 75 (a legitimate, evidence-based
+                // the SAME weight) may push the ceiling below 80 (a legitimate, evidence-based
                 // amplification exactly the F1 fix/Regression 2 calibration needs, never a borrowed
                 // guess). Deliberately never blended against a cross-car seed this SAME key is
                 // simultaneously WRITING (see ObserveAtPhysicalLimit) - self-referential contamination,

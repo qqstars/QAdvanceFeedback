@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using Newtonsoft.Json;
+using QAdvanceFeedback.Core.Health;
 using QAdvanceFeedback.Settings;
 
 namespace QAdvanceFeedback
@@ -49,6 +50,8 @@ namespace QAdvanceFeedback
             catch (Exception e) when (e is IOException || e is JsonException || e is UnauthorizedAccessException)
             {
                 logWarning?.Invoke("QAdvanceFeedback: config load failed, using defaults - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.ConfigPersistence, HealthSeverity.Degraded,
+                    "Health.Impact.ConfigPersistence", e.ToString());
             }
 
             try
@@ -66,6 +69,8 @@ namespace QAdvanceFeedback
             catch (Exception e) when (e is IOException || e is JsonException || e is UnauthorizedAccessException)
             {
                 logWarning?.Invoke("QAdvanceFeedback: legacy config import failed, using defaults - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.ConfigPersistence, HealthSeverity.Degraded,
+                    "Health.Impact.ConfigPersistence", e.ToString());
             }
 
             return new QAdvanceFeedbackSettings();
@@ -87,8 +92,18 @@ namespace QAdvanceFeedback
                 if (File.Exists(path)) File.Delete(path);
                 File.Move(temporary, path);
             }
-            catch (IOException e) { logWarning?.Invoke("QAdvanceFeedback: config save failed - " + e.Message); }
-            catch (UnauthorizedAccessException e) { logWarning?.Invoke("QAdvanceFeedback: config save denied - " + e.Message); }
+            catch (IOException e)
+            {
+                logWarning?.Invoke("QAdvanceFeedback: config save failed - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.ConfigPersistence, HealthSeverity.Degraded,
+                    "Health.Impact.ConfigPersistence", e.ToString());
+            }
+            catch (UnauthorizedAccessException e)
+            {
+                logWarning?.Invoke("QAdvanceFeedback: config save denied - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.ConfigPersistence, HealthSeverity.Degraded,
+                    "Health.Impact.ConfigPersistence", e.ToString());
+            }
         }
     }
 }

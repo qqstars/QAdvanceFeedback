@@ -4,6 +4,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
+using QAdvanceFeedback.Core.Health;
 using QAdvanceFeedback.Core.Normalized;
 using QAdvanceFeedback.Core.Runtime;
 
@@ -56,6 +57,7 @@ namespace QAdvanceFeedback
         private readonly object _fileLock = new object();
         private readonly Timer _timer;
         private bool _disposed;
+        private string _loggedFlushTickFault;
 
         private readonly double _legacyLockPeakG;
         private readonly int _legacyLockSamples;
@@ -126,6 +128,12 @@ namespace QAdvanceFeedback
 
         public void SaveSlipLearners(Dictionary<string, GripLearnerState> data) => _cache.SaveSlipLearners(data);
 
+        /// <summary>Version 8 (docs\v1068-four-range-report.md, Feature C) - WheelLock's own learned
+        /// S75/S90 anchors. WHEELLOCK ONLY, no Slip equivalent.</summary>
+        public void LoadLockAnchors(out Dictionary<string, LockAnchorState> data) => _cache.LoadLockAnchors(out data);
+
+        public void SaveLockAnchors(Dictionary<string, LockAnchorState> data) => _cache.SaveLockAnchors(data);
+
         /// <summary>The pre-per-car global Lock peak/samples imported from a legacy-named runtime
         /// file at construction, if any - false when nothing usable was found (fresh install, or the
         /// new file already existed so no legacy import was attempted at all). See this class's own
@@ -177,11 +185,38 @@ namespace QAdvanceFeedback
             }
         }
 
+        /// <summary>
+        /// The <see cref="Timer"/> callback itself - runs on a raw ThreadPool thread with NOTHING
+        /// upstream of it to catch a throw (unlike <c>Plugin.DataUpdate</c>, which SimHub calls from
+        /// its own guarded dispatch loop - see the pipeline-exception-safety report). In .NET
+        /// Framework, an unhandled exception on a ThreadPool thread is NOT contained to that one
+        /// callback: it takes down the entire host process. <see cref="_cache"/>.SnapshotIfDirty is
+        /// ordinary in-memory dictionary/state work today and not expected to throw, but "not expected
+        /// to" is exactly the gap this project's own report calls out - this handler must survive
+        /// ANY exception, not just the ones <see cref="WriteAtomic"/> already anticipates from disk
+        /// I/O. Logged once (not per-tick) via the same distinct-message dedup <c>QAdvanceFeedback.
+        /// DataUpdate</c> uses, so a persistent fault does not spam the log every
+        /// <see cref="DefaultFlushInterval"/>.
+        /// </summary>
         private void FlushTick()
         {
-            RuntimeDocument snapshot = _cache.SnapshotIfDirty();
-            if (snapshot == null) return;
-            Task.Run(() => WriteAtomic(snapshot));
+            try
+            {
+                RuntimeDocument snapshot = _cache.SnapshotIfDirty();
+                if (snapshot == null) return;
+                Task.Run(() => WriteAtomic(snapshot));
+            }
+            catch (Exception e)
+            {
+                string message = "QAdvanceFeedback: background flush tick failed - " + e;
+                if (!string.Equals(_loggedFlushTickFault, message, StringComparison.Ordinal))
+                {
+                    _loggedFlushTickFault = message;
+                    _logWarning?.Invoke(message);
+                }
+                HealthRegistry.Report(HealthSubsystems.BackgroundFlush, HealthSeverity.Degraded,
+                    "Health.Impact.BackgroundFlush", e.ToString());
+            }
         }
 
         private void WriteAtomic(RuntimeDocument snapshot)
@@ -202,8 +237,31 @@ namespace QAdvanceFeedback
                     File.Move(temporary, _path);
                 }
             }
-            catch (IOException e) { _logWarning?.Invoke("QAdvanceFeedback: parameters save failed - " + e.Message); }
-            catch (UnauthorizedAccessException e) { _logWarning?.Invoke("QAdvanceFeedback: parameters save denied - " + e.Message); }
+            catch (IOException e)
+            {
+                _logWarning?.Invoke("QAdvanceFeedback: parameters save failed - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.RuntimePersistence, HealthSeverity.Degraded,
+                    "Health.Impact.RuntimePersistence", e.ToString());
+            }
+            catch (UnauthorizedAccessException e)
+            {
+                _logWarning?.Invoke("QAdvanceFeedback: parameters save denied - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.RuntimePersistence, HealthSeverity.Degraded,
+                    "Health.Impact.RuntimePersistence", e.ToString());
+            }
+            // Belt-and-suspenders (pipeline-exception-safety report): this method now also runs
+            // detached inside Task.Run, off FlushTick's own guarded call on the Timer thread (see
+            // FlushTick's remarks) - a JsonException from SerializeObject, or an ArgumentException/
+            // PathTooLongException/NotSupportedException from CreateDirectory/WriteAllText/Move (none
+            // of which derive from IOException or UnauthorizedAccessException) must not escape onto
+            // that detached Task either, so it is caught and logged here too rather than left to
+            // become an unobserved task exception.
+            catch (Exception e)
+            {
+                _logWarning?.Invoke("QAdvanceFeedback: parameters save failed unexpectedly - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.RuntimePersistence, HealthSeverity.Degraded,
+                    "Health.Impact.RuntimePersistence", e.ToString());
+            }
         }
 
         /// <summary>
@@ -235,6 +293,8 @@ namespace QAdvanceFeedback
             catch (Exception e) when (e is IOException || e is JsonException || e is UnauthorizedAccessException)
             {
                 logWarning?.Invoke("QAdvanceFeedback: parameters load failed, starting fresh - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.RuntimePersistence, HealthSeverity.Degraded,
+                    "Health.Impact.RuntimePersistence", e.ToString());
             }
 
             try
@@ -261,6 +321,8 @@ namespace QAdvanceFeedback
             catch (Exception e) when (e is IOException || e is JsonException || e is UnauthorizedAccessException)
             {
                 logWarning?.Invoke("QAdvanceFeedback: legacy parameters import failed, starting fresh - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.RuntimePersistence, HealthSeverity.Degraded,
+                    "Health.Impact.RuntimePersistence", e.ToString());
             }
 
             return new RuntimeDocument();

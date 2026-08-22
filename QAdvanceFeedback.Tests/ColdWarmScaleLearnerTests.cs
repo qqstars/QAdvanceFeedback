@@ -1,3 +1,4 @@
+using System;
 using QAdvanceFeedback.Core.Normalized;
 using Xunit;
 
@@ -112,6 +113,41 @@ namespace QAdvanceFeedback.Tests
             double? restoredCeiling = restored.PublishedCeiling(Game, Car, Source, out _);
             Assert.True(restoredCeiling.HasValue);
             Assert.Equal(55.0, restoredCeiling.Value, 6);
+        }
+
+        /// <summary>
+        /// SAFETY-RELEVANT FIX (docs\anchor-rescale-report.md): before this fix,
+        /// <see cref="KeyedScaleLearner"/>'s own primary-tier weight
+        /// (<see cref="Core.ColdWarmBlend.ConcaveHotWeight"/>) was a PRODUCT of a count term that DOES
+        /// reach exactly 1.0 at <see cref="KeyedScaleLearner.CalibrationConfidenceScaleSamples"/> and a
+        /// dispersion term that is STRICTLY LESS than 1.0 for any nonzero coefficient of variation -
+        /// i.e. every real driving session, which never repeats the exact same reading at every
+        /// physically-at-the-limit moment - so the product never actually reached full trust, no matter
+        /// how much MORE evidence accumulated afterward (measured: a permanent plateau, not a slow
+        /// approach - see docs\anchor-rescale-report.md's own before/after numbers). That silently left
+        /// a genuinely-at-the-limit reading meaningfully off <see cref="KeyedScaleLearner.CanonicalAtLimitAnchor"/>
+        /// FOREVER for any realistically-noisy source, defeating the point of the anchor for a
+        /// safety-relevant "release the pedal now" cue. This test pins the fix: realistic (10%) jitter
+        /// around a native ceiling, once genuinely abundant evidence exists, must still converge close
+        /// to the anchor - not plateau several points away from it.
+        /// </summary>
+        [Fact]
+        public void Primary_tier_reaches_full_trust_at_the_documented_sample_scale_even_with_realistic_dispersion()
+        {
+            var learner = new KeyedScaleLearner();
+            var rng = new Random(42);
+            for (int i = 0; i < 250; i++)
+            {
+                double noisy = 90.0 * (1.0 + (rng.NextDouble() * 2 - 1) * 0.10); // realistic 10% jitter
+                learner.ObserveAtPhysicalLimit(Game, Car, Source, noisy);
+            }
+
+            double rescaledAtTrueCeiling = learner.Rescale(Game, Car, Source, 90.0);
+
+            Assert.True(Math.Abs(rescaledAtTrueCeiling - KeyedScaleLearner.CanonicalAtLimitAnchor) < 2.0,
+                $"a genuinely-at-the-limit reading with realistic (10%) dispersion must converge close to " +
+                $"the anchor ({KeyedScaleLearner.CanonicalAtLimitAnchor}) once evidence is abundant " +
+                $"(>= {KeyedScaleLearner.CalibrationConfidenceScaleSamples} samples) - got {rescaledAtTrueCeiling}");
         }
 
         [Fact]

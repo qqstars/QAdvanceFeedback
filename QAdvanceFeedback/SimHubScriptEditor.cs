@@ -3,6 +3,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows;
+using QAdvanceFeedback.Core.Health;
 using QAdvanceFeedback.Settings;
 
 namespace QAdvanceFeedback
@@ -122,6 +123,8 @@ namespace QAdvanceFeedback
             {
                 _available = false;
                 LogOnce("script editor failed while showing, falling back to the text box - " + e.Message);
+                HealthRegistry.Report(HealthSubsystems.ScriptEditor, HealthSeverity.Degraded,
+                    "Health.Impact.ScriptEditor", e.ToString());
                 return null;
             }
         }
@@ -166,6 +169,12 @@ namespace QAdvanceFeedback
             {
                 _available = false;
                 LogOnce("script editor unavailable, settings UI will use a plain text box - " + e.Message);
+                // ISSUE-NAMED-PLAINLY (owner's explicit ask): a type/member not being found here is the
+                // textbook shape of "SimHub moved/renamed/reshaped an internal we depend on" - flagged as
+                // a SimHub-compatibility issue so the settings UI can say so plainly rather than showing
+                // an opaque failure.
+                HealthRegistry.Report(HealthSubsystems.ScriptEditor, HealthSeverity.Degraded,
+                    "Health.Impact.ScriptEditor", e.ToString(), isSimHubCompatibilityIssue: true);
             }
         }
 
