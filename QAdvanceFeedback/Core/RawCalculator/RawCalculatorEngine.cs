@@ -17,60 +17,77 @@ namespace QAdvanceFeedback.Core.RawCalculator
     /// <para/>
     /// BACKWARD COMPATIBILITY: <paramref name="rawTelemetry"/> (see <see cref="Compute"/>) defaults to
     /// null. Every caller that does not supply a capability snapshot gets this engine's own
-    /// pre-dispatch fixed behaviour (Lock via <see cref="BrakingVsSpeedModel.ComputeWithLowSpeedFix"/>,
+    /// pre-dispatch fixed behaviour (Lock via <see cref="BrakingVsSpeedModel.Compute"/>,
     /// Slip via <see cref="BrakeSpeedSlipModel"/>) - only <c>QAdvanceFeedback.cs</c>'s own
     /// <c>DataUpdate</c>, which always captures and passes a real snapshot, reaches the full dispatch.
     /// <para/>
-    /// STATE THIS INSTANCE OWNS (reset only by process restart): four long-lived
-    /// <see cref="WheelRotationLockFilter"/> instances (one per wheel, each with its own smoothing
-    /// state), two <see cref="IValueDistributionLearner"/> pools tracking a learned rotation-rate/speed
-    /// cruise ratio (front axle, rear axle), two more tracking Slip's own learned slip-ratio percentile
-    /// band (front/rear, axle-pooled), four more tracking Lock's own learned slip-ratio percentile band
-    /// (one per wheel - see <see cref="_lockSlipRatioPerWheel"/>'s own remarks for why Lock does not
-    /// share Slip's axle-pooled pair), and one gear-keyed dictionary of learners standing in for a
-    /// per-gear cruise reference used by the wheel-speed-delta branch.
+    /// STATE THIS INSTANCE OWNS: four long-lived <see cref="WheelRotationLockFilter"/> instances (one
+    /// per wheel, each with its own smoothing state, reset only by process restart), a gear-keyed
+    /// dictionary of learners standing in for a per-gear cruise reference used by the wheel-speed-delta
+    /// branch, and - since 1.0.7.1 - a <see cref="Calibration.CalibrationDataProvider"/>, which is a
+    /// faithful port of SimHub's own ShakeIt calibration store and is PERSISTED between runs. The four
+    /// ad-hoc distribution learners this engine previously owned (two axle-pooled rotation-to-speed, two
+    /// axle-pooled slip-ratio, four per-wheel Lock slip-ratio) are gone; see the provider's own remarks
+    /// for what replaced them and why the per-wheel Lock split in particular had to go.
     /// </summary>
     internal sealed class RawCalculatorEngine : ILegacyWheelLockSlipEngine
     {
-        /// <summary>Upper bound on how many observations any one learner pool below folds in - keeps a
-        /// very long-running session's own memory bounded once a pool has seen far more evidence than
-        /// it needs to answer confidently.</summary>
-        private const int LearnerSampleCap = 7000;
-
         private readonly WheelRotationLockFilter[] _rotationLockFilters =
             { new WheelRotationLockFilter(), new WheelRotationLockFilter(), new WheelRotationLockFilter(), new WheelRotationLockFilter() };
 
-        private readonly IValueDistributionLearner _rotationToSpeedFront = new StreamingPercentileLearner();
-        private readonly IValueDistributionLearner _rotationToSpeedRear = new StreamingPercentileLearner();
+        // ---- SHAKEIT CALIBRATION (1.0.7.1). Replaces the four ad-hoc distribution learners this engine
+        // used to own (two axle-pooled rotation-to-speed, two axle-pooled slip-ratio, four per-wheel
+        // Lock slip-ratio) with a faithful port of SimHub's own calibration store - see
+        // Calibration.CalibrationDataProvider. Three consequences worth stating plainly:
+        //
+        //  - THE PER-WHEEL LOCK LEARNERS ARE GONE. SimHub pools all four wheels into ONE "Slip"
+        //    calibration (its GetSlipCalibration takes a `front` flag and ignores it) while splitting
+        //    RPSToSpeed by axle. Matching ShakeIt exactly was the owner's explicit instruction once it
+        //    was established that SimHub's own ongoing LEARNING is pooled too, not just its reads.
+        //  - CALIBRATION IS NOW KEYED track;car;metric, SimHub's own scoping - not (game, car, surface).
+        //  - IT PERSISTS. SimHub serialises its equivalent as CalibrationDataV5 and simply resumes
+        //    accumulating into the same histogram next run; there is deliberately no reference, blend or
+        //    handover here, which is what makes resuming free of any transition artefact.
+        private readonly Calibration.CalibrationDataProvider _calibration = new Calibration.CalibrationDataProvider();
 
-        private readonly IValueDistributionLearner _slipRatioFront = new StreamingPercentileLearner();
-        private readonly IValueDistributionLearner _slipRatioRear = new StreamingPercentileLearner();
+        private string _trackIdWithConfig = string.Empty;
+        private string _carModel = string.Empty;
+
+        /// <summary>The live calibration store, for persistence and for the ShakeIt precalibration
+        /// converter. Held by reference - the caller saves whatever this contains.</summary>
+        public Calibration.CalibrationDataProvider Calibration => _calibration;
+
+        /// <summary>Names the (track, car) whose telemetry follows. SimHub keys its calibrations this
+        /// way, so this is what makes ours line up with a converted ShakeIt file.</summary>
+        public void SetContext(string trackIdWithConfig, string carModel)
+        {
+            _trackIdWithConfig = trackIdWithConfig ?? string.Empty;
+            _carModel = carModel ?? string.Empty;
+        }
+
 
         /// <summary>
-        /// FULL-LOCK FIDELITY FIX (Raw Layer 3, docs\raw-full-lock-fidelity-report.md): one learner PER
-        /// WHEEL, fed only that wheel's own <c>WheelSlipRatio</c> - used EXCLUSIVELY by the Lock channel
-        /// on the <see cref="WheelSlipBranchNames.SlipData"/> branch. <see cref="_slipRatioFront"/>/
-        /// <see cref="_slipRatioRear"/> above remain the Slip channel's own unchanged axle-POOLED
-        /// reference (mixing both wheels of an axle into one learner) - Slip's own published values are
-        /// bit-for-bit unaffected by this fix. Lock switched away from that same pooled reference because
-        /// a title's own per-wheel <c>WheelSlipRatio</c> field is not guaranteed to share one common
-        /// native scale across the two wheels of an axle (observed directly: one wheel's own field can
-        /// read all the way to +/-1.0 at a genuine lock event while the axle-mate's own field never
-        /// exceeds a small fraction of that, for the exact same physical car/session) - pooling two
-        /// different native scales into one learner lets whichever wheel locks harder/more often drag the
-        /// SHARED high percentile toward its own scale, so the OTHER wheel's genuine full-lock reading
-        /// (small on its own native scale) is judged against a reference calibrated to a different
-        /// wheel's scale and reads far below 100 even though every wheel is, in fact, fully locked. A
-        /// per-wheel reference judges each wheel only against its own history, which is what
-        /// <see cref="DispatchBranchFormulas.SlipFromLearnedDistribution"/>'s own doc comment ("a per-wheel
-        /// slip ratio against a LEARNED percentile band of THAT SAME SIGNAL") already says this formula is
-        /// supposed to do.
+        /// The per-gear wheel-speed-delta cruise reference for the WheelsSpeed branch, keyed PER WHEEL
+        /// AND PER GEAR - SimHub holds this on the effect instance, and each wheel is its own effect, so
+        /// its scope is per wheel. The previous implementation shared one learner across all four wheels,
+        /// which is a different reference.
+        /// <para/>
+        /// A <see cref="Calibration.TimeMovingAverage"/> rather than a distribution learner, with
+        /// SimHub's own 1500-sample / effectively-unbounded-time settings.
         /// </summary>
-        private readonly IValueDistributionLearner[] _lockSlipRatioPerWheel =
-            { new StreamingPercentileLearner(), new StreamingPercentileLearner(), new StreamingPercentileLearner(), new StreamingPercentileLearner() };
+        private readonly Dictionary<string, Calibration.TimeMovingAverage> _gearWheelSpeedDelta =
+            new Dictionary<string, Calibration.TimeMovingAverage>(StringComparer.Ordinal);
 
-        private readonly Dictionary<string, IValueDistributionLearner> _gearCruiseAverage =
-            new Dictionary<string, IValueDistributionLearner>(StringComparer.Ordinal);
+        private Calibration.TimeMovingAverage GetOrAddGearDelta(int wheelIndex, string gearKey)
+        {
+            string key = wheelIndex.ToString(System.Globalization.CultureInfo.InvariantCulture) + "|" + (gearKey ?? string.Empty);
+            if (!_gearWheelSpeedDelta.TryGetValue(key, out Calibration.TimeMovingAverage average))
+            {
+                average = new Calibration.TimeMovingAverage { MaxSamples = 1500.0, MaxTimeMs = 2000000000.0 };
+                _gearWheelSpeedDelta[key] = average;
+            }
+            return average;
+        }
 
         public LegacyWheelLockSlipResult Compute(
             ITelemetrySample sample, LegacyThresholds? thresholds = null,
@@ -107,7 +124,7 @@ namespace QAdvanceFeedback.Core.RawCalculator
 
                 double gateSpeed = groundSpeedOrFallback ?? 0.0;
                 double lockValue = Math.Abs(gateSpeed) > 1.0
-                    ? BrakingVsSpeedModel.ComputeWithLowSpeedFix(brakePercent, groundSpeedOrFallback, t.LockSensibility)
+                    ? BrakingVsSpeedModel.Compute(brakePercent, groundSpeedOrFallback, t.LockSensibility)
                     : 0.0;
                 // ABSENT-VS-ZERO (item 1): with no ground-speed reading at all this frame, there is
                 // nothing to evaluate BrakingVsSpeedModel against - the car-level reading is genuinely
@@ -231,12 +248,13 @@ namespace QAdvanceFeedback.Core.RawCalculator
 
             if (branch == WheelSlipBranchNames.BrakingVsSpeed)
                 return isLock
-                    ? BrakingVsSpeedModel.ComputeWithLowSpeedFix(newFrame?.BrakePercent, groundSpeedOrFallback, t.LockSensibility)
+                    ? BrakingVsSpeedModel.Compute(newFrame?.BrakePercent, groundSpeedOrFallback, t.LockSensibility)
                     : BrakingVsSpeedModel.ComputeSlipBrakingVsSpeed(newFrame?.BrakePercent, groundSpeedOrFallback);
 
             if (branch == WheelSlipBranchNames.Rps)
             {
-                IValueDistributionLearner pool = wheelIndex < 2 ? _rotationToSpeedFront : _rotationToSpeedRear;
+                // Per-AXLE, matching SimHub's own "RPSToSpeed" + Front/Rear metric split.
+                Calibration.ICalibrationData pool = _calibration.GetRpsToSpeedCalibration(_trackIdWithConfig, _carModel, wheelIndex < 2);
                 return DispatchBranchFormulas.LockFromLearnedRotationRatio(
                     WheelRotationRate(raw, wheelIndex), newFrame?.SpeedKmh, oldFrame?.SpeedKmh, pool, t.LockSensibility);
             }
@@ -246,10 +264,11 @@ namespace QAdvanceFeedback.Core.RawCalculator
 
             if (branch == WheelSlipBranchNames.SlipData)
             {
-                // FULL-LOCK FIDELITY FIX: Lock reads its own PER-WHEEL learner (see
-                // _lockSlipRatioPerWheel's own remarks); Slip is untouched, still reading the axle-pooled
-                // learner exactly as before.
-                IValueDistributionLearner pool = isLock ? _lockSlipRatioPerWheel[wheelIndex] : (wheelIndex < 2 ? _slipRatioFront : _slipRatioRear);
+                // ONE POOLED CALIBRATION FOR ALL FOUR WHEELS, and the same one for both channels - this
+                // is SimHub's own scoping (see Calibration.CalibrationDataProvider). It supersedes the
+                // former per-wheel Lock learners; the `front` argument is passed only so this call reads
+                // like SimHub's, and is ignored there exactly as it is here.
+                Calibration.ICalibrationData pool = _calibration.GetSlipCalibration(_trackIdWithConfig, _carModel, wheelIndex < 2);
                 return DispatchBranchFormulas.SlipFromLearnedDistribution(
                     WheelSlipRatio(raw, wheelIndex), pool, newFrame?.BrakePercent, raw.CapabilityWheelsRPS == true,
                     raw.WheelRpsFrontLeft, raw.WheelRpsFrontRight, raw.WheelRpsRearLeft, raw.WheelRpsRearRight);
@@ -258,12 +277,13 @@ namespace QAdvanceFeedback.Core.RawCalculator
             if (branch == WheelSlipBranchNames.WheelsSpeed)
             {
                 string gearKey = newFrame?.Gear ?? string.Empty;
-                IValueDistributionLearner gearLearner = GetOrAddGearLearner(gearKey);
-                double gearAverage = gearLearner.Average() ?? 0.0;
+                Calibration.TimeMovingAverage gearAverage = GetOrAddGearDelta(wheelIndex, gearKey);
                 return DispatchBranchFormulas.WheelSpeedVsGroundSpeedSlip(
                     isLock, WheelSpeed(raw, wheelIndex), WheelSpeed(raw, OppositeSide(wheelIndex)),
                     groundSpeedOrFallback, newFrame?.BrakePercent, newFrame?.ThrottlePercent, newFrame?.ClutchPercent,
-                    gearAverage, gearLearner.Count);
+                    gearAverage.CurrentAverage, gearAverage.Count,
+                    // Shipped per-game bounds and the airborne guard - 1.0.7.1, see the formula's remarks.
+                    _calibration.GameBounds, raw.IsFlying);
             }
 
             if (branch == WheelSlipBranchNames.RpmVsSpeedAssumedLegacy)
@@ -341,84 +361,51 @@ namespace QAdvanceFeedback.Core.RawCalculator
         {
             if (newFrame == null) return;
 
-            // Rotation-to-speed cruise reference: a light-throttle, moderate-to-high-speed cruise
-            // (low brake, meaningful speed) is the cleanest evidence of "what does an unlocked wheel's
-            // rotation rate look like relative to speed" for this car.
+            // SHAKEIT CALIBRATION FEEDING (1.0.7.1) - delegated wholesale to the ported provider,
+            // which reproduces SimHub's own Update(): the same global SpeedKmh > 2 gate, the same
+            // Brake < 5 && Speed > 50 cruise gate for the per-axle RPSToSpeed reference, the same
+            // |WheelRPS/SpeedKmh| and raw WheelSlip values, all four wheels pooled into ONE Slip
+            // calibration, and the same 'stop feeding past 7000 positive points' cap.
+            _calibration.Update(
+                _trackIdWithConfig, _carModel,
+                raw.CapabilityWheelsRPS == true, raw.CapabilityWheelsSlip == true,
+                newFrame.SpeedKmh, newFrame.BrakePercent,
+                new[] { raw.WheelRpsFrontLeft, raw.WheelRpsFrontRight, raw.WheelRpsRearLeft, raw.WheelRpsRearRight },
+                new[] { raw.WheelSlipRatioFrontLeft, raw.WheelSlipRatioFrontRight, raw.WheelSlipRatioRearLeft, raw.WheelSlipRatioRearRight });
+
             double? speedKmh = newFrame.SpeedKmh;
-            if ((newFrame.BrakePercent ?? 100.0) < 5.0 && speedKmh > 50.0)
+
+            // PER-WHEEL, PER-GEAR WHEEL-SPEED-DELTA REFERENCE (1.0.7.1). Three changes from the former
+            // single shared learner, all to match SimHub:
+            //   - one average PER WHEEL per gear, not one shared across all four;
+            //   - each wheel enqueues max(its own delta, its OPPOSITE-SIDE delta) - the previous code
+            //     used max(FrontLeft, RearRight), a diagonal, computed once for every wheel;
+            //   - the qualifying gate now also excludes cornering frames via yaw rate.
+            if (groundSpeedOrFallback.HasValue && Math.Abs(groundSpeedOrFallback.Value) > 1e-9)
             {
-                FeedRotationToSpeed(_rotationToSpeedFront, raw.WheelRpsFrontLeft, speedKmh.Value);
-                FeedRotationToSpeed(_rotationToSpeedFront, raw.WheelRpsFrontRight, speedKmh.Value);
-                FeedRotationToSpeed(_rotationToSpeedRear, raw.WheelRpsRearLeft, speedKmh.Value);
-                FeedRotationToSpeed(_rotationToSpeedRear, raw.WheelRpsRearRight, speedKmh.Value);
-            }
+                double groundSpeedMagnitude = Math.Abs(groundSpeedOrFallback.Value);
+                string cruiseGearKey = newFrame.Gear ?? string.Empty;
 
-            // Slip-ratio distribution: any frame with more than trivial ground speed is fair evidence
-            // of this signal's ordinary shape.
-            if (speedKmh > 2.0)
-            {
-                if (_slipRatioFront.Count < LearnerSampleCap)
+                for (int wheel = 0; wheel < 4; wheel++)
                 {
-                    if (raw.WheelSlipRatioFrontLeft.HasValue) _slipRatioFront.Observe(raw.WheelSlipRatioFrontLeft.Value);
-                    if (raw.WheelSlipRatioFrontRight.HasValue) _slipRatioFront.Observe(raw.WheelSlipRatioFrontRight.Value);
-                }
-                if (_slipRatioRear.Count < LearnerSampleCap)
-                {
-                    if (raw.WheelSlipRatioRearLeft.HasValue) _slipRatioRear.Observe(raw.WheelSlipRatioRearLeft.Value);
-                    if (raw.WheelSlipRatioRearRight.HasValue) _slipRatioRear.Observe(raw.WheelSlipRatioRearRight.Value);
-                }
+                    double? thisWheelSpeed = WheelSpeed(raw, wheel);
+                    double? oppositeWheelSpeed = WheelSpeed(raw, OppositeSide(wheel));
+                    if (!thisWheelSpeed.HasValue || !oppositeWheelSpeed.HasValue) continue;
 
-                // FULL-LOCK FIDELITY FIX: same gate, same values, but fed one-per-wheel instead of
-                // pooled per axle - see _lockSlipRatioPerWheel's own remarks. Lock-only; Slip keeps
-                // reading the pooled learners fed just above, untouched.
-                FeedPerWheelSlipRatio(Corners.FL, raw.WheelSlipRatioFrontLeft);
-                FeedPerWheelSlipRatio(Corners.FR, raw.WheelSlipRatioFrontRight);
-                FeedPerWheelSlipRatio(Corners.RL, raw.WheelSlipRatioRearLeft);
-                FeedPerWheelSlipRatio(Corners.RR, raw.WheelSlipRatioRearRight);
-            }
+                    double largestDelta = Math.Max(
+                        thisWheelSpeed.Value / groundSpeedMagnitude - 1.0,
+                        oppositeWheelSpeed.Value / groundSpeedMagnitude - 1.0);
 
-            // Gear-keyed cruise average for the wheel-speed-delta branch - see
-            // DispatchBranchFormulas.QualifiesAsGearCruiseSample's own remarks for the qualifying gate.
-            if (raw.WheelSpeedFrontLeft.HasValue && raw.WheelSpeedRearRight.HasValue && groundSpeedOrFallback.HasValue
-                && Math.Abs(groundSpeedOrFallback.Value) > 1e-9)
-            {
-                double deltaFrontLeft = raw.WheelSpeedFrontLeft.Value / Math.Abs(groundSpeedOrFallback.Value) - 1.0;
-                double deltaRearRight = raw.WheelSpeedRearRight.Value / Math.Abs(groundSpeedOrFallback.Value) - 1.0;
-                double largestDelta = Math.Max(deltaFrontLeft, deltaRearRight);
-
-                if (DispatchBranchFormulas.QualifiesAsGearCruiseSample(newFrame.BrakePercent, newFrame.ClutchPercent, newFrame.ThrottlePercent, groundSpeedOrFallback, largestDelta))
-                {
-                    string gearKey = newFrame.Gear ?? string.Empty;
-                    GetOrAddGearLearner(gearKey).Observe(largestDelta);
+                    if (DispatchBranchFormulas.QualifiesAsGearCruiseSample(
+                            newFrame.BrakePercent, newFrame.ClutchPercent, newFrame.ThrottlePercent,
+                            groundSpeedOrFallback, largestDelta, raw.OrientationYawChangePerSecond))
+                    {
+                        GetOrAddGearDelta(wheel, cruiseGearKey).Enqueue(largestDelta);
+                    }
                 }
             }
         }
 
-        private static void FeedRotationToSpeed(IValueDistributionLearner learner, double? wheelRotationRateHz, double speedKmh)
-        {
-            if (!wheelRotationRateHz.HasValue || learner.Count >= LearnerSampleCap) return;
-            learner.Observe(Math.Abs(wheelRotationRateHz.Value / speedKmh));
-        }
-
-        /// <summary>Feeds one wheel's own <see cref="_lockSlipRatioPerWheel"/> learner - see that
-        /// field's own remarks for why Lock needs a per-wheel reference distinct from Slip's axle-pooled
-        /// one.</summary>
-        private void FeedPerWheelSlipRatio(int wheelIndex, double? wheelSlipRatio)
-        {
-            if (!wheelSlipRatio.HasValue) return;
-            IValueDistributionLearner learner = _lockSlipRatioPerWheel[wheelIndex];
-            if (learner.Count < LearnerSampleCap) learner.Observe(wheelSlipRatio.Value);
-        }
-
-        private IValueDistributionLearner GetOrAddGearLearner(string gearKey)
-        {
-            if (!_gearCruiseAverage.TryGetValue(gearKey, out IValueDistributionLearner learner))
-            {
-                learner = new StreamingPercentileLearner();
-                _gearCruiseAverage[gearKey] = learner;
-            }
-            return learner;
-        }
 
         private static double? WheelRotationRate(RawWheelTelemetrySnapshot raw, int wheelIndex)
         {

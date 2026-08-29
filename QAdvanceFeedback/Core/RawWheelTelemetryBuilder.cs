@@ -30,7 +30,9 @@ namespace QAdvanceFeedback.Core
             bool? capabilitySpeed = null,
             bool? capabilityRpm = null,
             string capabilityGameFamily = null,
-            double? capabilityWheelSlipCalibrationProviderSlipScale = null)
+            double? capabilityWheelSlipCalibrationProviderSlipScale = null,
+            int isFlying = 0,
+            double? orientationYawChangePerSecond = null)
         {
             GateWheelArray(capabilityWheelsRPS, wheelRps,
                 out double? rpsFrontLeft, out double? rpsFrontRight, out double? rpsRearLeft, out double? rpsRearRight);
@@ -56,7 +58,11 @@ namespace QAdvanceFeedback.Core
                 capabilitySpeed: capabilitySpeed,
                 capabilityRpm: capabilityRpm,
                 capabilityGameFamily: capabilityGameFamily,
-                capabilityWheelSlipCalibrationProviderSlipScale: capabilityWheelSlipCalibrationProviderSlipScale);
+                capabilityWheelSlipCalibrationProviderSlipScale: capabilityWheelSlipCalibrationProviderSlipScale,
+                // Ungated: these are car-state readings, not per-wheel arrays, so there is no
+                // capability flag to gate them against - an absent value is simply its default.
+                isFlying: isFlying,
+                orientationYawChangePerSecond: orientationYawChangePerSecond);
         }
 
         /// <summary>

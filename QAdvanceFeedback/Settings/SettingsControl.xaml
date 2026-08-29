@@ -95,7 +95,7 @@
       <!-- ================================================================================ -->
       <TabItem x:Name="WheelLockTab">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <StackPanel>
+          <StackPanel Grid.IsSharedSizeScope="True">
             <!-- TRIGGER THRESHOLD - owner-requested restructure: promoted out of "Sources" into its
                  own section, ABOVE Sources, on both the Wheel Lock and Wheel Slip tabs (see
                  docs\lock-and-animation-report.md). Gates the WHOLE channel (Raw AND Normalized), not
@@ -169,6 +169,54 @@
                   <Button    Grid.Row="3" Grid.Column="3" x:Name="LockPickRr"/>
                 </Grid>
                 <Button x:Name="LockResetSources" Padding="16,4" HorizontalAlignment="Left"/>
+
+                <!-- KEY DATA POINTS (v1.0.7.2). Four columns, one Grid, so labels / controls / learned
+                     hints / descriptions all line up down the section. The learned-value hint has its own
+                     fixed-width monospace column precisely so "10.5" and "9.3" align. -->
+                <TextBlock x:Name="LockKeyDataHeader" FontWeight="Bold" Margin="4,14,4,4"/>
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="LockAlign"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
+
+                  <TextBlock     Grid.Row="0" Grid.Column="0" x:Name="LockKeyDataAutoLabel"/>
+                  <mah:ToggleSwitch  Grid.Row="0" Grid.Column="1" x:Name="LockKeyDataAutoToggle" HorizontalAlignment="Left" Margin="4"/>
+                  <TextBlock     Grid.Row="0" Grid.Column="3" x:Name="LockKeyDataAutoDesc" TextWrapping="Wrap" FontStyle="Italic"/>
+
+                  <TextBlock     Grid.Row="1" Grid.Column="0" x:Name="LockKeyDataPerGameLabel"/>
+                  <mah:ToggleSwitch  Grid.Row="1" Grid.Column="1" x:Name="LockKeyDataPerGameToggle" HorizontalAlignment="Left" Margin="4"/>
+                  <TextBlock     Grid.Row="1" Grid.Column="3" x:Name="LockKeyDataPerGameDesc" TextWrapping="Wrap" FontStyle="Italic"/>
+
+                  <TextBlock         Grid.Row="2" Grid.Column="0" x:Name="LockKeyDataSMaxLabel"/>
+                  <mah:NumericUpDown Grid.Row="2" Grid.Column="1" x:Name="LockKeyDataSMax" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" mah:TextBoxHelper.Watermark="---"/>
+                  <TextBlock         Grid.Row="2" Grid.Column="2" x:Name="LockKeyDataSMaxLearned" FontFamily="Consolas" Width="150"/>
+                  <TextBlock         Grid.Row="2" Grid.Column="3" x:Name="LockKeyDataSMaxDesc" TextWrapping="Wrap" FontStyle="Italic"/>
+
+                  <TextBlock         Grid.Row="3" Grid.Column="0" x:Name="LockKeyDataS90Label"/>
+                  <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="LockKeyDataS90" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" mah:TextBoxHelper.Watermark="---"/>
+                  <TextBlock         Grid.Row="3" Grid.Column="2" x:Name="LockKeyDataS90Learned" FontFamily="Consolas" Width="150"/>
+                  <TextBlock         Grid.Row="3" Grid.Column="3" x:Name="LockKeyDataS90Desc" TextWrapping="Wrap" FontStyle="Italic"/>
+
+                  <TextBlock         Grid.Row="4" Grid.Column="0" x:Name="LockKeyDataS75Label"/>
+                  <mah:NumericUpDown Grid.Row="4" Grid.Column="1" x:Name="LockKeyDataS75" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" mah:TextBoxHelper.Watermark="---"/>
+                  <TextBlock         Grid.Row="4" Grid.Column="2" x:Name="LockKeyDataS75Learned" FontFamily="Consolas" Width="150"/>
+                  <TextBlock         Grid.Row="4" Grid.Column="3" x:Name="LockKeyDataS75Desc" TextWrapping="Wrap" FontStyle="Italic"/>
+                </Grid>
+                <!-- Manual mode only - under Auto there is nothing for a driver to reset, since the
+                     values are whatever the plugin has learned. -->
+                <Button x:Name="LockKeyDataReset" Padding="16,4" HorizontalAlignment="Left"/>
+                <TextBlock x:Name="LockKeyDataStatus" TextWrapping="Wrap" FontStyle="Italic" Foreground="#C62828" Margin="4,4,4,0"/>
+
               </StackPanel>
             </GroupBox>
 
@@ -183,7 +231,7 @@
 
                 <Grid Margin="0,4,0,0">
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="LockAlign"/><ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
                   <Grid.RowDefinitions>
                     <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
@@ -211,29 +259,43 @@
               <StackPanel>
                 <!-- 1.0.6.0 (docs\release-1060-report.md, Part 2's UI half) - Wheel Lock ONLY, at the
                      TOP of this section; Wheel Slip has no equivalent control at all. -->
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock x:Name="LockLblNormalizePattern"/>
-                  <ComboBox x:Name="LockNormalizePatternCombo" HorizontalAlignment="Left">
+                <!-- ONE GRID so the two dropdowns line up (owner: "vertical align the DropDown of
+                     Normalize Pattern and Preset") - separate StackPanels sized their labels
+                     independently, so the combos started at different x positions. -->
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="LockAlign"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
+
+                  <TextBlock Grid.Row="0" Grid.Column="0" x:Name="LockLblNormalizePattern"/>
+                  <ComboBox  Grid.Row="0" Grid.Column="1" x:Name="LockNormalizePatternCombo" HorizontalAlignment="Left">
                     <ComboBoxItem x:Name="LockNormalizePatternMaxGripOnly" Tag="MaxGripOnly"/>
                     <ComboBoxItem x:Name="LockNormalizePatternMapping" Tag="Mapping"/>
                   </ComboBox>
-                </StackPanel>
-                <TextBlock x:Name="LockNormalizePatternDesc" TextWrapping="Wrap" FontStyle="Italic" Margin="0,0,0,8"/>
+                  <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" x:Name="LockNormalizePatternDesc" TextWrapping="Wrap" FontStyle="Italic" Margin="0,0,0,8"/>
 
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock x:Name="LockLblPreset"/>
-                  <ComboBox x:Name="LockPresetCombo" HorizontalAlignment="Left">
+                  <TextBlock Grid.Row="2" Grid.Column="0" x:Name="LockLblPreset"/>
+                  <ComboBox  Grid.Row="2" Grid.Column="1" x:Name="LockPresetCombo" HorizontalAlignment="Left">
                     <ComboBoxItem x:Name="LockPresetLinear" Tag="Linear"/>
                     <ComboBoxItem x:Name="LockPresetCurve" Tag="Curve"/>
+                    <ComboBoxItem x:Name="LockPresetLinearCustom" Tag="LinearCustom"/>
+                    <ComboBoxItem x:Name="LockPresetCurveCustom" Tag="CurveCustom"/>
                     <ComboBoxItem x:Name="LockPresetCustom" Tag="Custom"/>
                   </ComboBox>
-                </StackPanel>
+                </Grid>
 
                 <TextBlock x:Name="LockAnchorNoteText" TextWrapping="Wrap" FontStyle="Italic"/>
 
                 <Grid Margin="0,8,0,0">
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="LockAlign"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
                   </Grid.ColumnDefinitions>
                   <Grid.RowDefinitions>
                     <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
@@ -277,22 +339,51 @@
                   <TextBlock Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="5" x:Name="LockDescEnd" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
                 </Grid>
 
-                <Border BorderBrush="Gray" BorderThickness="1" Margin="4,8,4,4" HorizontalAlignment="Left">
-                  <Canvas x:Name="LockCurveCanvas" Width="420" Height="160" Background="White" ClipToBounds="True">
-                    <Polyline x:Name="LockCurvePolyline" Stroke="DodgerBlue" StrokeThickness="2"/>
-                    <Ellipse x:Name="LockStartMarker" Width="8" Height="8" Fill="Gray"/>
-                    <Ellipse x:Name="LockSlightlyMarker" Width="8" Height="8" Fill="Orange"/>
-                    <Ellipse x:Name="LockModerateMarker" Width="8" Height="8" Fill="DodgerBlue"/>
-                    <Ellipse x:Name="LockCriticalMarker" Width="8" Height="8" Fill="Red"/>
-                    <Ellipse x:Name="LockEndMarker" Width="8" Height="8" Fill="Gray"/>
-                  </Canvas>
-                </Border>
+                <!-- TWO GRAPHS SIDE BY SIDE (1.0.7.0). Left: what the curve rows above configure
+                     (normalized value -> final projected). Right: the whole chain a driver actually
+                     feels, source value -> projected, sampled every 5 and joined - there is no single
+                     closed form for it, since the key data points and the curve compose. Decorations
+                     (grid, ticks, key-point markers) are drawn in code so they track the live settings;
+                     see RenderGraphDecorations. -->
+                <StackPanel Orientation="Horizontal" Margin="4,8,4,0">
+                  <StackPanel>
+                    <Border BorderBrush="Gray" BorderThickness="1" HorizontalAlignment="Left">
+                      <Canvas x:Name="LockCurveCanvas" Width="420" Height="160" Background="White" ClipToBounds="True">
+                        <Polyline x:Name="LockCurvePolyline" Stroke="DodgerBlue" StrokeThickness="2"/>
+                        <Ellipse x:Name="LockStartMarker" Width="8" Height="8" Fill="Gray"/>
+                        <Ellipse x:Name="LockSlightlyMarker" Width="8" Height="8" Fill="Orange"/>
+                        <Ellipse x:Name="LockModerateMarker" Width="8" Height="8" Fill="DodgerBlue"/>
+                        <Ellipse x:Name="LockCriticalMarker" Width="8" Height="8" Fill="Red"/>
+                        <Ellipse x:Name="LockEndMarker" Width="8" Height="8" Fill="Gray"/>
+                      </Canvas>
+                    </Border>
+                    <TextBlock x:Name="LockCurveGraphCaption" HorizontalAlignment="Center" FontStyle="Italic" Margin="0,2,0,0"/>
+                  </StackPanel>
+
+                  <StackPanel Margin="12,0,0,0">
+                    <Border BorderBrush="Gray" BorderThickness="1" HorizontalAlignment="Left">
+                      <Canvas x:Name="LockSourceCanvas" Width="420" Height="160" Background="White" ClipToBounds="True">
+                        <Polyline x:Name="LockSourcePolyline" Stroke="Green" StrokeThickness="2" StrokeDashArray="6 3"/>
+                      </Canvas>
+                    </Border>
+                    <TextBlock x:Name="LockSourceGraphCaption" HorizontalAlignment="Center" FontStyle="Italic" Margin="0,2,0,0"/>
+                  </StackPanel>
+                </StackPanel>
               </StackPanel>
             </GroupBox>
 
             <GroupBox x:Name="LockPulseGroup">
               <StackPanel>
-                <CheckBox x:Name="LockPulseEnabled"/>
+                <!-- The switch sits on the tab's shared left edge, like every other control here;
+                     its caption stays a bold Header above, matching the Integrate feature switch. -->
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="LockAlign"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" x:Name="LockPulseEnabledLabel" TextWrapping="Wrap"/>
+                  <mah:ToggleSwitch Grid.Column="1" x:Name="LockPulseEnabled" HorizontalAlignment="Left" Margin="4"/>
+                </Grid>
                 <StackPanel Orientation="Horizontal">
                   <TextBlock x:Name="LockLblGapMs"/><mah:NumericUpDown x:Name="LockPulseGapMs" Minimum="200" Maximum="5000" Interval="50"/>
                   <TextBlock x:Name="LockLblMinValue"/><mah:NumericUpDown x:Name="LockPulseMinValue"/>
@@ -307,7 +398,7 @@
       <!-- ================================================================================ -->
       <TabItem x:Name="WheelSlipTab">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <StackPanel>
+          <StackPanel Grid.IsSharedSizeScope="True">
             <!-- TRIGGER THRESHOLD - see LockTriggerThresholdGroup's own remarks; identical layout,
                  independently for this channel (brake AND throttle, brake-priority unchanged). -->
             <GroupBox x:Name="SlipTriggerThresholdGroup">
@@ -369,6 +460,54 @@
                   <Button    Grid.Row="3" Grid.Column="3" x:Name="SlipPickRr"/>
                 </Grid>
                 <Button x:Name="SlipResetSources" Padding="16,4" HorizontalAlignment="Left"/>
+
+                <!-- KEY DATA POINTS (v1.0.7.2). Four columns, one Grid, so labels / controls / learned
+                     hints / descriptions all line up down the section. The learned-value hint has its own
+                     fixed-width monospace column precisely so "10.5" and "9.3" align. -->
+                <TextBlock x:Name="SlipKeyDataHeader" FontWeight="Bold" Margin="4,14,4,4"/>
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAlign"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
+
+                  <TextBlock     Grid.Row="0" Grid.Column="0" x:Name="SlipKeyDataAutoLabel"/>
+                  <mah:ToggleSwitch  Grid.Row="0" Grid.Column="1" x:Name="SlipKeyDataAutoToggle" HorizontalAlignment="Left" Margin="4"/>
+                  <TextBlock     Grid.Row="0" Grid.Column="3" x:Name="SlipKeyDataAutoDesc" TextWrapping="Wrap" FontStyle="Italic"/>
+
+                  <TextBlock     Grid.Row="1" Grid.Column="0" x:Name="SlipKeyDataPerGameLabel"/>
+                  <mah:ToggleSwitch  Grid.Row="1" Grid.Column="1" x:Name="SlipKeyDataPerGameToggle" HorizontalAlignment="Left" Margin="4"/>
+                  <TextBlock     Grid.Row="1" Grid.Column="3" x:Name="SlipKeyDataPerGameDesc" TextWrapping="Wrap" FontStyle="Italic"/>
+
+                  <TextBlock         Grid.Row="2" Grid.Column="0" x:Name="SlipKeyDataSMaxLabel"/>
+                  <mah:NumericUpDown Grid.Row="2" Grid.Column="1" x:Name="SlipKeyDataSMax" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" mah:TextBoxHelper.Watermark="---"/>
+                  <TextBlock         Grid.Row="2" Grid.Column="2" x:Name="SlipKeyDataSMaxLearned" FontFamily="Consolas" Width="150"/>
+                  <TextBlock         Grid.Row="2" Grid.Column="3" x:Name="SlipKeyDataSMaxDesc" TextWrapping="Wrap" FontStyle="Italic"/>
+
+                  <TextBlock         Grid.Row="3" Grid.Column="0" x:Name="SlipKeyDataS90Label"/>
+                  <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="SlipKeyDataS90" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" mah:TextBoxHelper.Watermark="---"/>
+                  <TextBlock         Grid.Row="3" Grid.Column="2" x:Name="SlipKeyDataS90Learned" FontFamily="Consolas" Width="150"/>
+                  <TextBlock         Grid.Row="3" Grid.Column="3" x:Name="SlipKeyDataS90Desc" TextWrapping="Wrap" FontStyle="Italic"/>
+
+                  <TextBlock         Grid.Row="4" Grid.Column="0" x:Name="SlipKeyDataS75Label"/>
+                  <mah:NumericUpDown Grid.Row="4" Grid.Column="1" x:Name="SlipKeyDataS75" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" mah:TextBoxHelper.Watermark="---"/>
+                  <TextBlock         Grid.Row="4" Grid.Column="2" x:Name="SlipKeyDataS75Learned" FontFamily="Consolas" Width="150"/>
+                  <TextBlock         Grid.Row="4" Grid.Column="3" x:Name="SlipKeyDataS75Desc" TextWrapping="Wrap" FontStyle="Italic"/>
+                </Grid>
+                <!-- Manual mode only - under Auto there is nothing for a driver to reset, since the
+                     values are whatever the plugin has learned. -->
+                <Button x:Name="SlipKeyDataReset" Padding="16,4" HorizontalAlignment="Left"/>
+                <TextBlock x:Name="SlipKeyDataStatus" TextWrapping="Wrap" FontStyle="Italic" Foreground="#C62828" Margin="4,4,4,0"/>
+
               </StackPanel>
             </GroupBox>
 
@@ -381,7 +520,7 @@
 
                 <Grid Margin="0,4,0,0">
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAlign"/><ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
                   <Grid.RowDefinitions>
                     <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
@@ -413,20 +552,43 @@
 
             <GroupBox x:Name="SlipCurveGroup">
               <StackPanel>
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock x:Name="SlipLblPreset"/>
-                  <ComboBox x:Name="SlipPresetCombo" HorizontalAlignment="Left">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAlign"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
+
+                  <!-- SLIP NOW HAS A PATTERN DROPDOWN TOO (v1.0.7.2). Its two entries are named for what
+                       Slip actually measures - Best Point Only / Perfect-Great-Good - rather than the
+                       grip-percentage names Lock uses. -->
+                  <TextBlock Grid.Row="0" Grid.Column="0" x:Name="SlipLblNormalizePattern"/>
+                  <ComboBox  Grid.Row="0" Grid.Column="1" x:Name="SlipNormalizePatternCombo" HorizontalAlignment="Left">
+                    <ComboBoxItem x:Name="SlipNormalizePatternMaxGripOnly" Tag="MaxGripOnly"/>
+                    <ComboBoxItem x:Name="SlipNormalizePatternMapping" Tag="Mapping"/>
+                  </ComboBox>
+                  <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" x:Name="SlipNormalizePatternDesc" TextWrapping="Wrap" FontStyle="Italic" Margin="0,0,0,8"/>
+
+                  <TextBlock Grid.Row="2" Grid.Column="0" x:Name="SlipLblPreset"/>
+                  <ComboBox  Grid.Row="2" Grid.Column="1" x:Name="SlipPresetCombo" HorizontalAlignment="Left">
                     <ComboBoxItem x:Name="SlipPresetLinear" Tag="Linear"/>
                     <ComboBoxItem x:Name="SlipPresetCurve" Tag="Curve"/>
+                    <ComboBoxItem x:Name="SlipPresetLinearCustom" Tag="LinearCustom"/>
+                    <ComboBoxItem x:Name="SlipPresetCurveCustom" Tag="CurveCustom"/>
                     <ComboBoxItem x:Name="SlipPresetCustom" Tag="Custom"/>
                   </ComboBox>
-                </StackPanel>
+                </Grid>
 
                 <TextBlock x:Name="SlipAnchorNoteText" TextWrapping="Wrap" FontStyle="Italic"/>
 
                 <Grid Margin="0,8,0,0">
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAlign"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
                   </Grid.ColumnDefinitions>
                   <Grid.RowDefinitions>
                     <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
@@ -470,22 +632,51 @@
                   <TextBlock Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="5" x:Name="SlipDescEnd" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
                 </Grid>
 
-                <Border BorderBrush="Gray" BorderThickness="1" Margin="4,8,4,4" HorizontalAlignment="Left">
-                  <Canvas x:Name="SlipCurveCanvas" Width="420" Height="160" Background="White" ClipToBounds="True">
-                    <Polyline x:Name="SlipCurvePolyline" Stroke="DodgerBlue" StrokeThickness="2"/>
-                    <Ellipse x:Name="SlipStartMarker" Width="8" Height="8" Fill="Gray"/>
-                    <Ellipse x:Name="SlipSlightlyMarker" Width="8" Height="8" Fill="Orange"/>
-                    <Ellipse x:Name="SlipModerateMarker" Width="8" Height="8" Fill="DodgerBlue"/>
-                    <Ellipse x:Name="SlipCriticalMarker" Width="8" Height="8" Fill="Red"/>
-                    <Ellipse x:Name="SlipEndMarker" Width="8" Height="8" Fill="Gray"/>
-                  </Canvas>
-                </Border>
+                <!-- TWO GRAPHS SIDE BY SIDE (1.0.7.0). Left: what the curve rows above configure
+                     (normalized value -> final projected). Right: the whole chain a driver actually
+                     feels, source value -> projected, sampled every 5 and joined - there is no single
+                     closed form for it, since the key data points and the curve compose. Decorations
+                     (grid, ticks, key-point markers) are drawn in code so they track the live settings;
+                     see RenderGraphDecorations. -->
+                <StackPanel Orientation="Horizontal" Margin="4,8,4,0">
+                  <StackPanel>
+                    <Border BorderBrush="Gray" BorderThickness="1" HorizontalAlignment="Left">
+                      <Canvas x:Name="SlipCurveCanvas" Width="420" Height="160" Background="White" ClipToBounds="True">
+                        <Polyline x:Name="SlipCurvePolyline" Stroke="DodgerBlue" StrokeThickness="2"/>
+                        <Ellipse x:Name="SlipStartMarker" Width="8" Height="8" Fill="Gray"/>
+                        <Ellipse x:Name="SlipSlightlyMarker" Width="8" Height="8" Fill="Orange"/>
+                        <Ellipse x:Name="SlipModerateMarker" Width="8" Height="8" Fill="DodgerBlue"/>
+                        <Ellipse x:Name="SlipCriticalMarker" Width="8" Height="8" Fill="Red"/>
+                        <Ellipse x:Name="SlipEndMarker" Width="8" Height="8" Fill="Gray"/>
+                      </Canvas>
+                    </Border>
+                    <TextBlock x:Name="SlipCurveGraphCaption" HorizontalAlignment="Center" FontStyle="Italic" Margin="0,2,0,0"/>
+                  </StackPanel>
+
+                  <StackPanel Margin="12,0,0,0">
+                    <Border BorderBrush="Gray" BorderThickness="1" HorizontalAlignment="Left">
+                      <Canvas x:Name="SlipSourceCanvas" Width="420" Height="160" Background="White" ClipToBounds="True">
+                        <Polyline x:Name="SlipSourcePolyline" Stroke="Green" StrokeThickness="2" StrokeDashArray="6 3"/>
+                      </Canvas>
+                    </Border>
+                    <TextBlock x:Name="SlipSourceGraphCaption" HorizontalAlignment="Center" FontStyle="Italic" Margin="0,2,0,0"/>
+                  </StackPanel>
+                </StackPanel>
               </StackPanel>
             </GroupBox>
 
             <GroupBox x:Name="SlipPulseGroup">
               <StackPanel>
-                <CheckBox x:Name="SlipPulseEnabled"/>
+                <!-- The switch sits on the tab's shared left edge, like every other control here;
+                     its caption stays a bold Header above, matching the Integrate feature switch. -->
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAlign"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" x:Name="SlipPulseEnabledLabel" TextWrapping="Wrap"/>
+                  <mah:ToggleSwitch Grid.Column="1" x:Name="SlipPulseEnabled" HorizontalAlignment="Left" Margin="4"/>
+                </Grid>
                 <StackPanel Orientation="Horizontal">
                   <TextBlock x:Name="SlipLblGapMs"/><mah:NumericUpDown x:Name="SlipPulseGapMs" Minimum="200" Maximum="5000" Interval="50"/>
                   <TextBlock x:Name="SlipLblMinValue"/><mah:NumericUpDown x:Name="SlipPulseMinValue"/>
@@ -500,30 +691,42 @@
       <!-- ================================================================================ -->
       <TabItem x:Name="GForceTab">
         <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <StackPanel>
+          <StackPanel Grid.IsSharedSizeScope="True">
             <GroupBox x:Name="GForceMaximaGroup">
               <StackPanel>
                 <TextBlock x:Name="GForceMaximaNote" TextWrapping="Wrap" FontStyle="Italic"/>
 
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock x:Name="GForceLblAccelMax"/>
-                  <ComboBox x:Name="GForceAccelModeCombo">
-                    <ComboBoxItem x:Name="GForceAccelModeFixed" Tag="Fixed"/>
-                    <ComboBoxItem x:Name="GForceAccelModeAuto" Tag="Auto"/>
-                  </ComboBox>
-                  <mah:NumericUpDown x:Name="GForceFixedAccelMax" Minimum="0.1" Maximum="10" Interval="0.1" StringFormat="0.00"/>
-                  <TextBlock x:Name="GForceAccelLearnedText" VerticalAlignment="Center" Margin="8,0,0,0"/>
-                </StackPanel>
+                <!-- ONE GRID, so the two rows line up column-for-column (owner: "align the maximum
+                     acc G and break G vertically"). Two StackPanels could not - each sized its own
+                     label independently, so the toggles and value boxes never lined up. -->
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="GForceAlign"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
 
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock x:Name="GForceLblDecelMax"/>
-                  <ComboBox x:Name="GForceDecelModeCombo">
-                    <ComboBoxItem x:Name="GForceDecelModeFixed" Tag="Fixed"/>
-                    <ComboBoxItem x:Name="GForceDecelModeAuto" Tag="Auto"/>
-                  </ComboBox>
-                  <mah:NumericUpDown x:Name="GForceFixedDecelMax" Minimum="0.1" Maximum="10" Interval="0.1" StringFormat="0.00"/>
-                  <TextBlock x:Name="GForceDecelLearnedText" VerticalAlignment="Center" Margin="8,0,0,0"/>
-                </StackPanel>
+                  <TextBlock          Grid.Row="0" Grid.Column="0" x:Name="GForceLblAccelMax"/>
+                  <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
+                    <TextBlock x:Name="GForceAccelAutoLabel"/>
+                    <mah:ToggleSwitch x:Name="GForceAccelAutoToggle" Margin="4"/>
+                  </StackPanel>
+                  <mah:NumericUpDown  Grid.Row="0" Grid.Column="2" x:Name="GForceFixedAccelMax" Minimum="0.1" Maximum="10" Interval="0.1" StringFormat="0.00"/>
+                  <TextBlock          Grid.Row="0" Grid.Column="3" x:Name="GForceAccelLearnedText" TextWrapping="Wrap"/>
+
+                  <TextBlock          Grid.Row="1" Grid.Column="0" x:Name="GForceLblDecelMax"/>
+                  <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
+                    <TextBlock x:Name="GForceDecelAutoLabel"/>
+                    <mah:ToggleSwitch x:Name="GForceDecelAutoToggle" Margin="4"/>
+                  </StackPanel>
+                  <mah:NumericUpDown  Grid.Row="1" Grid.Column="2" x:Name="GForceFixedDecelMax" Minimum="0.1" Maximum="10" Interval="0.1" StringFormat="0.00"/>
+                  <TextBlock          Grid.Row="1" Grid.Column="3" x:Name="GForceDecelLearnedText" TextWrapping="Wrap"/>
+                </Grid>
 
                 <TextBlock x:Name="GForceRecommendedHzText" TextWrapping="Wrap"/>
               </StackPanel>
@@ -534,7 +737,7 @@
                 <TextBlock x:Name="GForceSustainNote" TextWrapping="Wrap" FontStyle="Italic"/>
                 <Grid>
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="GForceAlign"/><ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
                   <Grid.RowDefinitions>
                     <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
@@ -560,7 +763,7 @@
                 <TextBlock x:Name="GForceMotionNote" TextWrapping="Wrap" FontStyle="Italic"/>
                 <Grid>
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="GForceAlign"/><ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
                   <Grid.RowDefinitions>
                     <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
@@ -587,13 +790,17 @@
 
             <GroupBox x:Name="GForceLateralGroup">
               <StackPanel>
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock x:Name="GForceLblLateralDirection"/>
-                  <ComboBox x:Name="GForceLateralDirectionCombo">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="GForceAlign"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" x:Name="GForceLblLateralDirection"/>
+                  <ComboBox Grid.Column="1" x:Name="GForceLateralDirectionCombo">
                     <ComboBoxItem x:Name="GForceLateralNormal" Tag="Normal"/>
                     <ComboBoxItem x:Name="GForceLateralReversed" Tag="Reversed"/>
                   </ComboBox>
-                </StackPanel>
+                </Grid>
                 <TextBlock x:Name="GForceLateralDirectionNote" TextWrapping="Wrap" FontStyle="Italic"/>
               </StackPanel>
             </GroupBox>
@@ -610,7 +817,7 @@
 
                 <Grid>
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="GForceAlign"/><ColumnDefinition Width="Auto"/>
                   </Grid.ColumnDefinitions>
                   <Grid.RowDefinitions>
                     <RowDefinition/><RowDefinition/><RowDefinition/>
@@ -637,17 +844,34 @@
           <StackPanel>
             <GroupBox x:Name="GeneralGroup">
               <StackPanel>
-                <CheckBox x:Name="EnableDiagnosticsCheckBox"/>
+                <TextBlock x:Name="EnableDiagnosticsHeader" FontWeight="Bold" FontSize="14" Margin="4,4,4,0"/>
+                <mah:ToggleSwitch x:Name="EnableDiagnosticsCheckBox" HorizontalAlignment="Left"/>
                 <TextBlock x:Name="EnableDiagnosticsNote" TextWrapping="Wrap" FontStyle="Italic" Margin="20,0,4,4"/>
                 <TextBlock x:Name="EnableDiagnosticsRestartNote" TextWrapping="Wrap" FontWeight="Bold" Margin="20,0,4,8"/>
 
-                <CheckBox x:Name="ExportCsvCheckBox"/>
+                <TextBlock x:Name="ExportCsvHeader" FontWeight="Bold" FontSize="14" Margin="4,4,4,0"/>
+                <mah:ToggleSwitch x:Name="ExportCsvCheckBox" HorizontalAlignment="Left"/>
                 <TextBlock x:Name="ExportCsvNote" TextWrapping="Wrap" FontStyle="Italic" Margin="20,0,4,4"/>
 
                 <!-- 1.0.6.0 (docs\release-1060-report.md, Part 4f) - read from the running assembly's
                      own version at display time (SettingsControl.xaml.cs's LocalizeStaticText), never
                      hardcoded, so this label can never drift from the DLL actually loaded. -->
                 <TextBlock x:Name="GeneralVersionText" TextWrapping="Wrap" Margin="4,8,4,4"/>
+              </StackPanel>
+            </GroupBox>
+
+            <!-- SHAKEIT REFERENCE DATA IMPORT (1.0.7.1). Layer 3 reproduces ShakeIt's arithmetic
+                 exactly; the one input we cannot ship is SimHub's own precalibration file. Importing it
+                 from the local SimHub installation is what makes our Raw values and ShakeIt's agree by
+                 construction - see ShakeItPrecalibrationConverter. -->
+            <GroupBox x:Name="ShakeItImportGroup">
+              <StackPanel>
+                <TextBlock x:Name="ShakeItImportNote" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,6"/>
+                <TextBlock x:Name="ShakeItImportOverrideHeader" FontWeight="Bold" FontSize="14" Margin="4,4,4,0"/>
+                <mah:ToggleSwitch x:Name="ShakeItImportOverrideCheckBox" HorizontalAlignment="Left"/>
+                <TextBlock x:Name="ShakeItImportOverrideNote" TextWrapping="Wrap" FontStyle="Italic" Margin="20,0,4,6"/>
+                <Button x:Name="ShakeItImportButton" HorizontalAlignment="Left" Margin="4,0,4,4" Padding="8,2"/>
+                <TextBlock x:Name="ShakeItImportResultText" TextWrapping="Wrap" Margin="4,4,4,4" Visibility="Collapsed"/>
               </StackPanel>
             </GroupBox>
 

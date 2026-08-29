@@ -11,7 +11,7 @@ namespace QAdvanceFeedback.Core.RawCalculator
     /// <para/>
     /// SHAPE: a brake factor and a speed factor (each 0-1, saturating at their own configured ceiling)
     /// are multiplied together, then reshaped through a sensitivity threshold so a driver can decide how
-    /// early a nonzero reading should appear. <see cref="ComputeWithLowSpeedFix"/> additionally guards
+    /// early a nonzero reading should appear. <see cref="Compute"/> is a faithful port of SimHub's own
     /// against a structural gap in that reshaping at low speed - see its own remarks.
     /// </summary>
     internal static class BrakingVsSpeedModel
@@ -23,9 +23,11 @@ namespace QAdvanceFeedback.Core.RawCalculator
 
         /// <summary>Ground speed, km/h, above which the speed factor is considered fully saturated.
         /// Deliberately well below highway speed: this formula is meant to respond fully across the
-        /// ordinary braking-zone speed range, not only at very high speed. This ceiling is also the
-        /// reason a genuine low-speed lockup needs the dedicated fix below - see
-        /// <see cref="ComputeWithLowSpeedFix"/>.</summary>
+        /// ordinary braking-zone speed range, not only at very high speed. Together with the sensitivity
+        /// threshold this ceiling is also what makes the branch silent below the dead zone
+        /// (threshold x this value, 15 km/h at default sensitivity) - a real blind spot, and a
+        /// deliberate one since 1.0.7.1: see <see cref="Compute"/> for why the floor that used to cover
+        /// it was removed.</summary>
         public const double SpeedFullKmh = 30.0;
 
         /// <summary>The reshaping threshold (as a percentage of full scale) when the driver-facing lock
@@ -69,51 +71,31 @@ namespace QAdvanceFeedback.Core.RawCalculator
         }
 
         /// <summary>
-        /// The plain brake x speed model, reshaped by sensitivity - car-level, 0-1 native scale.
-        /// Deliberately not what <see cref="RawCalculatorEngine"/> actually calls for the Lock channel
-        /// - see <see cref="ComputeWithLowSpeedFix"/> for the one deviation this Raw layer applies.
+        /// The brake x speed model, reshaped by sensitivity - car-level, 0-1 native scale. A faithful
+        /// port of SimHub's own <c>WheelSlipEffect.GetSimpleBraking</c> Lock path, and since 1.0.7.1 the
+        /// ONLY thing this branch calls.
+        /// <para/>
+        /// A "LOW-SPEED FIX" USED TO SIT ON TOP OF THIS, AND WAS REMOVED - do not reintroduce it without
+        /// re-reading this. Because brake and speed are multiplied BEFORE reshaping, a fully-committed
+        /// brake at the default sensitivity reads exactly 0 at or below 15 km/h (threshold 0.5 x
+        /// SpeedFullKmh 30). That looks like a blind spot, and an earlier revision added a brake-only
+        /// floor ramped across the same dead zone, taking Math.Max of the two.
+        /// <para/>
+        /// It was removed because it is not what ShakeIt does, and the divergence was severe rather than
+        /// cosmetic - measured across the range, at 15 km/h under braking SimHub publishes 0 where the
+        /// floor published 100, and the two only reconverge at 30 km/h:
+        /// <code>
+        ///   speed km/h :   5     10     15     20     25     30
+        ///   SimHub     : 0.0    0.0    0.0   33.3   66.7  100.0
+        ///   with floor : 33.3  66.7  100.0  100.0  100.0  100.0
+        /// </code>
+        /// In effect the floor removed SPEED from the Lock formula below 30 km/h. Layer 3's contract is
+        /// to reproduce ShakeIt exactly; a perceived improvement that makes Raw and ShakeIt disagree by
+        /// up to 100 points belongs in the Projected layer's own curve, not here.
         /// </summary>
         public static double Compute(double? brakePercent, double? speedKmh, double lockSensibility)
             => Reshape(BrakeFactor(brakePercent) * SpeedFactor(speedKmh), SensitivityThreshold(lockSensibility));
 
-        /// <summary>
-        /// THE LOW-SPEED FIX. Because <see cref="Compute"/> multiplies the brake and speed factors
-        /// together BEFORE reshaping, a fully-committed brake (factor 1.0) at the DEFAULT sensitivity
-        /// (threshold 0.5) still reads exactly 0 for any speed at or below 15 km/h (0.5 x 30) - a real,
-        /// hard, low-speed lockup would otherwise never register at all, regardless of brake pressure.
-        /// <para/>
-        /// FIX: alongside the faithful brake x speed reading, also reshape the BRAKE FACTOR ALONE
-        /// (i.e. as if speed were already at or above <see cref="SpeedFullKmh"/>), then ramp that
-        /// brake-only reading up from zero as speed approaches the SAME dead-zone boundary the sensitivity
-        /// threshold implies (<c>threshold * SpeedFullKmh</c>) - not an arbitrary extra constant, but the
-        /// boundary already embedded in the existing formula. Taking the larger of the two readings means
-        /// this NEVER reduces what the plain model alone would already produce; it only adds coverage
-        /// exactly where the plain model is structurally blind.
-        /// <para/>
-        /// CONTINUITY: the low-speed floor ramps linearly from 0 at a standstill up to the brake-only
-        /// reshaped value at the dead-zone boundary, then holds flat rather than cutting back to zero -
-        /// a hard cutoff would produce a one-frame "click" right at the boundary, which is exactly the
-        /// kind of discontinuity a haptic cue must avoid. The floor and the faithful reading converge
-        /// exactly at <see cref="SpeedFullKmh"/> itself, so the two hand off with no seam.
-        /// <para/>
-        /// The floor is gated by the SAME sensitivity reshaping as the faithful reading, so a light dab
-        /// on the brake still produces no floor contribution at any speed - only a firmly-committed
-        /// brake does.
-        /// </summary>
-        public static double ComputeWithLowSpeedFix(double? brakePercent, double? speedKmh, double lockSensibility)
-        {
-            double threshold = SensitivityThreshold(lockSensibility);
-
-            double faithfulReading = Reshape(BrakeFactor(brakePercent) * SpeedFactor(speedKmh), threshold);
-            double brakeOnlyReading = Reshape(BrakeFactor(brakePercent), threshold);
-
-            double deadZoneKmh = threshold * SpeedFullKmh;
-            double lowSpeedFloor = deadZoneKmh > 1e-9
-                ? brakeOnlyReading * MathHelpers.Clamp(speedKmh ?? 0.0, 0.0, deadZoneKmh) / deadZoneKmh
-                : brakeOnlyReading;
-
-            return Math.Max(faithfulReading, lowSpeedFloor);
-        }
 
         /// <summary>
         /// The Slip-channel counterpart: a plain brake x speed product with NO sensitivity reshaping -

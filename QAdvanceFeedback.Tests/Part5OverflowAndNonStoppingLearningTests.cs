@@ -183,51 +183,64 @@ namespace QAdvanceFeedback.Tests
         // life of a session. Fixed by wiring the gate into both call sites; this pins that fix.
         // ------------------------------------------------------------------------------------
 
+        // ------------------------------------------------------------------------------------
+        // INVERTED BY THE FORGETTING-DISTRIBUTION FIX, and kept rather than deleted.
+        //
+        // These two tests used to pin the OPPOSITE property: that both tiers STOP folding in new samples
+        // past MaxSamples (7000). That cap was borrowed by analogy from SimHub's own Raw-layer
+        // CalibrationPointsAdded gate, and it turned out to freeze the distribution outright - after
+        // roughly two minutes of engaged driving nothing could change it again, so a scale ceiling that
+        // had settled high could never come back down when the car, tyres or conditions changed.
+        // Measured before the fix: a learner settled at 90, fed ten times as much evidence at 30, did not
+        // move at all.
+        //
+        // The cap's real job - bounding how much influence any one stretch of driving retains - is now
+        // done by the histogram's own decay (OnlineDistributionLearner._histogram), which also keeps
+        // memory bounded, since the bucket count is bounded by rounding rather than by sample count.
+        // Note the class name: NON-STOPPING learning is what these now assert, which is what it always
+        // should have meant.
+        // ------------------------------------------------------------------------------------
+
         [Fact]
-        public void KeyedScaleLearner_physical_anchor_tier_stops_folding_in_new_samples_past_MaxSamples()
+        public void KeyedScaleLearner_physical_anchor_tier_keeps_learning_past_MaxSamples()
         {
             var learner = new KeyedScaleLearner();
             for (int i = 0; i < OnlineDistributionLearner.MaxSamples + 50; i++)
-                learner.ObserveAtPhysicalLimit(Game, Car, Source, 80.0 + i * 1e-6);
+                learner.ObserveAtPhysicalLimit(Game, Car, Source, 80.0);
 
             var physicalAnchorField = typeof(KeyedScaleLearner).GetField("_physicalAnchor",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             var store = (System.Collections.Generic.Dictionary<string, OnlineDistributionLearner>)physicalAnchorField.GetValue(learner);
-            string key = KeyedGripLearner.MakeKey(Game, Car, Source);
-            OnlineDistributionLearner inner = store[key];
-
-            // The gate freezes Count at exactly MaxSamples, never above it.
-            Assert.Equal(OnlineDistributionLearner.MaxSamples, inner.Count);
+            OnlineDistributionLearner inner = store[KeyedGripLearner.MakeKey(Game, Car, Source)];
 
             double averageAtCap = inner.GetAverage().Value;
-            // Genuinely new, very different evidence past the cap must NOT move the average at all - the
-            // gate stops folding new samples in entirely (unlike the pure overflow guards above, whose
-            // counters saturate but whose underlying averages keep learning) - this mirrors SimHub's own
-            // real "stop learning after 7000 points" convention, not merely an int-overflow guard.
-            for (int i = 0; i < 50; i++) learner.ObserveAtPhysicalLimit(Game, Car, Source, 500.0);
-            Assert.Equal(averageAtCap, inner.GetAverage().Value, 9);
-            Assert.Equal(OnlineDistributionLearner.MaxSamples, inner.Count);
+            Assert.Equal(80.0, averageAtCap, 6);
+
+            // Genuinely new, very different evidence past the old cap MUST now move the average.
+            for (int i = 0; i < 2000; i++) learner.ObserveAtPhysicalLimit(Game, Car, Source, 500.0);
+            Assert.True(inner.GetAverage().Value > averageAtCap + 1.0,
+                $"learning must not stop at MaxSamples - was {averageAtCap}, now {inner.GetAverage().Value}");
         }
 
         [Fact]
-        public void KeyedScaleLearner_general_tier_stops_folding_in_new_samples_past_MaxSamples()
+        public void KeyedScaleLearner_general_tier_keeps_learning_past_MaxSamples()
         {
             var learner = new KeyedScaleLearner();
             for (int i = 0; i < OnlineDistributionLearner.MaxSamples + 50; i++)
-                learner.ObserveGeneral(Game, Car, Source, 40.0 + i * 1e-6);
+                learner.ObserveGeneral(Game, Car, Source, 40.0);
 
             var generalField = typeof(KeyedScaleLearner).GetField("_generalDistribution",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             var store = (System.Collections.Generic.Dictionary<string, OnlineDistributionLearner>)generalField.GetValue(learner);
-            string key = KeyedGripLearner.MakeKey(Game, Car, Source);
-            OnlineDistributionLearner inner = store[key];
+            OnlineDistributionLearner inner = store[KeyedGripLearner.MakeKey(Game, Car, Source)];
 
-            Assert.Equal(OnlineDistributionLearner.MaxSamples, inner.Count);
+            double percentileAtCap = inner.GetPercentile(99.0).Value;
+            Assert.Equal(40.0, percentileAtCap, 6);
 
-            double averageAtCap = inner.GetAverage().Value;
-            for (int i = 0; i < 50; i++) learner.ObserveGeneral(Game, Car, Source, 900.0);
-            Assert.Equal(averageAtCap, inner.GetAverage().Value, 9);
-            Assert.Equal(OnlineDistributionLearner.MaxSamples, inner.Count);
+            // The percentile must be able to follow a genuine change, in either direction.
+            for (int i = 0; i < 60000; i++) learner.ObserveGeneral(Game, Car, Source, 90.0);
+            Assert.True(inner.GetPercentile(99.0).Value > percentileAtCap + 1.0,
+                $"the distribution must not freeze at MaxSamples - was {percentileAtCap}, now {inner.GetPercentile(99.0).Value}");
         }
     }
 }

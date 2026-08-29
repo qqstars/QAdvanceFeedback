@@ -109,8 +109,8 @@ and you only need the advanced one if you want it.
    motor rig), and/or import whichever profile under **[`docs/setup/G-Force/`](docs/setup/G-Force/)**
    matches your 8-channel pad if you're driving HF-8/SensitHaptics pad (or any ShakeIt BaseShaker rig).
 
-That's it — both wheel lock/slip and G-force work straight out of the box on this plugin's own Manual
-source, with no further SimHub configuration required.
+That's it — both wheel lock/slip and G-force work straight out of the box on this plugin's own
+**Plugin Internal** source, with no further SimHub configuration required.
 
 ### The advanced path
 
@@ -119,8 +119,8 @@ of this plugin's built-in one, additionally:
 
 1. Enable the **ShakeIt Motors** plugin and import the same **[`QAdvanceFeedback - WheelLockSlip.siprofile`](docs/setup/QAdvanceFeedback%20-%20WheelLockSlip.siprofile)**
    there — this generates the ShakeIt legacy-iRacing wheel lock/slip properties this plugin can read from.
-2. In this plugin's Wheel Lock / Wheel Slip settings, switch the source mode from **"Manual"** to
-   **"Use ShakeIt output properties"**.
+2. In this plugin's Wheel Lock / Wheel Slip settings, switch the source mode from **"Plugin Internal"**
+   to **"ShakeIt Plugin Output Properties"**.
 
 Everything else — the curve, the pulse, the G-force feel — works exactly the same regardless of which
 source mode you pick.
@@ -152,6 +152,12 @@ tuning.
 
 ![The General tab](docs/images/settings-general.png)
 
+The **ShakeIt Reference Data** section imports SimHub's own per-game calibration file so the Raw values
+match ShakeIt's for every game that file covers. It runs automatically the first time the plugin starts
+with no calibration of its own, and again after a SimHub update ships new data, so you normally never
+need the button. The automatic import never overwrites anything this plugin has already learned —
+only ticking **Override current data if exists?** and pressing the button does that.
+
 ### Wheel Lock and Wheel Slip
 
 - Want the vibration to kick in later? **Raise the trigger threshold.**
@@ -168,10 +174,55 @@ tuning.
 - Want a lock-up to feel more urgent than a flat buzz? **Enable "pulse instead of holding flat at
   maximum"** for an ABS-like pulsing feel once you hit full lock/slip.
 
+#### Key Data Points (1.0.7.0)
+
+Each channel's **Key Data Points** section sets the source values the plugin treats as your grip
+limit and the two steps below it — Max-Grip / 90% / 75% for Wheel Lock, and Perfect / Great / Good
+for Wheel Slip.
+
+- **Auto Generate is on by default**, and you can leave it there. The plugin learns these points from
+  your own driving.
+- **Learning never stops.** Turning Auto off does not stop it — it only changes which numbers get
+  published. That is why each row still shows a live `[Learned Value: xx.x]` hint next to your own
+  value, and why switching back to Auto is instant rather than a fresh cold start.
+- **Your values do not apply immediately.** They take effect once the session has finished calibrating
+  *and* you have driven for 30 seconds — whichever takes longer. The boxes stay disabled until then, so
+  an edit can never silently fail to take effect. Paused time does not count.
+- **Per-Game** (manual mode only) keeps a separate set for each title instead of one shared set. Values
+  are stored per *source* as well, so pointing a channel at a different property loads that source's own
+  numbers rather than carrying the previous one's across.
+- **The first usable learned value is written in for you, once**, and saved immediately — per game if
+  Per-Game is on, so a title you have never played sets itself up on its first drive. After that your
+  edits are authoritative.
+- **A "Reset to default" button appears in manual mode** (hidden under Auto, where there is nothing to
+  reset). For a source the plugin recognises it writes the shipped defaults; for one it does not — a
+  script or an NCalc expression, which has no honest default — it clears the values instead, so the next
+  valid learned value fills them in for you.
+- **Restore to Default never clears these.** Everything else on the page resets; your key data points,
+  for every game and every source, are left alone.
+- Under **Max-Grip Only** (Wheel Lock) or **Perfect Point Only** (Wheel Slip) the two lower rows are
+  hidden and kept derived from the top one behind the scenes, so switching back to the three-point
+  mapping never finds them stale.
+- **Wheel Slip under Auto is always Perfect Point Only**, and the selector is locked to say so. Slip has
+  no way to measure its Great and Good points — they can only be derived from the Perfect point — so
+  offering the three-point mapping while the plugin generates the values itself would present derived
+  numbers as though they had been measured. Switch to manual and the choice becomes real again. Wheel
+  Lock measures all three, so both patterns stay available there.
+
+#### Reading the two curve graphs
+
+The **left** graph is what the rows above configure: normalized value in, final projected value out. The
+dashed vertical lines mark where your key data points land on that axis — S75/S90/Max-Grip, or just
+Max-Grip under Max-Grip Only (Perfect/Great/Good for Wheel Slip).
+
+The **right** graph is the whole chain a driver actually feels: **source value straight through to the
+projected output**. It has no single formula — the key data points and the curve compose — so it is
+sampled every 5 across the range and the points joined.
+
 ### G-Force
 
-- If you'd rather not let the plugin learn your car's maximum G automatically, **set the maximum G to a
-  fixed value** instead of Auto.
+- If you'd rather not let the plugin learn your car's maximum G automatically, **turn the Auto toggle
+  off** and type a fixed maximum G instead.
 - In Auto mode, the "Auto detected" readout refreshes about once a second while the settings panel is
   open, so it will show real numbers partway through your first lap rather than only the very next time
   you reopen the panel.
@@ -204,7 +255,7 @@ At a glance, here is what each subsystem is built on and why:
 
 | Subsystem | Core algorithms / mechanisms | What it's for |
 |---|---|---|
-| **Wheel Lock Raw** / **Wheel Slip Raw** | Reproduces SimHub's own legacy-iRacing RPM/speed-derived lock and slip formula exactly, dispatched per title across several branch-specific models (wheel rotation rate, wheel-speed delta, pre-calibrated slip, a learned percentile distribution, or a brake+speed+RPM fallback when no per-wheel telemetry exists) selected by capability flags, then combined per wheel-group by a physically-motivated Max/Min axle blend plus a front/rear weighted blend. | The faithful, unnormalized reproduction of SimHub's own well-known algorithm — the common reference point everything else in this plugin builds on. |
+| **Wheel Lock Raw** / **Wheel Slip Raw** | Reproduces SimHub's own ShakeIt Motors algorithm, dispatched per title across the same nine capability-selected branches SimHub uses (wheel rotation rate, wheel-speed delta, pre-calibrated slip, a calibrated percentile distribution, or a brake+speed+RPM fallback when no per-wheel telemetry exists), then combined per wheel-group by a physically-motivated Max/Min axle blend plus a front/rear weighted blend. Since 1.0.7.0 the calibration behind those branches is a port of SimHub's own — same histogram, same gates, same shipped-preset blend — so the two agree on values, not just on formulas. | The faithful, unnormalized reproduction of SimHub's own well-known algorithm — the common reference point everything else in this plugin builds on. |
 | **Wheel Lock/Slip Normalizer** | Re-scales Raw's per-wheel shape against a per-(game, car, source) learned physical-grip reference (a deliberately slow-converging EMA, so a single spike is never mistaken for the car's real limit), cross-calibrated per source via a scale learner anchored to rare, independently-detected "at the physical limit" moments, blended between this session's live evidence and a persisted prior session's value by how *consistent* (not just how numerous) the live evidence has been. | Makes "60" mean the same thing — "right at the limit" — in every car, instead of a number whose meaning drifts with how grippy that particular car happens to be. |
 | **Wheel Lock/Slip Projector** | Pushes the normalized 0–100 value through a driver-editable five-anchor curve, smoothed with monotone cubic interpolation so the output can never dip as the input rises, plus an optional pulse-at-maximum stage. | Turns "how severe is this, numerically" into "exactly how this should feel" — the one property tier meant to be bound to a shaker. |
 | **G-Force** | A washout-style model that splits a *sustained* G level from a *rate-driven* transient, so a rising G pushes the felt sensation further along a pad chain than the same steady G would; per-game/per-car maxima are learned via a trimmed-pool robust estimator (excludes the top outliers, blends the remaining pool's max and mean) over a real-time rolling window; wheel lock/slip optionally superimposes an alternating left/right shake on top. | Gives a seat pad a continuous, directional sense of braking/accelerating/cornering load, independent of and complementary to the wheel channels. |
@@ -235,9 +286,13 @@ machine with no SimHub installed.
   repository — `lib/` is git-ignored, and `tools/fetch-simhub-refs.sh` extracts them fresh from the
   official SimHub installer for anyone building from source.
 - The Wheel Lock/Wheel Slip Raw algorithm deliberately reproduces the behavior of SimHub's own ShakeIt
-  legacy-iRacing wheel-slip effect, for compatibility of feel with an algorithm SimHub users already
+  Motors wheel-slip effect, for compatibility of feel with an algorithm SimHub users already
   know — studied via the shipped `SimHub.Plugins.dll` to confirm the arithmetic exactly,
   not reverse-engineered from guesswork.
+- **SimHub's own per-game calibration data is not redistributed here either.** That file ships with
+  SimHub and is SimHub's to distribute. The plugin imports it from your own SimHub installation
+  instead — automatically on start-up, and on demand from the General tab. Without it the Raw values
+  still work; they simply calibrate from scratch, exactly as ShakeIt itself does on a fresh install.
 - The G-force model's "washout" design — splitting a sustained level from a rate-driven transient, each
   with its own time constant — is adapted from the classical motion-cuing literature used in
   full-motion simulator rigs. This plugin borrows the *idea* (two filtered paths combined, not a literal

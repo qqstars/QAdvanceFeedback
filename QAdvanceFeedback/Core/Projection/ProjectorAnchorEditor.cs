@@ -15,6 +15,27 @@ namespace QAdvanceFeedback.Core.Projection
     /// </summary>
     public static class ProjectorAnchorEditor
     {
+        /// <summary>
+        /// The "edited" state that corresponds to whichever base shape is currently selected, so an edit
+        /// records WHICH preset it departed from instead of collapsing every edit into one anonymous
+        /// "Custom". An already-custom preset stays as it is.
+        /// </summary>
+        private static ProjectorPreset CustomVariantOf(ProjectorPreset current)
+        {
+            switch (current)
+            {
+                case ProjectorPreset.Linear:
+                case ProjectorPreset.LinearCustom:
+                    return ProjectorPreset.LinearCustom;
+                case ProjectorPreset.Curve:
+                case ProjectorPreset.CurveCustom:
+                    return ProjectorPreset.CurveCustom;
+                default:
+                    // Legacy Custom from an older save - leave it alone rather than guess a base.
+                    return ProjectorPreset.Custom;
+            }
+        }
+
         public static double GetRaw(ProjectorSettings settings, AnchorSlot slot)
         {
             if (settings == null) throw new ArgumentNullException(nameof(settings));
@@ -62,7 +83,7 @@ namespace QAdvanceFeedback.Core.Projection
                 case AnchorSlot.Critical: settings.CriticalInput = value.Value; break;
                 case AnchorSlot.End: settings.EndInput = value.Value; break;
             }
-            settings.Preset = ProjectorPreset.Custom;
+            settings.Preset = CustomVariantOf(settings.Preset);
         }
 
         /// <summary>
@@ -85,7 +106,7 @@ namespace QAdvanceFeedback.Core.Projection
                 case AnchorSlot.Critical: settings.CriticalOutput = value.Value; break;
                 case AnchorSlot.End: settings.EndOutput = value.Value; break;
             }
-            settings.Preset = ProjectorPreset.Custom;
+            settings.Preset = CustomVariantOf(settings.Preset);
         }
     }
 }

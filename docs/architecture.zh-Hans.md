@@ -39,6 +39,8 @@
 
 **功能：** `QAdvanceFeedback.Core.RawCalculator`——把一个遥测采样转换成发布的 `WheelLock.Raw.*`/`WheelSlip.Raw.*` 属性。`WheelSlipBranchSelector`（位于 `Core` 而非 `RawCalculator`，因为它只是对公开能力标志位的纯布尔优先级判断，不涉及任何具体公式）决定某款游戏支持哪种信号形态；`RawCalculatorEngine` 负责调度到匹配的公式，并持有每一个有状态的学习器。按设计未归一化——这里的「40」在不同车上含义不同，这个问题在上一层才会被修正。
 
+**保真契约（1.0.7.0）：** 本层的职责是复现 SimHub ShakeIt Motors 插件实际发布的数值，使两者体感一致。自 1.0.7.0 起，标定（calibration）机制不再是“功能相似的自有实现”，而是 SimHub 自身实现的忠实移植，见 `Core\RawCalculator\Calibration\`：直方图及其自适应分桶阶梯、500 个正样本的百分位门槛、`Math.Max(1.0, Max * 0.9) * pct / 100` 的未成熟回退公式、`track;car;metric` 键、7000 点的写入上限，以及与预置数据固定 0.25 的混合比例，均来自 SimHub，并已对随包发布的 `SimHub.Plugins.dll` 逐一核实。**仅保留两处有意为之的偏离**，且均在调用处有说明：平滑滤波器经过 dt 修正（SimHub 使用固定的每帧系数，其时间常数会随游戏遥测帧率变化；本插件在 60Hz 下与其完全一致，在其他帧率下则保持一致行为）；以及最后一个分支的 legacy/非 legacy 子选择未由任何能力标志位暴露，因此总是假定为 legacy 变体。
+
 **禁止依赖：** SimHub 类型（由测试项目强制执行——它把这个文件夹直接链接编译进一个不引用任何 SimHub 包的纯 net8.0 程序集，一旦有 SimHub 依赖悄悄混进来，测试构建会立即失败），以及第 4/5 层、G 力或设置层的任何内容。
 
 ### 第 4 层——Normalized（归一化）
@@ -91,6 +93,37 @@
 - **`SurfaceLooseFraction`** 在密实/松散路面条件之间连续地混合学到的参考值，而不是在两个固定参考值之间切换。
 
 针对七份真实遥测日志的直接测量（`docs/cold-start-convergence-report.md`）表明，当前的收敛节奏已经达到数据本身能安全支持的最快速度——如果再加快，会以可测量的方式牺牲抵御瞬时过度报告的余量，而这正是这套设计要极力避免的风险。
+
+### 关键数据点：手动 SMax/S90/S75 及其生效时机（1.0.7.0）
+
+`Settings\KeyDataPointSettings.cs`、`Core\Normalized\ManualOverrideGate.cs`。
+
+**学习从不受条件限制。** `AutoGenerate` 只决定哪些数值会被**发布**，并不控制观测本身。`ObserveAtPhysicalLimit`/`ObserveGeneral` 以及锚点学习器的弯道缓冲，都在 `ComputeChannel` 中手动数值那一段**之前**无条件执行。由此带来三个结果：手动模式下 `[学习值: xx.x]` 提示依然有意义；切回自动是立即生效的；手动数值永远不可能污染学习器已经掌握的内容。
+
+**数值按「槽位」存储，槽位 =（模式, 游戏, 数据源）。**
+
+```
+全局模式     ->  "global|src:<sourceIdentity>"
+每游戏模式   ->  "game:<gameId>|src:<sourceIdentity>"
+```
+
+数据源**始终**是键的一部分，因为适用于 ShakeIt 导出的数值并不适用于本插件自己的 Raw——两者量程不同。游戏只在每游戏模式下参与构键；不含游戏，正是「全局」的含义。两类命名空间共用一个字典，因此「全局 → 每游戏 → 全局」的往返切换，会原封不动地取回最初的全局数值。
+
+**门控。** `ManualOverrideGate` 会一直扣住手动数值，直到该上下文**同时**满足：冷启动完成（`KeyedScaleLearner.CeilingHandoverConfidence` >= 0.95）**且**已累计 30 秒驾驶时间。只有车辆确实在移动的帧才会被计入，且任何超过 0.5 秒的单帧都会被截断——因此暂停、断点或切出游戏都无法凑满该门控。
+
+**一次性写入发生在插件的每帧循环中**，而不是设置页面里——因为无论页面是否打开，它都必须发生。当某个槽位首次满足条件时，学习值会被写入，并直接调用 `ConfigStore.Save`（而非 `ApplySettings`，后者还会重建 Projected 引擎——那是不该在一帧中途做的事）。由于该闩锁是**按槽位**记录的，一个从未游玩过的游戏、或一个新选择的数据源，都会自行再次触发一次写入。插件会递增一个修订计数器，好让已打开的设置页面重新加载。
+
+**默认值按数据源类型区分**，通过 `KnownSourceColdStartReference.Classify` 解析：对本插件自己的 Raw 与 ShakeIt 导出，Lock 为 85/75/60，Slip 为 75。**未知**数据源（脚本、NCalc 表达式）刻意**不给任何默认值**——对一个量程从未被测量过的信号，任何猜测都称不上诚实；这类通道会继续发布学习值，直到某个槽位被写入为止。
+
+**仅最大抓地力 / 仅最佳点**模式会隐藏下方两个锚点，并在后台按顶部数值的 0.90/0.70 推导它们，因此切回三点映射时不会发现它们已经过时或次序错乱。Slip 始终采用推导方式——它没有原生的 90%/75% 抓地力测量——这也是它随包默认「仅最佳点」的原因。
+
+**手动模式下的恢复按钮**（`ResetKeyDataPoints`）：对 `KnownSourceColdStartReference.Classify` 能识别的数据源，写入随包提供的默认值，并将该槽位标记为已写入，使一次性学习值写入不会立刻覆盖驾驶者刚刚选择的内容。对**未知**数据源，没有可写入的默认值，因此改为调用 `KeyDataPointSettings.ClearSlot`——数值与已写入闩锁一并清除——从而重新武装一次性写入，并让输入框保持空白，直到真实证据到来。与页面上其他恢复操作一样，点击即刻持久化。
+
+**自动模式下 Slip 被强制为「仅最大抓地力」**（`EnforceSlipPatternForAutoMode`），且自动开启时选择框被禁用。Slip 没有原生的 90%/75% 测量，其下方两个锚点始终是推导而来；在插件自行生成数值时提供三点映射，等于把推导值当作测量值呈现。手动模式下由驾驶者提供全部三个数值，因此该选择重新可用。Lock 三个点都能测量，不受影响。
+
+**两张曲线图**（`RenderGraphDecorations`、`RenderKeyPointMarkers`、`RenderSourceToProjectedGraph`）在代码中绘制而非在 XAML 中声明，以便跟随实时设置。左图为 归一化 -> 映射，虚线标记位于关键数据点在归一化坐标上的规范位置（S75 -> 30、S90 -> 60、SMax -> 80，即四段曲线自身的节点表），「仅最大抓地力」模式下仅显示 SMax。右图为 源数值 -> 映射 的完整链路；由于关键数据点与投影器是复合关系，它没有闭式解，因此按每 5 取样并连线。两张图共用同一套网格：每 20% 高度一条 25% 黑度的横线，0% 处改用纯黑作为基线，横向每 20% 一个 3px 刻度。
+
+**「恢复默认」从不丢弃这些数值。** `QAdvanceFeedbackSettings.RestoreDefaults` 会把两个通道的 `KeyDataPoints`（所有槽位，以及自动/每游戏两个开关）一并带过重置；而三个通道级的数据源重置方法，只会触碰数据源字段。
 
 ### Wheel Lock/Slip Projector：工作原理与设计原因
 
@@ -165,10 +198,23 @@
 |---|---|
 | `RawCalculatorEngine.cs` | `ILegacyWheelLockSlipEngine` 的实现——按帧调度，持有每一个有状态的学习器/滤波器。 |
 | `BrakeSpeedSlipModel.cs` | 基于踏板+车速+转速推导的逐轮 Lock/Slip 模型（在没有逐轮遥测数据时使用的分支）。 |
-| `BrakingVsSpeedModel.cs` | 仅基于踏板+车速的整车级 Lock/Slip 模型，外加低速修正。 |
+| `BrakingVsSpeedModel.cs` | 仅基于踏板+车速的整车级 Lock/Slip 模型——SimHub `GetSimpleBraking` 的忠实移植；原有的“低速修正”已在 1.0.7.0 移除（该文件内附有实测差异对照表）。 |
 | `DispatchBranchFormulas.cs` | 其余各分支公式（车轮转速、车轮速度、预先标定的打滑、学习到的分布、车轮速度差值）。 |
 | `WheelRotationLockFilter.cs` | 基于车轮转速与车速对比、经 EMA 平滑的逐轮抱死估计。 |
 | `StreamingPercentileLearner.cs` | `IValueDistributionLearner` 的具体实现——一个分桶的运行中直方图（均值 + 最近秩百分位）。 |
+
+### `QAdvanceFeedback\Core\RawCalculator\Calibration\`（ShakeIt 标定移植，1.0.7.0）
+
+此目录下的每一个类型都是同名 SimHub 类型的移植，来源于对随包发布的 `SimHub.Plugins.dll` 的反编译。它们的存在意义在于：让第 3 层与 ShakeIt 在相同输入下得出相同的**数值**，而不仅仅是相同的公式。
+
+| 文件 | 用途 |
+|---|---|
+| `ICalibrationData.cs` | 实时标定与随包预置共享的契约。注意 `GetPercentile` 返回普通 `double` 且永不为 null——这正是关键所在。 |
+| `CalibrationData.cs` | 实时累积的直方图：自适应分桶阶梯、仅计正值的点数器、百分位记忆化，以及使其从第一个样本起就能给出答案的“运行最大值回退”。 |
+| `PreloadedCalibrationData.cs` | 随包的分游戏预置：`MeasuredMaximum x CorrectionFactor x pct/100`，与实时证据按固定 0.25 混合——是永久比例，而非逐渐接管。`GetAverage` 有意抛出异常。 |
+| `CalibrationDataProvider.cs` | 持有全部标定，以 `track;car;metric` 为键。将四个轮子汇聚为**单一** `Slip` 标定，而 `RPSToSpeed` 按轴拆分——这是 SimHub 自身的作用域划分，也是早期逐轮 Lock 学习器被废弃的原因。 |
+| `GameCalibrationBounds.cs` | 在 SimHub 文件中与预置并列的三个分游戏车轮速差边界值。 |
+| `TimeMovingAverage.cs` | 逐挡位的车轮速差参考值。本目录中**唯一**基于调用方式重建而非反编译得到的类型——它位于本项目不随包发布的 `WoteverCommon` 中；其内部说明阐述了为何这在此调用处不会产生影响。 |
 
 ### `QAdvanceFeedback\Core\Normalized\`（第 4 层）
 
@@ -236,7 +282,8 @@
 | `GForceSettings.cs` | G-Force 标签页的设置 + 学习到的最大值导入/导出。 |
 | `GeneralSettings.cs` | 诊断/CSV 导出开关。 |
 | `SourceMode.cs` / `ScriptType.cs` / `SourceButtonMode.cs` | 支撑 Sources 部分的小型枚举。 |
-| `DefaultWheelSources.cs` | 构建出厂默认的 Manual 模式数据源文本（对第 3 层自身 Raw 属性的一个简单引用）。 |
+| `DefaultWheelSources.cs` | 构建出厂默认的「插件内置」模式数据源文本（对第 3 层自身 Raw 属性的一个简单引用）。 |
+| `KeyDataPointSettings.cs` | 手动 SMax/S90/S75（Slip 为 完美/优秀/良好），按槽位存储 =（模式, 游戏, 源）；随包提供按源类型的默认值与校验。 |
 | `ApplyDirtyState.cs` | 跟踪设置界面是否存在未保存的修改，供 Apply 按钮的启用状态使用。 |
 | `SettingsControl.xaml` / `SettingsControl.xaml.cs` | 唯一的 WPF 设置控件（四个标签页）。 |
 

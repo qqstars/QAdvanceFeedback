@@ -36,9 +36,17 @@ namespace QAdvanceFeedback.Tests
         {
             var engine = new NormalizedWheelLockSlipEngine();
             double raw = 60.0;
+            // TWO frames, not one (docs\cross-channel-smax-report.md). SMax is now taught through the
+            // corner-local at-limit detector, which is DIFFERENTIAL - it compares this frame's G and
+            // effort against the immediately preceding qualifying frame, so it deliberately reports 0.0
+            // confidence on the very first frame of a run ("under-report rather than over-report while
+            // cold"). One frame therefore establishes no physical-limit evidence at all. This test is
+            // about the S75/S90 FALLBACK RATIOS on a key that has never recorded a crossing, which is
+            // still exactly what the second frame here exercises.
+            engine.Compute(BrakingSample(3.0), Corners.Uniform(raw), Corners.Zero, "TestGame", "TestCar", lockSourceIdentity: "Raw");
             NormalizedWheelLockSlipResult result = engine.Compute(BrakingSample(3.0), Corners.Uniform(raw), Corners.Zero, "TestGame", "TestCar", lockSourceIdentity: "Raw");
 
-            Assert.True(engine.LockFourRangeCurveActive, "the four-range curve should already be active from the fallback ratios on the very first frame");
+            Assert.True(engine.LockFourRangeCurveActive, "the four-range curve should be active from the fallback ratios as soon as the key has physical-limit evidence");
             double? smax = engine.LockScaleCeiling;
             Assert.True(smax.HasValue && smax.Value > 0.0, "Smax should already be established from the first physical-limit observation");
 

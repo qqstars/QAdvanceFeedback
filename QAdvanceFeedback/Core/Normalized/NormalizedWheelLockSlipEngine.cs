@@ -462,8 +462,56 @@ namespace QAdvanceFeedback.Core.Normalized
         // _lockScaleLearner/_slipScaleLearner, which ARE keyed by source) differs per source.
         private readonly KeyedGripLearner _lockPhysicalReference;
         private readonly KeyedGripLearner _slipPhysicalReference;
-        private readonly KeyedScaleLearner _lockScaleLearner = new KeyedScaleLearner();
-        private readonly KeyedScaleLearner _slipScaleLearner = new KeyedScaleLearner();
+        // isLockChannel is passed ONLY so each learner can look up its own side of
+        // KnownSourceColdStartReference during a Tier-1 cold start - see KeyedScaleLearner's own
+        // constructor remarks. Nothing else in either learner is channel-aware.
+        private readonly KeyedScaleLearner _lockScaleLearner = new KeyedScaleLearner(isLockChannel: true);
+        private readonly KeyedScaleLearner _slipScaleLearner = new KeyedScaleLearner(isLockChannel: false);
+
+        /// <summary>MANUAL KEY DATA POINTS (v1.0.7.2) - decides WHEN a configured value may replace the
+        /// learned one; see <see cref="ManualOverrideGate"/> for the rule. Shared by both channels, keyed
+        /// per (game, car, source) so each context earns its own readiness.</summary>
+        private readonly ManualOverrideGate _manualGate = new ManualOverrideGate();
+
+        /// <summary>Lock's manually-configured anchors, or <see cref="ManualAnchors.None"/> for Auto.
+        /// Set by the plugin layer from the persisted settings; the engine never reads Settings itself.
+        /// Learning continues regardless of what is set here - this only selects what is PUBLISHED.</summary>
+        public ManualAnchors LockManualAnchors { get; set; } = ManualAnchors.None;
+
+        /// <summary>Slip's counterpart to <see cref="LockManualAnchors"/>.</summary>
+        public ManualAnchors SlipManualAnchors { get; set; } = ManualAnchors.None;
+
+        private bool _lockManualAnchorsApplied;
+        private bool _slipManualAnchorsApplied;
+
+        /// <summary>Whether Lock's configured anchors are actually driving the output right now - false
+        /// while the gate is still withholding them. Diagnostic, and what the UI uses to decide whether
+        /// the value boxes are live yet.</summary>
+        public bool LockManualAnchorsApplied => _lockManualAnchorsApplied;
+
+        /// <summary>Slip's counterpart to <see cref="LockManualAnchorsApplied"/>.</summary>
+        public bool SlipManualAnchorsApplied => _slipManualAnchorsApplied;
+
+        /// <summary>
+        /// Whether the manual-override gate is OPEN for this context - cold start finished AND the
+        /// driving-time bar cleared.
+        /// <para/>
+        /// Deliberately independent of whether a manual value actually exists. <see cref="LockManualAnchorsApplied"/>
+        /// can only be true once something was configured to apply, so it cannot answer "may we now write
+        /// the first value in?" for an unknown source that has nothing configured yet - which is exactly
+        /// the case the one-time seed exists to handle.
+        /// </summary>
+        public bool ManualGateReady(string gameId, string carId, string sourceIdentity, bool isLockChannel)
+        {
+            string key = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty);
+            KeyedScaleLearner learner = isLockChannel ? _lockScaleLearner : _slipScaleLearner;
+            return _manualGate.IsReady(key, learner.CeilingHandoverConfidence(gameId, carId, sourceIdentity));
+        }
+
+        /// <summary>Driving seconds accumulated toward the manual-override gate for this context - lets
+        /// the UI show progress rather than an unexplained disabled box.</summary>
+        public double ManualGateElapsedSeconds(string gameId, string carId, string sourceIdentity)
+            => _manualGate.ElapsedSeconds(KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty));
 
         /// <summary>FEATURE C (docs\v1068-four-range-report.md) - WHEELLOCK ONLY, learns S75/S90 (see
         /// <see cref="LockAnchorLearner"/>'s own remarks). There is deliberately no Slip equivalent -
@@ -573,6 +621,13 @@ namespace QAdvanceFeedback.Core.Normalized
         private double _lockColdStartConfidence;
         private double _slipColdStartConfidence;
 
+        // TIERED COLD-START REFERENCE SYSTEM (v1.0.7, docs\v107-tiered-coldstart-report.md) - which tier
+        // each channel's own KeyedScaleLearner most recently resolved to, exposed as Diag.Lock/Slip.
+        // ColdStartTier so the owner can see which tier engaged on a rig. Tier1 (no reference exists) is
+        // the correct "never queried yet" starting value.
+        private ColdStartTier _lockColdStartTier = ColdStartTier.Tier1;
+        private ColdStartTier _slipColdStartTier = ColdStartTier.Tier1;
+
         // FEATURE C diagnostic (docs\v1068-four-range-report.md) - whether the LAST Lock ComputeChannel
         // call actually used the new source-space four-range curve (all three anchors valid) rather than
         // falling back to the pre-existing G-ratio BandCurve. Always false for Slip (no anchor learner is
@@ -628,6 +683,15 @@ namespace QAdvanceFeedback.Core.Normalized
         /// argument).</summary>
         public NormalizePattern LockNormalizePattern { get; set; } = NormalizePattern.Mapping;
 
+        /// <summary>
+        /// Slip's own pattern selector (v1.0.7.2). Ships <see cref="NormalizePattern.MaxGripOnly"/> - its
+        /// "Best Point Only" - because Slip has no native 90%/75% grip measurement to place two lower
+        /// anchors from. When the driver opts into the Perfect/Great/Good mapping, those two anchors are
+        /// DERIVED from the Perfect point rather than learned, which is why this only has an effect while
+        /// manual anchors are active: there is nothing measured for it to map otherwise.
+        /// </summary>
+        public NormalizePattern SlipNormalizePattern { get; set; } = NormalizePattern.MaxGripOnly;
+
         /// <summary>The Slip channel's equivalent of <see cref="LockUsesAggregatedAllScale"/> - see that
         /// constant's own remarks for why these may differ. MEASURED FALSE
         /// (docs\all-channel-scale-and-surface-gap-report.md): Slip ships
@@ -651,6 +715,72 @@ namespace QAdvanceFeedback.Core.Normalized
         /// warned against, for a channel this task's own measurement shows gains NOTHING from the
         /// trade. Slip therefore keeps the pre-existing mean-relative proportion unchanged.</summary>
         public const bool SlipUsesAggregatedAllScale = false;
+
+        /// <summary>
+        /// Source value (on the enforced 0-100 source scale) at and above which a wheel counts as FULLY
+        /// contributing to the flat-mean calibration basis; below it a wheel's contribution ramps
+        /// linearly to zero. See <see cref="ContributionWeightedMean"/>.
+        /// </summary>
+        /// <remarks>
+        /// 5.0 is 5% of the enforced source scale - the band in which a per-wheel reading is sensor
+        /// jitter and rounding rather than genuine slip. Deliberately a RAMP rather than a cutoff: a
+        /// hard "average the wheels above X" test moves the basis DISCONTINUOUSLY as a wheel crosses X
+        /// (three wheels at 60 plus a fourth at X-epsilon averages 60; the same frame one tick later,
+        /// with the fourth at X+epsilon, averages 45) - the identical class of single-sample step the
+        /// readiness ramp in <see cref="KeyedScaleLearner"/> exists to prevent.
+        /// </remarks>
+        public const double CalibrationContributionRampTop = 5.0;
+
+        /// <summary>
+        /// The flat calibration basis for a channel that does NOT use the aggregated-All scale (Slip -
+        /// see <see cref="SlipUsesAggregatedAllScale"/>): the mean of the four per-wheel readings,
+        /// weighting each wheel by how much it is CONTRIBUTING rather than counting all four slots
+        /// unconditionally.
+        /// <para/>
+        /// WHY. The plain four-slot mean divides by four whether or not four wheels are doing anything,
+        /// so it silently measures "how many wheels are involved" alongside "how hard they are
+        /// slipping". That is not symmetric between the two channels, because the underlying event is
+        /// not: braking loads all four wheels, while accelerating spins only the driven pair. Measured
+        /// on the owner's own four-session capture (docs\cross-channel-smax-report.md), contributing
+        /// wheels per frame ran 2.7-3.5 while braking against 2.0-2.3 while accelerating, which put a
+        /// 1.22-1.74x direction-dependent bias into a basis that is supposed to carry severity alone.
+        /// <para/>
+        /// The bias itself was self-cancelling in the steady state - <see cref="KeyedScaleLearner"/>
+        /// learns SMax from this same basis and then divides by it, so a uniformly diluted basis with a
+        /// uniformly diluted SMax republishes the same number. What did NOT cancel is the VARIANCE: the
+        /// contributing-wheel count changes from frame to frame, so the dilution changes from frame to
+        /// frame, widening this channel's own p95-to-p99 spread far beyond anything physical. On the
+        /// same capture that inflated spread to 0.12-0.51, against the 0.15
+        /// <see cref="KeyedScaleLearner.MaxTrustedRelativeSpread"/> budget - which drove the agreement
+        /// term to exactly zero in three of the four sessions and pinned Slip's learned ceiling to its
+        /// cautious percentile permanently, so the confidence blend never functioned on this channel at
+        /// all.
+        /// <para/>
+        /// EXACT REDUCTION TO THE PREVIOUS BASIS. Every weight saturates at 1.0 at and above
+        /// <see cref="CalibrationContributionRampTop"/>, so when all four wheels are contributing this
+        /// returns <c>(a+b+c+d)/4</c> - the same operations in the same order, bit for bit. It differs
+        /// ONLY in frames that genuinely have an idle wheel, which is precisely the case it exists to
+        /// correct.
+        /// <para/>
+        /// NOT REACHED BY LOCK. Lock sets <see cref="LockUsesAggregatedAllScale"/>, so its basis is the
+        /// weighted aggregate and this method is never called on its path.
+        /// </summary>
+        internal static double ContributionWeightedMean(double a, double b, double c, double d)
+        {
+            double wa = ClampMath.To01(a / CalibrationContributionRampTop);
+            double wb = ClampMath.To01(b / CalibrationContributionRampTop);
+            double wc = ClampMath.To01(c / CalibrationContributionRampTop);
+            double wd = ClampMath.To01(d / CalibrationContributionRampTop);
+
+            double weight = wa + wb + wc + wd;
+            // Nothing is contributing at all - every reading is inside the noise band, so there is no
+            // "active wheel" subset to average. Fall back to the plain four-slot mean, which in this
+            // situation is itself a near-zero number; this keeps the transition into and out of a fully
+            // idle frame continuous rather than stepping between two different definitions.
+            if (weight <= NoRawSignalEpsilon) return (a + b + c + d) / 4.0;
+
+            return (wa * a + wb * b + wc * c + wd * d) / weight;
+        }
 
         // PER-GAME TELEMETRY SUPPORT DETECTION (telemetry-integrity pass, item 2) - see
         // KeyedTelemetrySupport's own remarks. Deliberately NOT reset on a game switch (unlike the
@@ -830,6 +960,23 @@ namespace QAdvanceFeedback.Core.Normalized
 
         /// <summary>The Slip channel's equivalent of <see cref="LockColdStartConfidence"/>.</summary>
         public double SlipColdStartConfidence => _slipColdStartConfidence;
+
+        /// <summary>TIERED COLD-START REFERENCE SYSTEM (v1.0.7, docs\v107-tiered-coldstart-report.md) -
+        /// which tier the Lock channel's own <see cref="KeyedScaleLearner"/> most recently resolved to for
+        /// the currently-configured (gameId, carId, sourceIdentity, surface) key - see
+        /// <see cref="KeyedScaleLearner.ResolveTier"/>. Published as <c>Diag.Lock.ColdStartTier</c> so the
+        /// owner can see which tier engaged on a rig.</summary>
+        public ColdStartTier LockColdStartTier => _lockColdStartTier;
+
+        /// <summary>The Slip channel's equivalent of <see cref="LockColdStartTier"/>.</summary>
+        public ColdStartTier SlipColdStartTier => _slipColdStartTier;
+
+        /// <summary>The Layer 5 <see cref="Projection.ColdStartScale"/> Stage-1 floor implied by
+        /// <see cref="LockColdStartTier"/> - see <see cref="ColdStartTierFloors"/>.</summary>
+        public double LockColdStartFloor => ColdStartTierFloors.FloorFor(_lockColdStartTier);
+
+        /// <summary>The Slip channel's equivalent of <see cref="LockColdStartFloor"/>.</summary>
+        public double SlipColdStartFloor => ColdStartTierFloors.FloorFor(_slipColdStartTier);
 
         /// <summary>FEATURE C diagnostic - see <see cref="_lockFourRangeCurveActive"/>'s own remarks.</summary>
         public bool LockFourRangeCurveActive => _lockFourRangeCurveActive;
@@ -1021,7 +1168,10 @@ namespace QAdvanceFeedback.Core.Normalized
                 out _lockSourceFallbackActive, ref _lockFallbackDivergence, ref _lockLastG, out _lockUtilization, out _lockBranchConfidence,
                 out _lockCarLevelSeverity, out _lockAllScale, out _lockColdStartConfidence, _lockAnchors, out _lockFourRangeCurveActive,
                 ref _lockAtLimitLastG, ref _lockAtLimitLastBasis, out _lockNativeAggregate,
-                useFourRangeForSeverity: LockNormalizePattern == NormalizePattern.Mapping);
+                useFourRangeForSeverity: LockNormalizePattern == NormalizePattern.Mapping,
+                manualAnchors: LockManualAnchors,
+                reportManualApplied: applied => _lockManualAnchorsApplied = applied,
+                manualGate: _manualGate);
             Corners slipWheels = ComputeChannel(sample.New, rawSlipWheels, motion, _slipLearners, _slipPhysicalReference, _slipScaleLearner,
                 gameId, carId, slipSourceIdentity, instantLooseFraction,
                 direction == LongitudinalMotionState.SpeedingUp, slipTriggered, slipObserveAllowed, dtSeconds,
@@ -1029,7 +1179,26 @@ namespace QAdvanceFeedback.Core.Normalized
                 out _slipScaleCeiling, out _slipScaleCeilingIsPrimaryTier,
                 out _slipSourceFallbackActive, ref _slipFallbackDivergence, ref _slipLastG, out _slipUtilization, out _slipBranchConfidence,
                 out _slipCarLevelSeverity, out _slipAllScale, out _slipColdStartConfidence, lockAnchorLearner: null, out _slipFourRangeCurveActive,
-                ref _slipAtLimitLastG, ref _slipAtLimitLastBasis, out _slipNativeAggregate);
+                ref _slipAtLimitLastG, ref _slipAtLimitLastBasis, out _slipNativeAggregate,
+                // SLIP ONLY - see the floor's own remarks at the severity assignment. The Lock call above
+                // deliberately does not pass this, so Lock keeps the F1 25 fix's behaviour exactly.
+                floorSeverityAtRawBasis: true,
+                useFourRangeForSeverity: SlipNormalizePattern == NormalizePattern.Mapping,
+                manualAnchors: SlipManualAnchors,
+                reportManualApplied: applied => _slipManualAnchorsApplied = applied,
+                manualGate: _manualGate);
+
+            // TIERED COLD-START REFERENCE SYSTEM (v1.0.7, docs\v107-tiered-coldstart-report.md) -
+            // diagnostic-only readout of which tier THIS key most recently resolved to (the actual
+            // blend/anchor computation already happened inside ComputeChannel's own Rescale/LearnedCeiling
+            // calls, using the per-frame surface classification directly - see those call sites' own
+            // remarks). Recomputed here from the SAME smoothed loose fraction ComputeChannel just updated
+            // (ref _lockLooseFraction/_slipLooseFraction above), via the SAME Sealed/Loose/ambiguous
+            // classification LockCurrentSurfaceBucket/SlipCurrentSurfaceBucket already expose - "ambiguous"
+            // (null) is treated as Sealed here too, mirroring "no surface data reported always resolves to
+            // Sealed" elsewhere in this class.
+            _lockColdStartTier = _lockScaleLearner.ResolveTier(gameId, carId, lockSourceIdentity, LockCurrentSurfaceBucket ?? SealedSurfaceBucket);
+            _slipColdStartTier = _slipScaleLearner.ResolveTier(gameId, carId, slipSourceIdentity, SlipCurrentSurfaceBucket ?? SealedSurfaceBucket);
 
             // ---- MID-CHAIN CLAMP FIX (docs\clamp-chain-fix-report.md) - THE ALL-CHANNEL
             // CLAMP-THEN-REAGGREGATE BUG, now closed for EVERY published group channel on BOTH channels
@@ -1132,7 +1301,9 @@ namespace QAdvanceFeedback.Core.Normalized
             out double carLevelSeverity, out double allScale, out double coldStartConfidence,
             LockAnchorLearner lockAnchorLearner, out bool fourRangeCurveActive,
             ref double? atLimitLastG, ref double? atLimitLastBasis, out WheelAggregate nativeAggregate,
-            bool useFourRangeForSeverity = true)
+            bool useFourRangeForSeverity = true, bool floorSeverityAtRawBasis = false,
+            ManualAnchors manualAnchors = default(ManualAnchors), Action<bool> reportManualApplied = null,
+            ManualOverrideGate manualGate = null)
         {
             // MID-CHAIN CLAMP FIX (docs\clamp-chain-fix-report.md) - default, no-op value for every early
             // return below that this fix does not target (not triggered/not engaged/no G signal at all):
@@ -1175,7 +1346,12 @@ namespace QAdvanceFeedback.Core.Normalized
             // calibration basis" as its "effort" signal - can read it BEFORE the speed-bucket-teaching
             // call it gates. See DEFECT B FIX below (docs\v1068-four-range-report.md) for the full
             // rationale of what these represent; unchanged in every other respect.
-            double mean = (w0 + w1 + w2 + w3) / 4.0;
+            // NOTE: the flat four-slot mean that used to be computed here fed exactly ONE consumer, the
+            // non-aggregated calibration basis below, and is now folded into
+            // ContributionWeightedMean (which still reduces to it exactly whenever all four wheels
+            // contribute - see that method's own remarks). layer3RawMeanEarly is a DIFFERENT quantity
+            // with other consumers (the Slip raw floor and the divergence math further down) and stays
+            // the plain four-slot mean, deliberately untouched.
             double layer3RawMeanEarly = (lw0 + lw1 + lw2 + lw3) / 4.0;
             // MID-CHAIN CLAMP FIX (docs\clamp-chain-fix-report.md): these two now capture the FULL
             // WheelAggregate (Front/Rear/Left/Right/All), not just .All as before - the extra four fields
@@ -1188,8 +1364,21 @@ namespace QAdvanceFeedback.Core.Normalized
             WheelAggregate nativeAggFallbackFull = useAggregatedAllScale ? Aggregator.Compute(new Corners(lw0, lw1, lw2, lw3), weights) : default(WheelAggregate);
             double aggregatedNativeConfigured = useAggregatedAllScale ? nativeAggConfiguredFull.All : 0.0;
             double aggregatedNativeFallback = useAggregatedAllScale ? nativeAggFallbackFull.All : 0.0;
-            double calibrationBasisConfigured = useAggregatedAllScale ? aggregatedNativeConfigured : mean;
-            double calibrationBasisFallback = useAggregatedAllScale ? aggregatedNativeFallback : layer3RawMeanEarly;
+            // CONTRIBUTION-WEIGHTED FLAT BASIS (docs\cross-channel-smax-report.md) - the non-aggregated
+            // branch (Slip) no longer divides by four slots regardless of how many wheels are actually
+            // involved; see ContributionWeightedMean's own remarks for the measurement and for why this
+            // is bit-for-bit the previous flat mean whenever all four wheels contribute. BOTH bases move
+            // together, deliberately: each is fed to the scale learner AND divided by it again on the way
+            // out (ObserveGeneral/ObserveAtPhysicalLimit and Rescale below both take these SAME values),
+            // so the units stay consistent end to end and the configured-vs-fallback divergence test
+            // further down keeps comparing two quantities on one scale. The aggregated branch (Lock) is
+            // untouched and never evaluates this.
+            double calibrationBasisConfigured = useAggregatedAllScale
+                ? aggregatedNativeConfigured
+                : ContributionWeightedMean(w0, w1, w2, w3);
+            double calibrationBasisFallback = useAggregatedAllScale
+                ? aggregatedNativeFallback
+                : ContributionWeightedMean(lw0, lw1, lw2, lw3);
 
             // SPEED-DEPENDENT GRIP MODEL (docs\speed-aware-grip-report.md) - the SAME
             // GroundSpeedKmh-falling-back-to-SpeedKmh convention every other speed-consuming class in
@@ -1382,9 +1571,48 @@ namespace QAdvanceFeedback.Core.Normalized
             // NOTE: physicalRatioSealed/Loose/Now and physicallyAtLimit are now computed in the EARLIER
             // hoist above (speed-aware-reference-fix-report.md) - unchanged formula, just computed one
             // step earlier so the corner-local at-limit gate can also read physicalRatioNow.
+            // WHICH FRAMES MAY TEACH SMax (docs\cross-channel-smax-report.md - RESTORED from
+            // QAdvanceFeedback_1.0.6.9_anchor_sampling, whose own
+            // docs\atlimit-gate-and-per-anchor-lag-report.md measured the defect and built the fix).
+            //
+            // `physicallyAtLimit` is `G >= PhysicalLimitRatioThreshold` of this key's SESSION-WIDE
+            // best-ever G - flat, no speed term, nothing about THIS corner's own lock dynamics. Measured
+            // across that report's own 14-log corpus, it fires EARLY relative to the corner's real onset
+            // in 87.7% of events, median 45.4% low: it trips in the high-speed, high-downforce part of
+            // the braking zone, where the tyre is gripping hardest and a lock/slip source therefore reads
+            // near its MINIMUM. Teaching SMax from those frames is why the learned ceiling read 26-42 on
+            // the owner's own 1.7.1 capture against a true ~75, and why the rescale factor was ~2.7x too
+            // large (the over-shake this project has chased since 1.0.6).
+            //
+            // The corner-local detector is the owner's own stated rule made operational - "max grip is
+            // the moment the dec G-Force starts REDUCING, which needs no speed model" - i.e. G plateauing
+            // or falling WHILE the source's own effort is sustained or still rising. Measured on the same
+            // capture, weighting the at-limit distribution by it moves the learned ceiling to 72-78
+            // across two cars AND two sources (1.08x cross-session spread, tighter than anything else
+            // tried, including the general-distribution percentile it replaces).
+            //
+            // WHEELLOCK ONLY - the same non-negotiable scoping 1.0.6.9_anchor_sampling shipped, for the
+            // same reason: ComputeChannel is shared, Slip's own collapse numbers are far noisier on this
+            // capture (P90 spanning 33-70), and Slip must not move as a side effect of a Lock fix.
+            // lockAnchorLearner is the SAME null-for-Slip discriminator the four-range curve already uses.
+            bool isLockChannel = lockAnchorLearner != null;
+            double smaxTeachingWeight = isLockChannel ? atLimitWeight : (physicallyAtLimit ? 1.0 : 0.0);
+
             if (calibrationBasisConfigured >= MinRawForCalibrationObservation)
             {
-                if (physicallyAtLimit) scaleLearner.ObserveAtPhysicalLimit(gameId, carId, sourceIdentity, calibrationBasisConfigured);
+                if (smaxTeachingWeight > 0.0)
+                {
+                    // The DEFAULT (unsurfaced) key - still the one and only key the live severity reads.
+                    scaleLearner.ObserveAtPhysicalLimit(gameId, carId, sourceIdentity, calibrationBasisConfigured, smaxTeachingWeight);
+                    // TIERED COLD-START REFERENCE SYSTEM (v1.0.7) - ADDITIVE surface-specific teaching
+                    // (see KeyedScaleLearner.ObserveAtPhysicalLimit's own remarks): only when the surface
+                    // is confidently classified (observeBucket != null), mirroring the SAME "ambiguous ->
+                    // teach neither" convention this method already applies to the GripLearner surface
+                    // split just above. Purely gives ResolveReference genuine Tier-4 candidates to find;
+                    // never read by the live Rescale/LearnedCeiling calls for the default key.
+                    if (observeBucket != null)
+                        scaleLearner.ObserveAtPhysicalLimit(gameId, carId, sourceIdentity, calibrationBasisConfigured, smaxTeachingWeight, observeBucket);
+                }
                 scaleLearner.ObserveGeneral(gameId, carId, sourceIdentity, calibrationBasisConfigured);
             }
 
@@ -1395,12 +1623,57 @@ namespace QAdvanceFeedback.Core.Normalized
             double layer3RawMean = layer3RawMeanEarly;
             if (calibrationBasisFallback >= MinRawForCalibrationObservation)
             {
-                if (physicallyAtLimit) scaleLearner.ObserveAtPhysicalLimit(gameId, carId, RawFallbackSourceIdentity, calibrationBasisFallback);
+                // SAME GATE AS THE CONFIGURED KEY ABOVE - the fallback is this same channel's own Raw
+                // reading, so it must be taught at the same moments and with the same confidence, or the
+                // two keys would learn ceilings on different definitions and the divergence test between
+                // them (further down) would compare quantities that are not comparable.
+                if (smaxTeachingWeight > 0.0)
+                    scaleLearner.ObserveAtPhysicalLimit(gameId, carId, RawFallbackSourceIdentity, calibrationBasisFallback, smaxTeachingWeight);
                 scaleLearner.ObserveGeneral(gameId, carId, RawFallbackSourceIdentity, calibrationBasisFallback);
             }
 
-            double calibratedMean = scaleLearner.Rescale(gameId, carId, sourceIdentity, calibrationBasisConfigured);
-            scaleCeiling = scaleLearner.LearnedCeiling(gameId, carId, sourceIdentity, out scaleCeilingIsPrimaryTier);
+            // TIERED COLD-START REFERENCE SYSTEM (v1.0.7) - observeBucket (null when the surface is
+            // ambiguous this frame) falls back to SealedSurfaceBucket here too, matching "no surface data
+            // reported always resolves to Sealed" elsewhere in this class. This is ONLY a hint for
+            // KeyedScaleLearner's own tier resolver (see LearnedCeilingForKey's own remarks) - it never
+            // changes WHICH key calibratedMean/scaleCeiling are actually read from (still the default,
+            // unsurfaced key, unchanged).
+            string tierSurfaceHint = observeBucket ?? SealedSurfaceBucket;
+            double calibratedMean = scaleLearner.Rescale(gameId, carId, sourceIdentity, calibrationBasisConfigured, tierSurfaceHint);
+            scaleCeiling = scaleLearner.LearnedCeiling(gameId, carId, sourceIdentity, out scaleCeilingIsPrimaryTier, tierSurfaceHint);
+
+            // ---- MANUAL KEY DATA POINTS (v1.0.7.2) ----
+            //
+            // LEARNING IS UNAFFECTED. Everything above this point - ObserveAtPhysicalLimit, ObserveGeneral,
+            // the anchor learner's own corner buffering - has already run, unconditionally. This block
+            // only decides which SMax is APPLIED to the published output, which is why the learned value
+            // stays live and correct for the UI to display, and why toggling back to Auto is instant.
+            //
+            // THE GATE. A manual value is withheld until this exact context has BOTH finished cold start
+            // AND accumulated ManualOverrideGate.MinimumInGameSeconds of real driving (the owner's
+            // "whichever is longer"). Before that the learned value is published - a manual number
+            // configured elsewhere is not necessarily meaningful the instant a new session starts, and
+            // the driver has had no chance to see what this one reads.
+            bool manualAnchorsApplied = false;
+            string manualGateKey = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty);
+            if (manualGate != null)
+                manualGate.Observe(manualGateKey, dtSeconds, advancing: engaged && speedKmh.HasValue && speedKmh.Value > 0.0);
+            bool manualReady = manualAnchors.Active && manualGate != null
+                && manualGate.IsReady(manualGateKey, scaleLearner.CeilingHandoverConfidence(gameId, carId, sourceIdentity));
+            manualAnchorsApplied = manualReady;
+
+            if (reportManualApplied != null) reportManualApplied(manualAnchorsApplied);
+
+            if (manualReady && manualAnchors.SMax > 0.0)
+            {
+                scaleCeiling = manualAnchors.SMax;
+                // Rescale by hand rather than through the learner: the learner divides by what it has
+                // LEARNED, and the whole point here is to divide by what the driver CONFIGURED. Same
+                // formula it uses (basis * CanonicalAtLimitAnchor / ceiling), same clamp.
+                calibratedMean = ClampMath.To0100(
+                    ClampMath.SafeDiv(calibrationBasisConfigured * KeyedScaleLearner.CanonicalAtLimitAnchor,
+                        manualAnchors.SMax, calibratedMean));
+            }
 
             // ---- v1068 CORRECTION (docs\v1068-four-range-report.md, "A REAL DEFECT in how Feature C was
             // wired") - THE FOUR-RANGE CURVE IS NOW THE MAPPING FOR LOCK, NOT AN OVERRIDE ON TOP OF THE
@@ -1420,7 +1693,51 @@ namespace QAdvanceFeedback.Core.Normalized
             // ComputeDeltaGCollapseSeverity's own remarks below for what it still does and why.
             double? lockFourRangeSeverityConfigured = null;
             double? lockFourRangeSeverityFallback = null;
-            if (lockAnchorLearner != null)
+            double? twoRangeSeverityConfigured = null;
+            double? twoRangeSeverityFallback = null;
+
+            // MANUAL THREE-POINT MAPPING, EITHER CHANNEL (v1.0.7.2). Deliberately OUTSIDE the
+            // lockAnchorLearner guard below: Slip passes a null anchor learner (it has no measured
+            // S90/S75), so a branch inside that guard could never fire for it - and Slip's
+            // Perfect/Great/Good mapping is exactly the case where all three knots are configured rather
+            // than measured. Learning is unaffected either way; this only selects what is published.
+            if (manualReady && useFourRangeForSeverity && manualAnchors.SMax > 0.0
+                && TryBuildLockRangeCurve(manualAnchors.S75, manualAnchors.S90, manualAnchors.SMax,
+                    out MonotoneCubicCurve manualRangeCurve))
+            {
+                lockFourRangeSeverityConfigured = manualRangeCurve.Evaluate(calibrationBasisConfigured);
+                lockFourRangeSeverityFallback = manualRangeCurve.Evaluate(calibrationBasisFallback);
+                fourRangeCurveActive = true;
+            }
+            // AUTO + THREE-POINT MAPPING. Slip passes no anchor learner, and Lock's own learned ratios
+            // are not always available, so without this a channel under Auto+Mapping had no curve to
+            // publish and silently fell back to the plain rescale - the mode looked selected but did
+            // nothing. The two lower anchors are derived from the learned ceiling by the SAME fixed
+            // percentages the settings page shows, so what the driver reads in the boxes is what the
+            // channel actually applies.
+            else if (useFourRangeForSeverity && lockAnchorLearner == null && scaleCeiling.HasValue
+                && TryBuildDerivedRangeCurve(scaleCeiling.Value, out MonotoneCubicCurve derivedCurve))
+            {
+                lockFourRangeSeverityConfigured = derivedCurve.Evaluate(calibrationBasisConfigured);
+                lockFourRangeSeverityFallback = derivedCurve.Evaluate(calibrationBasisFallback);
+                fourRangeCurveActive = true;
+            }
+            // MAX-GRIP-ONLY IS A CURVE TOO, just a two-segment one - see TryBuildTwoRangeCurve for why a
+            // plain rescale got both ends of the range wrong. Applies to BOTH channels (Slip ships this
+            // mode), and uses the manual SMax when one is live, otherwise the learned ceiling.
+            else if (!useFourRangeForSeverity)
+            {
+                double? twoRangeSMax = manualReady && manualAnchors.SMax > 0.0
+                    ? manualAnchors.SMax
+                    : scaleCeiling;
+                if (twoRangeSMax.HasValue
+                    && TryBuildTwoRangeCurve(twoRangeSMax.Value, out MonotoneCubicCurve twoRangeCurve))
+                {
+                    twoRangeSeverityConfigured = twoRangeCurve.Evaluate(calibrationBasisConfigured);
+                    twoRangeSeverityFallback = twoRangeCurve.Evaluate(calibrationBasisFallback);
+                }
+            }
+            else if (lockAnchorLearner != null)
             {
                 double? smaxConfigured = scaleCeiling;
                 // S90-FALLBACK-RATIO FIX (docs\release-1060-report.md, Part 3 - "S90 feels a little
@@ -1441,7 +1758,7 @@ namespace QAdvanceFeedback.Core.Normalized
                 // Only" pattern's own explicit contract: anchors keep learning and persisting even though
                 // they are not applied to output in that mode); `fourRangeCurveActive` only reports true
                 // when the curve is ALSO actually driving the published severity below.
-                if (TryBuildLockRangeCurveWithFallback(lockAnchorLearner, gameId, carId, sourceIdentity, smaxConfigured, out MonotoneCubicCurve rangeCurveConfigured))
+                if (TryBuildLockRangeCurveWithFallback(lockAnchorLearner, gameId, carId, sourceIdentity, smaxConfigured, scaleLearner, out MonotoneCubicCurve rangeCurveConfigured))
                 {
                     lockFourRangeSeverityConfigured = rangeCurveConfigured.Evaluate(calibrationBasisConfigured);
                     fourRangeCurveActive = useFourRangeForSeverity;
@@ -1453,7 +1770,7 @@ namespace QAdvanceFeedback.Core.Normalized
                 // value against a Rescale-mapped one on the SAME frame for no reason other than which
                 // identity happened to warm up first.
                 double? smaxFallback = scaleLearner.LearnedCeiling(gameId, carId, RawFallbackSourceIdentity, out _);
-                if (TryBuildLockRangeCurveWithFallback(lockAnchorLearner, gameId, carId, RawFallbackSourceIdentity, smaxFallback, out MonotoneCubicCurve rangeCurveFallback))
+                if (TryBuildLockRangeCurveWithFallback(lockAnchorLearner, gameId, carId, RawFallbackSourceIdentity, smaxFallback, scaleLearner, out MonotoneCubicCurve rangeCurveFallback))
                 {
                     lockFourRangeSeverityFallback = rangeCurveFallback.Evaluate(calibrationBasisFallback);
                 }
@@ -1468,6 +1785,16 @@ namespace QAdvanceFeedback.Core.Normalized
                     double uSpeedAware = Blend(uSpeedAwareSealed, uSpeedAwareLoose, smoothedLooseFraction);
                     lockAnchorLearner.Observe(gameId, carId, sourceIdentity, uSpeedAware, calibrationBasisConfigured, smaxConfigured);
                     lockAnchorLearner.Observe(gameId, carId, RawFallbackSourceIdentity, uSpeedAware, calibrationBasisFallback, smaxFallback);
+
+                    // PHYSICALLY-DERIVED ANCHORS (docs\cross-channel-smax-report.md) - buffer this frame
+                    // for retrospective extraction when the braking event ends. Deliberately fed the SAME
+                    // atLimitWeight that teaches SMax, so S75/S90 and SMax are all derived from one
+                    // detector on one physical event. Nothing is learned on this call; see
+                    // LockAnchorLearner.ObserveCornerFrame for why it cannot be.
+                    lockAnchorLearner.ObserveCornerFrame(gameId, carId, sourceIdentity,
+                        motion.MagnitudeG, calibrationBasisConfigured, atLimitWeight, smaxConfigured);
+                    lockAnchorLearner.ObserveCornerFrame(gameId, carId, RawFallbackSourceIdentity,
+                        motion.MagnitudeG, calibrationBasisFallback, atLimitWeight, smaxFallback);
                 }
             }
 
@@ -1566,10 +1893,40 @@ namespace QAdvanceFeedback.Core.Normalized
             // single-anchor Rescale) - the SAME formula Slip always uses, applied to Lock only in this
             // mode. S75/S90 keep learning/persisting either way (see the fallback/curve-building block
             // above) - only THIS read is gated.
-            double? configuredForSeverity = useFourRangeForSeverity ? lockFourRangeSeverityConfigured : null;
+            // Under Mapping the four-range curve drives severity; under Max-Grip-Only the two-range one
+            // does. Both are the same kind of piecewise mapping, so neither mode falls back to the plain
+            // rescale for its published severity any more.
+            double? configuredForSeverity = useFourRangeForSeverity
+                ? lockFourRangeSeverityConfigured
+                : twoRangeSeverityConfigured;
             double? fallbackForSeverity = useFourRangeForSeverity ? lockFourRangeSeverityFallback : null;
             double severity = (configuredForSeverity ?? calibratedMean) * (1.0 - fallbackWeight)
                 + (fallbackForSeverity ?? calibratedRawFallback) * fallbackWeight;
+
+            // SLIP-ONLY RAW FLOOR (restores 1.0.3's own `Math.Max(..., mean)` guarantee for this channel).
+            //
+            // WHY SLIP NEEDS IT AND LOCK DOES NOT. The F1 25 fix removed the old
+            // `Math.Max(effectiveGripUtilization, calibratedMean)` outright, and for LOCK that was
+            // exactly right: the max let a session-immature learned G reference push severity to
+            // "critical" well before the wheel was near its limit, and since wet braking achieves lower
+            // g than dry at the same lock proximity, a shared g-based ceiling read the two conditions
+            // differently. Every log behind that decision was a BRAKING log.
+            //
+            // Slip was collateral damage. The defect the max originally fixed (docs\field-fixes-report.md
+            // defect B) is a WHEELSPIN phenomenon: achieved chassis acceleration DROPS once a driven
+            // wheel spins up, so a model that reads severity from anything other than the source itself
+            // reads a full-blown spin as LOW. Measured on the owner's own Raw-source log, Lock passes
+            // through this layer intact (Raw p99 83.5 -> Normalized p99 83.6) while Slip loses nearly
+            // half its magnitude (71.2 -> 40.0). This floor restores the one guarantee that prevents
+            // that - the published value can never read BELOW the source's own calibration basis - and
+            // does so WITHOUT reintroducing the g-based ceiling that caused the wet/dry problem, since
+            // the floor is the source's own reading, not a learned G ratio.
+            //
+            // Deliberately named for the BEHAVIOUR, not the channel, and defaulted false: it is reachable
+            // only from the Slip call site. ComputeChannel is `private static` and every learner arrives
+            // as a per-channel instance, so Lock cannot observe this flag by any path.
+            if (floorSeverityAtRawBasis) severity = Math.Max(severity, calibrationBasisConfigured);
+
             carLevelSeverity = severity;
 
             // Per-wheel proportions blended the SAME continuous weight, so a wheel's published share of
@@ -1710,6 +2067,52 @@ namespace QAdvanceFeedback.Core.Normalized
         private const double S90FallbackRatioOfSmax = 0.750 * 1.125; // = 0.84375
         private const double S75FallbackRatioOfSmax = 0.40;
 
+        /// <summary>
+        /// S75 and S90 as fractions of SMax, MEASURED from the deceleration curve using the same
+        /// corner-local detector that defines SMax itself (docs\cross-channel-smax-report.md).
+        /// <para/>
+        /// HOW THEY WERE OBTAINED. For each braking event the detector identifies the limit frame - the
+        /// frame of peak collapse confidence - giving that corner its own <c>G_limit</c> and
+        /// <c>S_limit</c>. Walking BACK through the same corner for the last rising crossing of
+        /// 0.75 x G_limit and 0.90 x G_limit and reading the source there gives, on the owner's own
+        /// four-session capture:
+        /// <code>
+        ///   S75/S_limit:  0.50  0.49  0.44  0.51     -> 0.49
+        ///   S90/S_limit:  0.70  0.78  0.61  0.80     -> 0.72
+        /// </code>
+        /// across two cars and two sources. The underlying relationship is genuinely monotone - median
+        /// source per grip band, measured against each corner's OWN detector-identified limit rather than
+        /// a session-wide or speed-binned peak, rises in every one of the four sessions. (An earlier pass
+        /// measured this against a speed-binned peak, which mixes corners together and made the
+        /// relationship look flat; that was a measurement error, not a property of the data.)
+        /// <para/>
+        /// WHY RATIOS AND NOT ABSOLUTE VALUES. The ratios are dimensionless and stable; the absolute
+        /// crossings are not, because <c>S_limit</c> is a single frame per corner while SMax is a high
+        /// percentile of the pooled confidence-weighted distribution - a deliberately more conservative
+        /// statistic of the same physical event. Applying the measured ratios to SMax keeps all three
+        /// knots on ONE basis and preserves the SHAPE the deceleration curve actually has. It follows
+        /// that S90 here is not literally "the source at 90% grip in this corner" - it is that
+        /// relationship expressed against the ceiling the channel actually publishes against.
+        /// </summary>
+        /// <para/>
+        /// SEED ONLY, NOT THE ANSWER. These are where a cold key STARTS; once a key has seen enough
+        /// corroborating corners it publishes its OWN learned ratios instead
+        /// (LockAnchorLearner.LearnedPhysicalS75Ratio/S90Ratio). Rounded to 0.75/0.50 at the owner's
+        /// request - both sit inside the measured spread (S90 0.61-0.80, S75 0.44-0.51) and a rounder
+        /// reference is easier to reason about when a key is still cold.
+        private const double PhysicalS90SeedRatio = 0.75;
+
+        /// <summary>S75's counterpart to <see cref="PhysicalS90SeedRatio"/> - see its remarks.</summary>
+        private const double PhysicalS75SeedRatio = 0.50;
+
+        /// <summary>
+        /// Percentile used ONLY to ask "does this key have usable physically-anchored evidence yet".
+        /// <see cref="KeyedScaleLearner.PhysicalAnchorLevel"/> returns null below the minimum sample bar,
+        /// which is the actual question here; the percentile chosen does not affect the answer, and the
+        /// VALUE is deliberately unused - the anchors come from the measured ratios, not from this read.
+        /// </summary>
+        private const double PhysicalAnchorReadyProbePercentile = 50.0;
+
         private static double? RatioOfSmaxFallback(double? smax, double ratio)
             => smax.HasValue && ClampMath.IsFinite(smax.Value) && smax.Value > 0.0 ? smax.Value * ratio : (double?)null;
 
@@ -1722,11 +2125,51 @@ namespace QAdvanceFeedback.Core.Normalized
         /// to the next with no intervening real evidence (see docs\release-1060-report.md, Part 3).
         /// </summary>
         private static bool TryBuildLockRangeCurveWithFallback(
-            LockAnchorLearner learner, string gameId, string carId, string sourceIdentity, double? smax, out MonotoneCubicCurve curve)
+            LockAnchorLearner learner, string gameId, string carId, string sourceIdentity, double? smax,
+            KeyedScaleLearner scaleLearner, out MonotoneCubicCurve curve)
         {
             curve = null;
             if (!smax.HasValue) return false;
 
+            // PHYSICALLY-ANCHORED ANCHORS, PREFERRED (docs\cross-channel-smax-report.md).
+            //
+            // WHY THE LEGACY ANCHORS BELOW ARE NO LONGER FIRST. LockAnchorLearner measures "the source
+            // value where deceleration reaches 75%/90% of this corner's own max-grip G" - a crossing on
+            // the RISING branch of the slip curve, i.e. BEFORE the tyre reaches its limit. SMax now sits
+            // at the limit itself (the corner-local collapse detector). Those are opposite sides of the
+            // curve's peak, so no amount of tuning reconciles them: measured on the owner's own 1.7.1
+            // capture the legacy anchors land at 17-36 against an SMax of 72-77, which builds a curve
+            // whose first knot is at a quarter of the range and makes ordinary braking feel like a lock.
+            //
+            // Both anchors are now MEASURED OFF THE DECELERATION CURVE, using the same corner-local
+            // detector that defines SMax - see PhysicalS90RatioOfSmax's own remarks for the derivation
+            // and the measured per-session numbers. All three knots therefore describe one physical
+            // event on one basis, which is the property that was missing.
+            //
+            // An earlier revision of this placed S90 at a percentile of the at-limit distribution and S75
+            // at the collapse onset. Both were stable, but neither was obtained from the physics the way
+            // SMax is - one was a statistic of the distribution, the other a fixed onset fraction - and
+            // together they built a badly shaped curve (knots at 15 / 70 / 75, so output reached 60 while
+            // the source was still in the teens and then crawled).
+            // THIS KEY'S OWN LEARNED RATIOS FIRST, the shipped ones only as the seed. The learned pair
+            // comes from real crossings of 0.75x/0.90x each completed corner's own limit G
+            // (LockAnchorLearner.ObserveCornerFrame/ResetRun); the constants below are the measured
+            // cross-session medians, used so a cold key starts from a good reference rather than from
+            // nothing and so a key that has not yet seen enough corroborating corners never publishes a
+            // one-corner outlier.
+            if (scaleLearner != null && scaleLearner.PhysicalAnchorLevel(gameId, carId, sourceIdentity, PhysicalAnchorReadyProbePercentile).HasValue)
+            {
+                double s75Ratio = learner.PhysicalS75Ratio(gameId, carId, sourceIdentity, PhysicalS75SeedRatio);
+                double s90Ratio = learner.PhysicalS90Ratio(gameId, carId, sourceIdentity, PhysicalS90SeedRatio);
+                if (TryBuildLockRangeCurve(smax.Value * s75Ratio, smax.Value * s90Ratio, smax.Value, out curve))
+                    return true;
+            }
+
+            // LEGACY CROSSING ANCHORS - retained so a key restored from persisted state, or one whose
+            // at-limit distribution is not yet ready, still produces a curve rather than dropping to
+            // plain Rescale. Superseded as the primary source, not deleted: LockAnchorLearner keeps
+            // learning and persisting exactly as before (see its own remarks and the Max-Grip Only
+            // pattern's contract, both of which are unchanged by this).
             double? s75 = learner.LearnedS75(gameId, carId, sourceIdentity);
             double? s90 = learner.LearnedS90(gameId, carId, sourceIdentity);
             if (s75.HasValue && s90.HasValue && TryBuildLockRangeCurve(s75.Value, s90.Value, smax.Value, out curve))
@@ -1737,6 +2180,47 @@ namespace QAdvanceFeedback.Core.Normalized
             return s75Fallback.HasValue && s90Fallback.HasValue
                 && TryBuildLockRangeCurve(s75Fallback.Value, s90Fallback.Value, smax.Value, out curve);
         }
+
+        /// <summary>
+        /// Max-Grip-Only's own mapping: the SAME piecewise construction the four-range curve uses, with
+        /// two segments instead of four - <c>{0, SMax, 100} -> {0, 80, 100}</c>.
+        /// <para/>
+        /// WHY NOT A PLAIN RESCALE. Max-Grip-Only used to publish <c>basis * 80 / SMax</c>, a single
+        /// straight line through the SMax anchor. That anchors the middle correctly but gets both ends
+        /// wrong, because nothing pins the top: with SMax 85 a full-scale source reads 94 and can never
+        /// reach 100, and with SMax 70 everything above 87.5 saturates at 100 and the top eighth of the
+        /// source range is indistinguishable. Pinning 100 -> 100 as a second segment fixes both ends
+        /// while leaving the SMax anchor exactly where it was, and makes this mode consistent with the
+        /// mapping mode rather than a different kind of thing.
+        /// </summary>
+        /// <summary>Fractions of SMax the two lower anchors sit at when they are DERIVED rather than
+        /// measured. Deliberately the same numbers the settings page derives with, so the boxes and the
+        /// published mapping never disagree.</summary>
+        private const double DerivedS90FractionOfSMax = 0.90;
+        private const double DerivedS75FractionOfSMax = 0.70;
+
+        /// <summary>The four-range curve with its two lower anchors derived from SMax - see
+        /// <see cref="DerivedS90FractionOfSMax"/>.</summary>
+        private static bool TryBuildDerivedRangeCurve(double smax, out MonotoneCubicCurve curve)
+            => TryBuildLockRangeCurve(smax * DerivedS75FractionOfSMax, smax * DerivedS90FractionOfSMax, smax, out curve);
+
+        private static bool TryBuildTwoRangeCurve(double smax, out MonotoneCubicCurve curve)
+        {
+            curve = null;
+            if (!ClampMath.IsFinite(smax)) return false;
+            if (smax < MinRangeGapNative) return false;
+            if (smax > 100.0 - MinRangeGapNative) return false;
+
+            curve = new MonotoneCubicCurve(
+                new[] { 0.0, smax, 100.0 },
+                new[] { 0.0, CanonicalNormalizedAtMaxGrip, 100.0 });
+            return true;
+        }
+
+        /// <summary>The normalized value the max-grip anchor maps to - the shared 80 both range curves
+        /// are built around, and the same number <see cref="KeyedScaleLearner.CanonicalAtLimitAnchor"/>
+        /// rescales toward.</summary>
+        private const double CanonicalNormalizedAtMaxGrip = 80.0;
 
         private static bool TryBuildLockRangeCurve(double s75, double s90, double smax, out MonotoneCubicCurve curve)
         {

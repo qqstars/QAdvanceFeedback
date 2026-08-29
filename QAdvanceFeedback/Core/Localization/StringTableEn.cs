@@ -49,13 +49,13 @@ namespace QAdvanceFeedback.Core.Localization
             // visible and switchable, at the top of the Sources section, regardless of whether SimHub
             // currently reports the four expected properties - see SettingsControl.xaml.cs's own remarks. ----
             ["Sources.Mode.Label"] = "Source:",
-            ["Sources.Mode.Manual"] = "Manual",
+            ["Sources.Mode.Manual"] = "Plugin Internal",
             ["Sources.Mode.ShakeIt"] = "ShakeIt Plugin Output Properties",
             ["Sources.ShakeItSetup.Lock"] = "Quick setup: in SimHub, enable the \"ShakeIt Motors\" plugin, create a profile, add a \"Wheels lock\" effect (group \"Slip and lock\"), tick \"Use legacy IRacing algorythm\", tick \"Export output value as a property\" and set \"Property name\" to exactly \"WheelLock.IRacing\", then tick \"Disable output\" so it drives no hardware. Full steps: docs\\shakeit-export-guide.md.",
             ["Sources.ShakeItSetup.Slip"] = "Quick setup: in SimHub, enable the \"ShakeIt Motors\" plugin, create a profile, add a \"Wheels slip\" effect (group \"Slip and lock\"), tick \"Use legacy IRacing algorythm\", tick \"Export output value as a property\" and set \"Property name\" to exactly \"WheelSlip.IRacing\", then tick \"Disable output\" so it drives no hardware. Full steps: docs\\shakeit-export-guide.md.",
             ["Sources.ShakeItUnavailable.Note"] = "Not published yet: SimHub is not currently reporting all four of ShakeIt Motors' exported wheel properties for this channel - follow the steps above, then reopen this tab. This channel keeps working meanwhile: it falls back to its own Raw values automatically until the export appears.",
-            ["Sources.Mode.ManualNote.Lock"] = "Manual mode: point each wheel's Source field at any SimHub property that reports a 0-100 value for that wheel - 0 means the wheel isn't locking at all, 100 means it's fully locked.",
-            ["Sources.Mode.ManualNote.Slip"] = "Manual mode: point each wheel's Source field at any SimHub property that reports a 0-100 value for that wheel - 0 means the wheel isn't slipping at all, 100 means it's fully spinning.",
+            ["Sources.Mode.ManualNote.Lock"] = "Plugin Internal: each wheel reads this plugin's own computed value by default. You can still point any wheel's Source field at another SimHub property that reports a 0-100 value for that wheel - 0 means the wheel isn't locking at all, 100 means it's fully locked.",
+            ["Sources.Mode.ManualNote.Slip"] = "Plugin Internal: each wheel reads this plugin's own computed value by default. You can still point any wheel's Source field at another SimHub property that reports a 0-100 value for that wheel - 0 means the wheel isn't slipping at all, 100 means it's fully spinning.",
 
             // ---- TRIGGER THRESHOLD (its own section, above Sources - owner-requested restructure;
             // was previously inside "Sources". Deliberately deviates from SimHub's own hard-coded
@@ -66,8 +66,8 @@ namespace QAdvanceFeedback.Core.Localization
             ["Sources.Threshold.LockBrake"] = "Brake pedal threshold (%)",
             ["Sources.Threshold.SlipBrake"] = "Brake pedal threshold (%)",
             ["Sources.Threshold.SlipThrottle"] = "Throttle pedal threshold (%)",
-            ["Sources.Threshold.Lock.Note"] = "Below this brake percentage, Wheel Lock is not active at all - both the Raw and Normalized values read 0, whichever Source below is selected. Default 20% (matches SimHub's own built-in value). If Source is set to ShakeIt Plugin Output Properties, note that ShakeIt already applies its OWN internal gate before publishing its value - this threshold can only make the channel MORE restrictive than ShakeIt's own, never less; lowering it below ShakeIt's own gate will not make ShakeIt's values appear any earlier.",
-            ["Sources.Threshold.Slip.Note"] = "Slip checks the brake threshold FIRST: if the brake pedal is pressed past its own threshold, that takes priority and slip reads the same braking value Lock does. Only if brake is below its threshold is throttle checked against its own threshold (and only while the clutch is under 5%, SimHub's own fixed rule). Below whichever threshold applies, Wheel Slip is not active at all - both Raw and Normalized read 0, whichever Source below is selected (see Wheel Lock's own note above on the ShakeIt composition caveat). Default: brake pedal pressed 100% (which means only throttle pedal pressed, checked against its own 40% default, will trigger Wheel Slip) - a deliberate choice so Slip is throttle-only out of the box, even though SimHub's own built-in legacy algorithm applies the identical brake gate to Slip as it does to Lock. Lower the brake threshold toward 20% (matching Wheel Lock's own default) if you prefer Slip to respond to braking the same way SimHub's own algorithm and Wheel Lock do.",
+            ["Sources.Threshold.Lock.Note"] = "Below this brake percentage, Wheel Lock is silent: the Normalized and Projected values read 0, whichever Source is selected. Default 20%. NOTE the Raw values are deliberately NOT gated by this on most titles - Raw exists to reproduce SimHub ShakeIt exactly, and ShakeIt has no pedal threshold of its own, so gating it would make Raw and ShakeIt disagree. Raw is gated only on the simple pedal-and-speed fallback algorithms, where this threshold replaces the fixed 20% ShakeIt hard-codes there. Everything you actually drive from - Normalized, Projected, and the ShakeIt effects fed by them - respects this setting on every title. If Source is set to ShakeIt Plugin Output Properties, ShakeIt also applies its OWN internal gate before publishing, so this threshold can only make the channel MORE restrictive, never less - lowering it will not make ShakeIt's values appear any earlier.",
+            ["Sources.Threshold.Slip.Note"] = "Slip checks the brake threshold FIRST: if the brake pedal is pressed past its own threshold, that takes priority and slip reads the same braking value Lock does. Only if brake is below its threshold is throttle checked against its own threshold (and only while the clutch is under 5%, SimHub's own fixed rule). Below whichever threshold applies, Wheel Slip is silent: the Normalized and Projected values read 0, whichever Source is selected - see Wheel Lock's own note above for why the Raw values are deliberately not gated the same way, and for the ShakeIt composition caveat. Default: brake pedal pressed 100% (which means only throttle pedal pressed, checked against its own 40% default, will trigger Wheel Slip) - a deliberate choice so Slip is throttle-only out of the box, even though SimHub's own built-in legacy algorithm applies the identical brake gate to Slip as it does to Lock. Lower the brake threshold toward 20% (matching Wheel Lock's own default) if you prefer Slip to respond to braking the same way SimHub's own algorithm and Wheel Lock do.",
             ["Sources.Threshold.LockSensibility"] = "Lock sensitivity",
             ["Sources.Threshold.LockSensibility.Note"] = "Matches SimHub's own \"Lock sensitivity\" setting exactly (0-100, default 50). Higher values respond sooner to a firm brake, but also cap how strong the reading can ever get - only the default (50) can reach a genuine full-strength reading; values above 50 trade top-end strength for an earlier response.",
 
@@ -92,7 +92,17 @@ namespace QAdvanceFeedback.Core.Localization
             ["Curve.Preset.Linear"] = "Linear",
             ["Curve.Preset.Curve"] = "Curve",
             ["Curve.Preset.Custom"] = "Custom",
-            ["Curve.Column.RawValue"] = "raw value",
+            ["Curve.Preset.LinearCustom"] = "Linear (customised)",
+            ["Curve.Preset.CurveCustom"] = "Curve (customised)",
+            ["Curve.Column.RawValue"] = "source value",
+            ["Curve.Graph.Source"] = "Source value -> Projected value",
+            ["KeyData.Marker.SMax"] = "SMax",
+            ["KeyData.Marker.S90"] = "S90",
+            ["KeyData.Marker.S75"] = "S75",
+            ["KeyData.Marker.Perfect"] = "Perfect",
+            ["KeyData.Marker.Great"] = "Great",
+            ["KeyData.Marker.Good"] = "Good",
+            ["Curve.Graph.Normalized"] = "Normalized value -> Final Projected value",
             ["Curve.Column.OutputValue"] = "output value",
             // PRE-RELEASE ADDITION (configurable per-setpoint flatten ranges): a third NumericUpDown
             // column per setpoint row, defaulting to 3/2/2 for Powerful/Ideal/Max Grip - see
@@ -168,6 +178,33 @@ namespace QAdvanceFeedback.Core.Localization
             ["Curve.NormalizePattern.Mapping"] = "Max-Grip/S90/S75 Mapping",
             ["Curve.NormalizePattern.MaxGripOnly.Desc"] = "Only applies general scaling based on the Max-Grip point. Only the Max-Grip normalized output is guaranteed reliable.",
             ["Curve.NormalizePattern.Mapping.Desc"] = "Applies scaling based on the 100%/90%/75% points of Max-Grip, each range scaled individually. The 100%/90%/75% normalized outputs are guaranteed reliable.",
+            // ---- KEY DATA POINTS (v1.0.7.2) ----
+            ["KeyData.Section.Lock"] = "Key Data Points Settings - SMax/S90/S75",
+            ["KeyData.Section.Slip"] = "Key Data Points Settings - Perfect/Great/Good",
+            ["KeyData.AutoGenerate.Label"] = "Auto Generate",
+            ["KeyData.AutoGenerate.Desc"] = "Learn these points from your own driving. Learning always runs; turning this off only makes the plugin publish your configured values instead.",
+            ["KeyData.PerGame.Label"] = "Per-Game",
+            ["KeyData.PerGame.Desc"] = "Keep a separate set of values for each game, instead of one set shared by all of them.",
+            ["KeyData.Lock.SMax.Label"] = "Source value of Max-Grip",
+            ["KeyData.Lock.S90.Label"] = "Source value of 90% Grip",
+            ["KeyData.Lock.S75.Label"] = "Source value of 75% Grip",
+            ["KeyData.Slip.SMax.Label"] = "Source value of Perfect point",
+            ["KeyData.Slip.S90.Label"] = "Source value of Great point",
+            ["KeyData.Slip.S75.Label"] = "Source value of Good point",
+            ["KeyData.Lock.SMax.Desc"] = "The source reading at which the wheel is fully at its locking limit.",
+            ["KeyData.Lock.S90.Desc"] = "The source reading at 90% of available grip.",
+            ["KeyData.Lock.S75.Desc"] = "The source reading at 75% of available grip.",
+            ["KeyData.Slip.SMax.Desc"] = "The source reading at which wheelspin is at its limit.",
+            ["KeyData.Slip.S90.Desc"] = "The source reading for a great, near-limit launch.",
+            ["KeyData.Slip.S75.Desc"] = "The source reading for a good, controlled launch.",
+            ["KeyData.LearnedPrefix"] = "[Learned Value: {0}]  ",
+            ["KeyData.LearnedPending"] = "[Learned Value:  --.-]  ",
+            ["KeyData.Waiting"] = "Warming up - your values apply once this session has finished calibrating and you have driven for 30 seconds.",
+            ["KeyData.Invalid"] = "Needs Max-Grip >= 90% >= 75%, and every value between 0 and 100.",
+            ["KeyData.Invalid.Slip"] = "Needs Perfect >= Great >= Good, and every value between 0 and 100.",
+            ["KeyData.ResetToDefault"] = "Reset to default",
+            ["Curve.NormalizePattern.Slip.MaxGripOnly"] = "Perfect Point Only",
+            ["Curve.NormalizePattern.Slip.Mapping"] = "Perfect/Great/Good Mapping",
 
             // Band meaning these anchors are built around (verified numerically, see
             // docs\refinements-report.md; the anchor rescale that moved the grip-limit anchor onto
@@ -225,6 +262,7 @@ namespace QAdvanceFeedback.Core.Localization
             ["GForce.DecelMax.Label"] = "Maximum braking G",
             ["GForce.Mode.Fixed"] = "Fixed",
             ["GForce.Mode.Auto"] = "Auto (learn while driving)",
+            ["GForce.Mode.Auto.Short"] = "Auto",
             ["GForce.Readout.Fixed"] = "Fixed: {0:0.0}G",
             ["GForce.Readout.Auto.Detected"] = "Default: {0:0.0}G. Auto detected: {1:0.0}G",
             ["GForce.Readout.Auto.NoDataYet"] = "Default: {0:0.0}G. Auto: still using default (no data yet)",
@@ -269,6 +307,11 @@ namespace QAdvanceFeedback.Core.Localization
             // drifts from the DLL actually shipped, the same lesson docs\curve-help-text-report.md
             // already drew for the curve editor's own help text).
             ["General.Version.Label"] = "QAdvanceFeedback version: {0}",
+            ["General.ShakeItImport.Group"] = "ShakeIt Reference Data",
+            ["General.ShakeItImport.Note"] = "This plugin's Raw values reproduce SimHub's ShakeIt Motors arithmetic exactly. The one input it cannot ship is SimHub's own per-game calibration file, which SimHub is licensed to distribute and this plugin is not. Importing it from your SimHub installation makes the Raw values match ShakeIt's for every game that file covers. This runs automatically the first time the plugin starts with no calibration of its own, so you normally never need this button.",
+            ["General.ShakeItImport.Override"] = "Override current data if exists?",
+            ["General.ShakeItImport.Override.Note"] = "Off (default): where this plugin has already learned or imported a calibration for a game, that entry is kept and the imported one is skipped. On: the imported SimHub values replace this plugin's own for every matching entry. Leave it off unless you specifically want to discard what this plugin has learned and go back to SimHub's shipped numbers.",
+            ["General.ShakeItImport.Button"] = "Convert SimHub ShakeIt Reference Data",
 
             // ---- Plugin health section (General tab) - invisible/one-line when nothing is wrong;
             // see Core.Health.HealthRegistry. ----

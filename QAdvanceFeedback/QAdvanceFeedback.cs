@@ -47,7 +47,234 @@ namespace QAdvanceFeedback
         // Layer 2 (SimHub telemetry adapter) and Layer 3 (Raw calculator engine) - see
         // docs\architecture.md for the full layer model.
         private readonly ITelemetryAdapter _adapter = new SimHubTelemetryAdapter();
-        private readonly ILegacyWheelLockSlipEngine _legacyEngine = new RawCalculatorEngine();
+        // Concrete rather than ILegacyWheelLockSlipEngine because this plugin also owns Layer 3's
+        // PERSISTED ShakeIt calibration (RuntimeDocument Version 11). The interface stays a pure
+        // "one sample in, one result out" contract for every other implementation and test.
+        private readonly RawCalculatorEngine _legacyEngine = new RawCalculatorEngine();
+
+        /// <summary>Everything converted from SimHub's shipped ShakeIt reference data - presets, per-game
+        /// wheel-speed-delta bounds, and the source timestamps that make the start-up re-import cheap.
+        /// See <see cref="ShakeItPrecalibrationConverter"/>.</summary>
+        private ShakeItImportState _shakeIt = new ShakeItImportState();
+
+        /// <summary>The game whose presets are currently installed in the engine, so the per-game preset
+        /// set is resolved once per title rather than every frame.</summary>
+        private string _precalibrationInstalledForGame;
+
+        /// <summary>Frames remaining before the calibration histogram is handed to the runtime cache.
+        /// Throttled because the histogram changes slowly and copying it is far more expensive than the
+        /// small dictionaries the other per-frame saves push.</summary>
+        private int _calibrationSaveCountdown;
+
+        private const int CalibrationSaveIntervalFrames = 300;
+        /// <summary>
+        /// Turn one channel's persisted key data points into the plain triple the engine consumes.
+        /// <para/>
+        /// Resolution order, per the owner's own rules:
+        /// <list type="number">
+        /// <item>Auto - nothing to apply, the learned values are published.</item>
+        /// <item>A configured value for this context (global, or this game under Per-Game).</item>
+        /// <item>The shipped default for this SOURCE TYPE - our Raw and a ShakeIt export have known
+        /// scales, so each gets its own numbers. A source we do not recognise (a script, an NCalc
+        /// expression) deliberately gets NO default: there is no honest guess for a signal whose scale
+        /// has never been seen, so such a channel stays on its learned values until the driver
+        /// configures something.</item>
+        /// </list>
+        /// Max-Grip-Only derives the two lower anchors rather than reading them, so the hidden values
+        /// can never drift out of order behind the driver's back.
+        /// </summary>
+        private static ManualAnchors ResolveManualAnchors(
+            KeyDataPointSettings keyData, string gameId, string sourceIdentity, bool isLockChannel,
+            NormalizePattern pattern, KeyDataPointDefaults defaults)
+        {
+            if (keyData == null || keyData.AutoGenerate) return ManualAnchors.None;
+
+            double sMax, s90, s75;
+            if (!keyData.TryGetManual(gameId, sourceIdentity, out sMax, out s90, out s75))
+            {
+                // The CONFIGURED per-source starting points, so a driver's retuning of the defaults block
+                // reaches the output the same way their typed values do.
+                if (!KeyDataPointSettings.TryResolveShippedDefaults(
+                        sourceIdentity, isLockChannel, defaults, out sMax, out s90, out s75))
+                    return ManualAnchors.None;   // unknown source, nothing configured - stay on learned
+            }
+
+            if (pattern == NormalizePattern.MaxGripOnly)
+                KeyDataPointSettings.DeriveLowerAnchors(sMax, out s90, out s75);
+
+            return KeyDataPointSettings.IsValid(sMax, s90, s75)
+                ? ManualAnchors.Of(sMax, s90, s75)
+                : ManualAnchors.None;
+        }
+
+        /// <summary>
+        /// Keep the settings page's "[Learned Value: xx.x]" hints current while it is open.
+        /// <para/>
+        /// Costs nothing when the page is closed (the weak reference simply fails to resolve), and reads
+        /// only already-computed learner state - it never drives learning or output. The values pushed
+        /// are the SAME ones the Normalized layer would publish under Auto, which is what makes the hint
+        /// meaningful as a reference while the driver is typing a manual value.
+        /// </summary>
+        /// <summary>How often the settings page's learned readouts are refreshed. Matches the cadence
+        /// the G-Force learned readout already uses - a learned ceiling moves far too slowly to be worth
+        /// marshalling onto the UI thread every frame, and rewriting the value boxes 60 times a second
+        /// would be churn the driver cannot even perceive.</summary>
+        private const double KeyDataPushIntervalSeconds = 1.0;
+
+        private double _secondsSinceKeyDataPush;
+
+        private void PushLearnedKeyDataPointsToSettingsUi(
+            string gameId, string carId, string lockSourceIdentity, string slipSourceIdentity, double dtSeconds)
+        {
+            Settings.SettingsControl control;
+            if (_settingsControl == null || !_settingsControl.TryGetTarget(out control) || control == null)
+            {
+                _secondsSinceKeyDataPush = 0.0;   // no page open - start the clock fresh when one appears
+                return;
+            }
+
+            if (ClampMath.IsFinite(dtSeconds) && dtSeconds > 0.0) _secondsSinceKeyDataPush += dtSeconds;
+            if (_secondsSinceKeyDataPush < KeyDataPushIntervalSeconds) return;
+            _secondsSinceKeyDataPush = 0.0;
+
+            bool ignored;
+            double? lockSMax = _normalizedEngine.LockScaleLearner.LearnedCeiling(gameId, carId, lockSourceIdentity, out ignored);
+            double? slipSMax = _normalizedEngine.SlipScaleLearner.LearnedCeiling(gameId, carId, slipSourceIdentity, out ignored);
+
+            // Lock's lower anchors are MEASURED (ratios learned per corner); Slip's are DERIVED, because
+            // it has nothing to measure them from - see KeyDataPointSettings.DeriveLowerAnchors.
+            double? lockS90 = null, lockS75 = null;
+            if (lockSMax.HasValue && lockSMax.Value > 0.0)
+            {
+                lockS90 = lockSMax.Value * _normalizedEngine.LockAnchors.PhysicalS90Ratio(
+                    gameId, carId, lockSourceIdentity, KeyDataPointSettings.DerivedS90Fraction);
+                lockS75 = lockSMax.Value * _normalizedEngine.LockAnchors.PhysicalS75Ratio(
+                    gameId, carId, lockSourceIdentity, KeyDataPointSettings.DerivedS75Fraction);
+            }
+
+            double? slipS90 = null, slipS75 = null;
+            if (slipSMax.HasValue && slipSMax.Value > 0.0)
+            {
+                double a90, a75;
+                KeyDataPointSettings.DeriveLowerAnchors(slipSMax.Value, out a90, out a75);
+                slipS90 = a90; slipS75 = a75;
+            }
+
+            control.Dispatcher.BeginInvoke((Action)(() => control.UpdateLearnedKeyDataPoints(
+                gameId, lockSourceIdentity, slipSourceIdentity, _keyDataRevision,
+                lockSMax, lockS90, lockS75,
+                _normalizedEngine.ManualGateReady(gameId, carId, lockSourceIdentity, isLockChannel: true),
+                slipSMax, slipS90, slipS75,
+                _normalizedEngine.ManualGateReady(gameId, carId, slipSourceIdentity, isLockChannel: false))));
+        }
+
+        /// <summary>
+        /// Write the learned values into a manual slot the first time that slot is eligible, and persist
+        /// immediately - once per slot.
+        /// <para/>
+        /// A slot is (mode, game, source), so this re-arms exactly where the owner asked: a never-played
+        /// game in per-game mode seeds again, and so does a newly selected source. Global mode seeds once
+        /// per source and does not re-seed for a new title.
+        /// <para/>
+        /// Saves with <see cref="ConfigStore.Save"/> directly rather than ApplySettings, which also
+        /// rebuilds the projected engine - correct from the settings page, but not something to do in the
+        /// middle of a frame. The manual anchors are re-resolved from settings every frame anyway, so the
+        /// new values take effect on the next one without any rebuild.
+        /// </summary>
+        private void AutoPersistSeededKeyDataPoints(
+            string gameId, string carId, string lockSourceIdentity, string slipSourceIdentity)
+        {
+            if (_settings == null) return;
+            _lastCarIdForKeyData = carId;
+            _lastGameIdForKeyData = gameId;
+
+            bool changed = false;
+            changed |= TrySeedKeyDataSlot(_settings.Lock.KeyDataPoints, gameId, lockSourceIdentity,
+                _normalizedEngine.ManualGateReady(gameId, carId, lockSourceIdentity, isLockChannel: true),
+                _settings.Lock.NormalizePattern, isLockChannel: true);
+            changed |= TrySeedKeyDataSlot(_settings.Slip.KeyDataPoints, gameId, slipSourceIdentity,
+                _normalizedEngine.ManualGateReady(gameId, carId, slipSourceIdentity, isLockChannel: false),
+                _settings.Slip.NormalizePattern, isLockChannel: false);
+
+            if (!changed) return;
+            ConfigStore.Save(_configPath, _settings, LogWarning);
+            _keyDataRevision++;
+        }
+
+        private bool TrySeedKeyDataSlot(KeyDataPointSettings keyData, string gameId, string sourceIdentity,
+            bool gateReady, NormalizePattern pattern, bool isLockChannel)
+        {
+            if (keyData == null || keyData.AutoGenerate) return false;
+            if (!gateReady) return false;
+            if (keyData.PerGame && string.IsNullOrEmpty(gameId)) return false;
+            if (keyData.IsSeeded(gameId, sourceIdentity)) return false;
+
+            bool ignored;
+            KeyedScaleLearner learner = isLockChannel
+                ? _normalizedEngine.LockScaleLearner : _normalizedEngine.SlipScaleLearner;
+            double? learnedSMax = learner.LearnedCeiling(gameId, _lastCarIdForKeyData, sourceIdentity, out ignored);
+            if (!learnedSMax.HasValue || learnedSMax.Value <= 0.0) return false;
+
+            double sMax = Math.Round(learnedSMax.Value, 1);
+            double s90, s75;
+            if (isLockChannel && pattern == NormalizePattern.Mapping)
+            {
+                s90 = Math.Round(sMax * _normalizedEngine.LockAnchors.PhysicalS90Ratio(
+                    gameId, _lastCarIdForKeyData, sourceIdentity, KeyDataPointSettings.DerivedS90Fraction), 1);
+                s75 = Math.Round(sMax * _normalizedEngine.LockAnchors.PhysicalS75Ratio(
+                    gameId, _lastCarIdForKeyData, sourceIdentity, KeyDataPointSettings.DerivedS75Fraction), 1);
+            }
+            else
+            {
+                KeyDataPointSettings.DeriveLowerAnchors(sMax, out s90, out s75);
+                s90 = Math.Round(s90, 1); s75 = Math.Round(s75, 1);
+            }
+
+            if (!KeyDataPointSettings.IsValid(sMax, s90, s75)) return false;
+
+            keyData.SetManual(gameId, sourceIdentity, sMax, s90, s75, seeded: true);
+            return true;
+        }
+
+        /// <summary>The car the last seed attempt ran against - the learners key by it, so it must match
+        /// what the frame loop is currently computing with.</summary>
+        private string _lastCarIdForKeyData;
+
+        /// <summary>Bumped whenever a slot is seeded, so an open settings page knows to reload its boxes
+        /// even though the (mode, game, source) context has not changed.</summary>
+        private int _keyDataRevision;
+
+        /// <summary>
+        /// The learned ceiling the settings page should display for a channel, WITHOUT needing a game to
+        /// be running.
+        /// <para/>
+        /// Prefers the key currently being driven, which is the precise answer. Falls back to the best
+        /// entry the parameters file holds for this same source - so a driver who opens the settings on
+        /// the SimHub menu still sees what the plugin learned last time, rather than a shipped default
+        /// that its own evidence has long since superseded.
+        /// </summary>
+        public double? GetLearnedCeilingForDisplay(bool isLockChannel, string sourceIdentity)
+        {
+            KeyedScaleLearner learner = isLockChannel
+                ? _normalizedEngine.LockScaleLearner : _normalizedEngine.SlipScaleLearner;
+
+            if (!string.IsNullOrEmpty(_lastGameIdForKeyData))
+            {
+                bool ignored;
+                double? current = learner.LearnedCeiling(
+                    _lastGameIdForKeyData, _lastCarIdForKeyData, sourceIdentity, out ignored);
+                if (current.HasValue && current.Value > 0.0) return current;
+            }
+
+            return learner.PersistedCeilingForSource(sourceIdentity);
+        }
+
+        /// <summary>The game the last frame reported - paired with <see cref="_lastCarIdForKeyData"/>.</summary>
+        private string _lastGameIdForKeyData;
+
+        /// <summary>The live settings page, if one is open - see GetWPFSettingsControl for why weak.</summary>
+        private WeakReference<Settings.SettingsControl> _settingsControl;
+
         private readonly NormalizedWheelLockSlipEngine _normalizedEngine = new NormalizedWheelLockSlipEngine();
         private readonly GForceEngine _gforceEngine = new GForceEngine();
         private readonly WheelSourceResolver _sourceResolver = new WheelSourceResolver();
@@ -133,6 +360,46 @@ namespace QAdvanceFeedback
             // Raw-side per-source calibration learner's cold ceilings. ImportAll seeds each key's COLD
             // reference; this session's own hot evidence (dispersion-weighted) then blends with it live -
             // see KeyedScaleLearner.PublishedCeiling/PersistedCeiling's own remarks.
+            // ---- LAYER 3 SHAKEIT CALIBRATION (RuntimeDocument Version 11, 1.0.7.1).
+            // Resume the calibration histogram exactly as SimHub resumes its own - no reference, no
+            // blend, no handover; the learner simply continues accumulating where it stopped.
+            _runtimeStore.LoadShakeItCalibration(out var shakeItCalibration);
+            _legacyEngine.Calibration.ImportCalibrations(shakeItCalibration);
+
+            _runtimeStore.LoadShakeItPrecalibration(out _shakeIt.Presets);
+            _runtimeStore.LoadShakeItGameBounds(out _shakeIt.Bounds);
+            _runtimeStore.LoadShakeItSourceTimestamps(out _shakeIt.SourceTimestamps);
+
+            // IMPORT ON EVERY LAUNCH, NEVER OVERRIDING. Running this each start is what keeps the plugin
+            // current: when SimHub updates and ships reference data for new games, it is picked up
+            // automatically rather than waiting for someone to press a button. It is cheap because
+            // onlyChangedFiles compares each source file's last-write time against the one recorded from
+            // the previous import - an unchanged installation costs three timestamp reads and opens
+            // nothing. overrideExisting is hard-coded false here: an automatic, unattended import must
+            // never replace what this plugin has learned. Replacing that is the settings button's job,
+            // and only with its checkbox ticked.
+            try
+            {
+                ShakeItConversionOutcome imported = ShakeItPrecalibrationConverter.Convert(
+                    ShakeItPrecalibrationConverter.DefaultRootDirectory(), _shakeIt,
+                    overrideExisting: false, onlyChangedFiles: true);
+
+                if (imported.FilesRead > 0)
+                {
+                    _runtimeStore.SaveShakeItPrecalibration(_shakeIt.Presets);
+                    _runtimeStore.SaveShakeItGameBounds(_shakeIt.Bounds);
+                    _runtimeStore.SaveShakeItSourceTimestamps(_shakeIt.SourceTimestamps);
+                }
+
+                LogInfoIfDiagnostics("ShakeIt reference data: " + imported.Message);
+            }
+            catch (Exception e)
+            {
+                // A missing or unreadable SimHub install must never stop the plugin loading - Layer 3
+                // simply calibrates from scratch, exactly as ShakeIt itself does on a fresh install.
+                LogWarning("ShakeIt reference data import skipped: " + e.Message);
+            }
+
             _runtimeStore.LoadLockScaleLearners(out var lockScaleData);
             _normalizedEngine.LockScaleLearner.ImportAll(lockScaleData);
             _runtimeStore.LoadSlipScaleLearners(out var slipScaleData);
@@ -233,6 +500,22 @@ namespace QAdvanceFeedback
 
                 // rawTelemetry (captured just above) drives the branch dispatch this frame - see
                 // WheelSlipBranchSelector/RawCalculatorEngine's own remarks.
+                // LAYER 3 SHAKEIT CALIBRATION: name the (track, car) these frames belong to. SimHub
+                // keys its calibrations as track;car;metric, so using the same two fields is what makes
+                // an imported ShakeIt calibration line up with ours entry for entry.
+                _legacyEngine.SetContext(data.NewData.TrackIdWithConfig, data.NewData.CarModel);
+
+                if (!string.Equals(_precalibrationInstalledForGame, gameId, StringComparison.Ordinal))
+                {
+                    _precalibrationInstalledForGame = gameId;
+                    // Presets are per GAME in SimHub, so they are swapped on a title change and never
+                    // allowed to leak from one title into another.
+                    _legacyEngine.Calibration.SetPrecalibration(
+                        ShakeItPrecalibrationConverter.ResolveForGame(_shakeIt.Presets, gameId));
+                    _legacyEngine.Calibration.SetGameBounds(
+                        ShakeItPrecalibrationConverter.ResolveBoundsForGame(_shakeIt.Bounds, gameId));
+                }
+
                 LegacyWheelLockSlipResult legacy = _legacyEngine.Compute(sample, thresholds, lockAggregation, slipAggregation, rawTelemetry);
                 _publisher.UpdateRaw(legacy);
 
@@ -292,6 +575,26 @@ namespace QAdvanceFeedback
                 // Pattern dropdown takes effect on the very next frame with no engine rebuild. Lock-only:
                 // Slip has no selector and the engine's own Slip call site never reads this flag.
                 _normalizedEngine.LockNormalizePattern = _settings.Lock.NormalizePattern;
+                _normalizedEngine.SlipNormalizePattern = _settings.Slip.NormalizePattern;
+
+                // KEY DATA POINTS (v1.0.7.2) - resolved fresh every frame, exactly like the pattern above,
+                // so a settings change lands on the next frame. The Settings layer owns the per-game
+                // selection, the source-type defaults and the validation; the engine is handed a plain
+                // resolved triple and decides only WHEN to apply it (ManualOverrideGate). Learning itself
+                // is untouched by any of this and keeps running whatever the driver has configured.
+                _normalizedEngine.LockManualAnchors = ResolveManualAnchors(
+                    _settings.Lock.KeyDataPoints, gameId, lockSourceIdentity, isLockChannel: true,
+                    _settings.Lock.NormalizePattern, _settings.KeyDataPointDefaults);
+                _normalizedEngine.SlipManualAnchors = ResolveManualAnchors(
+                    _settings.Slip.KeyDataPoints, gameId, slipSourceIdentity, isLockChannel: false,
+                    _settings.Slip.NormalizePattern, _settings.KeyDataPointDefaults);
+
+                // THE ONE-TIME SEED RUNS HERE, in the frame loop - NOT in the settings page. It must not
+                // depend on whether the driver happens to have the page open, or "play a new game and the
+                // value updates once" would silently not happen for anyone who never opens it.
+                AutoPersistSeededKeyDataPoints(gameId, carId, lockSourceIdentity, slipSourceIdentity);
+                PushLearnedKeyDataPointsToSettingsUi(gameId, carId, lockSourceIdentity, slipSourceIdentity,
+                    sample.Dt.HasValue ? sample.Dt.Value.TotalSeconds : 0.0);
 
                 NormalizedWheelLockSlipResult normalized = _normalizedEngine.Compute(
                     sample, lockSources, slipSources, gameId, carId, thresholds, lockAggregation, slipAggregation,
@@ -304,10 +607,17 @@ namespace QAdvanceFeedback
                     _normalizedEngine.LockSourceFallbackActive, _normalizedEngine.SlipSourceFallbackActive);
                 _publisher.UpdateSurfaceLearning(
                     _normalizedEngine.SurfaceEverReportedLoose, _normalizedEngine.LockLooseFraction, _normalizedEngine.SlipLooseFraction);
+                // TIERED COLD-START REFERENCE SYSTEM (v1.0.7, docs\v107-tiered-coldstart-report.md).
+                _publisher.UpdateColdStartTier(
+                    _normalizedEngine.LockColdStartTier.ToString(), _normalizedEngine.SlipColdStartTier.ToString());
 
                 double dtSeconds = sample.Dt.HasValue && sample.Dt.Value.TotalSeconds > 0 ? sample.Dt.Value.TotalSeconds : 0.0;
+                // TIERED COLD-START REFERENCE SYSTEM (v1.0.7) - each channel's own resolved tier decides
+                // Layer 5's Stage-1 floor (0.5/0.6/0.7/0.8 for Tier 1/2/3/4 - see ColdStartTierFloors),
+                // replacing the fixed 0.5 every pre-1.0.7 build used unconditionally.
                 ProjectedWheelLockSlipResult projected = _projectedEngine.Compute(normalized, dtSeconds,
-                    _normalizedEngine.LockColdStartConfidence, _normalizedEngine.SlipColdStartConfidence);
+                    _normalizedEngine.LockColdStartConfidence, _normalizedEngine.SlipColdStartConfidence,
+                    _normalizedEngine.LockColdStartFloor, _normalizedEngine.SlipColdStartFloor);
                 _publisher.UpdateProjected(projected);
 
                 // ---- G-force channels.
@@ -365,6 +675,13 @@ namespace QAdvanceFeedback
 
                 // ---- Runtime persistence: in-memory cache only every frame (see RuntimeStore's own
                 // remarks) - the background timer/Flush is what actually reaches disk.
+                // LAYER 3 SHAKEIT CALIBRATION - throttled, unlike the small dictionaries below.
+                if (--_calibrationSaveCountdown <= 0)
+                {
+                    _calibrationSaveCountdown = CalibrationSaveIntervalFrames;
+                    _runtimeStore.SaveShakeItCalibration(_legacyEngine.Calibration.ExportCalibrations());
+                }
+
                 _runtimeStore.SaveLockLearners(_normalizedEngine.LockLearners.ExportAll());
                 _runtimeStore.SaveSlipLearners(_normalizedEngine.SlipLearners.ExportAll());
                 // COLD/WARM (item 3): ExportAll itself protects an already-persisted cold ceiling from a
@@ -468,6 +785,42 @@ namespace QAdvanceFeedback
             }
         }
 
+        /// <summary>
+        /// Imports SimHub's shipped ShakeIt precalibration on demand - the settings tab's "Convert
+        /// SimHub ShakeIt Reference Data" button. Persists the result and re-installs the presets for
+        /// the running title immediately, so the effect is audible without a restart.
+        /// </summary>
+        /// <param name="overrideExisting">The tab's "Override current data if exists?" checkbox. False
+        /// keeps whatever this plugin already holds for a game; true replaces it with SimHub's.</param>
+        public ShakeItConversionOutcome ImportShakeItPrecalibration(bool overrideExisting)
+        {
+            try
+            {
+                // onlyChangedFiles FALSE: an explicit button press re-reads every file regardless of
+                // timestamps, so a driver who wants to force a refresh (or who has just ticked the
+                // override box) always gets one.
+                ShakeItConversionOutcome outcome = ShakeItPrecalibrationConverter.Convert(
+                    ShakeItPrecalibrationConverter.DefaultRootDirectory(), _shakeIt,
+                    overrideExisting, onlyChangedFiles: false);
+
+                _runtimeStore?.SaveShakeItPrecalibration(_shakeIt.Presets);
+                _runtimeStore?.SaveShakeItGameBounds(_shakeIt.Bounds);
+                _runtimeStore?.SaveShakeItSourceTimestamps(_shakeIt.SourceTimestamps);
+
+                // Force the next frame to re-resolve this title's presets rather than waiting for a
+                // game change that may never come while the driver is sitting in the settings tab.
+                _precalibrationInstalledForGame = null;
+
+                LogInfoIfDiagnostics("ShakeIt precalibration import: " + outcome.Message);
+                return outcome;
+            }
+            catch (Exception e)
+            {
+                SimHub.Logging.Current.Error("QAdvanceFeedback: ShakeIt precalibration import failed - " + e);
+                return new ShakeItConversionOutcome { SourceFound = false, Message = "Import failed: " + e.Message };
+            }
+        }
+
         public void End(PluginManager pluginManager)
         {
             try
@@ -476,6 +829,9 @@ namespace QAdvanceFeedback
 
                 // Final, synchronous flush - guaranteed to write the last few seconds of learning
                 // before the process is allowed to exit (see RuntimeStore.Flush's own remarks).
+                // The calibration save is throttled during play, so force a final one here.
+                _runtimeStore?.SaveShakeItCalibration(_legacyEngine.Calibration.ExportCalibrations());
+
                 _runtimeStore?.Flush();
                 _runtimeStore?.Dispose();
 
@@ -506,7 +862,12 @@ namespace QAdvanceFeedback
         {
             try
             {
-                return new Settings.SettingsControl(this, pluginManager);
+                var control = new Settings.SettingsControl(this, pluginManager);
+                // WEAK, deliberately: SimHub owns this control's lifetime and may discard it whenever the
+                // settings page closes. A strong field here would keep a dead WPF tree alive for the rest
+                // of the session, and would be a leak every time the page is reopened.
+                _settingsControl = new WeakReference<Settings.SettingsControl>(control);
+                return control;
             }
             catch (Exception e)
             {

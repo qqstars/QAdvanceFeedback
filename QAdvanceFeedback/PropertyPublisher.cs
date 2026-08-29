@@ -87,6 +87,9 @@ namespace QAdvanceFeedback
             AttachSafe(plugin, "Diag.Slip.SourceScaleCeilingIsPrimaryTier", () => (object)_slipScaleCeilingIsPrimaryTier);
             AttachSafe(plugin, "Diag.Lock.SourceFallbackActive", () => (object)_lockSourceFallbackActive);
             AttachSafe(plugin, "Diag.Slip.SourceFallbackActive", () => (object)_slipSourceFallbackActive);
+            // TIERED COLD-START REFERENCE SYSTEM (v1.0.7, docs\v107-tiered-coldstart-report.md).
+            AttachSafe(plugin, "Diag.Lock.ColdStartTier", () => (object)_lockColdStartTier);
+            AttachSafe(plugin, "Diag.Slip.ColdStartTier", () => (object)_slipColdStartTier);
 
             AttachSafe(plugin, "Diag.Telemetry.WheelOnLooseSurface.FrontLeft", () => (object)_wheelOnLooseSurfaceFrontLeft);
             AttachSafe(plugin, "Diag.Telemetry.WheelOnLooseSurface.FrontRight", () => (object)_wheelOnLooseSurfaceFrontRight);

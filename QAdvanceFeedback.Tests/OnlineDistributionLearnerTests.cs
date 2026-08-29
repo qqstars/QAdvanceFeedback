@@ -136,10 +136,17 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void GetPercentile_becomes_available_once_the_minimum_is_reached()
         {
+            // The readiness bar is now expressed in EQUIVALENT RECENT SAMPLES rather than a lifetime
+            // count, because the histogram decays (see OnlineDistributionLearner._histogram). That makes
+            // it very slightly stricter than a raw count - at exactly 500 folds the series is worth
+            // ~494 - so the bar is crossed a few samples later than it used to be. The property worth
+            // pinning is that it DOES become available around the bar, not the exact frame.
             var learner = new OnlineDistributionLearner();
             for (int i = 0; i < OnlineDistributionLearner.MinSamplesForPercentile; i++)
                 learner.AddValue(1.0);
+            Assert.Null(learner.GetPercentile(50.0));
 
+            for (int i = 0; i < 25; i++) learner.AddValue(1.0);
             Assert.NotNull(learner.GetPercentile(50.0));
         }
 

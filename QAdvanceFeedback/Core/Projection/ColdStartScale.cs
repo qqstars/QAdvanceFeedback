@@ -107,18 +107,35 @@ namespace QAdvanceFeedback.Core.Projection
         private static readonly MonotoneCubicCurve Curve = new MonotoneCubicCurve(AnchorConfidence, AnchorScalePercent);
 
         /// <summary>
-        /// The multiplicative scale (<see cref="MinSafeFloor"/>..1.0) for one channel, given that
+        /// The multiplicative scale (<paramref name="floor"/>..1.0) for one channel, given that
         /// channel's own current <see cref="Normalized.GripLearner.Confidence"/>. Continuous, monotone
-        /// non-decreasing, passes exactly through every one of the owner's own seven anchors, genuinely
-        /// reaches exactly 1.0 at confidence 1 (not an asymptote). Non-finite/out-of-range input is
-        /// clamped defensively.
+        /// non-decreasing, genuinely reaches exactly 1.0 at confidence 1 (not an asymptote). Non-finite/
+        /// out-of-range input is clamped defensively.
+        /// <para/>
+        /// TIERED COLD-START FLOOR (v1.0.7, docs\v107-tiered-coldstart-report.md): <paramref name="floor"/>
+        /// defaults to <see cref="MinSafeFloor"/> (0.5) - Tier 1's own floor, and BIT-IDENTICAL to every
+        /// caller/test that predates the tiered reference system. A HIGHER floor (0.6/0.7/0.8 for Tiers
+        /// 2/3/4 - see <see cref="Normalized.ColdStartTierFloors"/>) is PERMITTED and simply raises where
+        /// the ramp starts; anything BELOW <see cref="MinSafeFloor"/> is defensively clamped UP to it,
+        /// never down - the hard mathematical floor this class's own remarks derive is never relaxed in
+        /// the other direction. The owner's own seven anchors (fitted at the Tier-1/0.5 floor) are
+        /// reproduced EXACTLY by <see cref="Curve"/> as before; a higher floor is applied as a plain
+        /// AFFINE remap of the curve's own 50..100 output range onto floor*100..100 - an affine transform
+        /// of a monotone Hermite spline's control points preserves both its monotonicity and its C1
+        /// smoothness, so every property <see cref="Curve"/> already guarantees at floor 0.5 still holds
+        /// at any higher floor.
         /// </summary>
-        public static double Compute(double confidence)
+        public static double Compute(double confidence, double floor = MinSafeFloor)
         {
             double x = ClampMath.To01(ClampMath.IsFinite(confidence) ? confidence : 0.0);
-            double scalePercent = Curve.Evaluate(x);
-            double scale = scalePercent / 100.0;
-            return Math.Max(MinSafeFloor, Math.Min(1.0, scale));
+            double effectiveFloor = ClampMath.IsFinite(floor) ? Math.Max(MinSafeFloor, floor) : MinSafeFloor;
+            double baseScalePercent = Curve.Evaluate(x); // in [50, 100], anchored to the Tier-1/0.5 floor.
+
+            double floorPercent = effectiveFloor * 100.0;
+            double stretchedPercent = floorPercent + (100.0 - floorPercent) * (baseScalePercent - 50.0) / 50.0;
+
+            double scale = stretchedPercent / 100.0;
+            return Math.Max(effectiveFloor, Math.Min(1.0, scale));
         }
 
         /// <summary>

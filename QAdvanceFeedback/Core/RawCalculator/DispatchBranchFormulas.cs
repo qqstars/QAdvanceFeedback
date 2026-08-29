@@ -68,14 +68,19 @@ namespace QAdvanceFeedback.Core.RawCalculator
         /// </summary>
         public static double LockFromLearnedRotationRatio(
             double? wheelRotationRateHz, double? speedKmh, double? previousSpeedKmh,
-            IValueDistributionLearner rotationToSpeedLearner, double lockSensibility)
+            Calibration.ICalibrationData rotationToSpeedCalibration, double lockSensibility)
         {
             if (!wheelRotationRateHz.HasValue || !speedKmh.HasValue || !previousSpeedKmh.HasValue) return 0.0;
             if (!(Math.Abs(speedKmh.Value) > 1.0)) return 0.0;
             if (!(speedKmh.Value < previousSpeedKmh.Value)) return 0.0; // only meaningful while decelerating
 
             double liveRatio = wheelRotationRateHz.Value / speedKmh.Value;
-            double? cruiseAverage = rotationToSpeedLearner?.Average();
+            // 1.0.7.1: sourced from the ported ShakeIt calibration (persisted, keyed track;car;RPSToSpeed
+            // {Front|Rear}) instead of a session-scoped learner - see Calibration.CalibrationData. The
+            // ARITHMETIC below is unchanged and was already a faithful port of SimHub's GetRpsLock; only
+            // where the cruise mean comes from has changed. GetAverage() is null only when nothing has
+            // been observed at all, so this branch keeps its "responds from the first frame" property.
+            double? cruiseAverage = rotationToSpeedCalibration?.GetAverage();
             if (!cruiseAverage.HasValue || !(cruiseAverage.Value > 0.0)) return 0.0;
             if (!(Math.Abs(liveRatio) < cruiseAverage.Value)) return 0.0;
 
@@ -102,14 +107,26 @@ namespace QAdvanceFeedback.Core.RawCalculator
         /// hard is itself evidence of an active lock/spin event even before the ratio band responds.
         /// </summary>
         public static double SlipFromLearnedDistribution(
-            double? wheelSlipRatio, IValueDistributionLearner slipRatioLearner,
+            double? wheelSlipRatio, Calibration.ICalibrationData slipCalibration,
             double? brakePercent, bool wheelRotationCapability,
             double? wheelRotationFrontLeft, double? wheelRotationFrontRight, double? wheelRotationRearLeft, double? wheelRotationRearRight)
         {
-            if (slipRatioLearner == null) return 0.0;
-            double? lowPercentile = slipRatioLearner.Percentile(15.0);
-            double? highPercentile = slipRatioLearner.Percentile(99.0);
-            if (!lowPercentile.HasValue || !highPercentile.HasValue || lowPercentile.Value == highPercentile.Value) return 0.0;
+            if (slipCalibration == null) return 0.0;
+
+            // 1.0.7.1 - THE FIX THIS RELEASE EXISTS FOR. These two calls can no longer return null: the
+            // ported ShakeIt calibration answers from the very first sample, synthesising a band from its
+            // running maximum until it has enough evidence for a real percentile (see
+            // Calibration.CalibrationData.GetPercentile). The previous implementation returned null here
+            // for the first 200 positive samples and this method then published a literal 0 - which both
+            // made WheelSlip arrive late AND, because BranchHasSignalForWheel still reported "signal
+            // present", published that 0 as a genuine measured zero rather than as absent.
+            //
+            // The guard is now SimHub's own `percentile != percentile2` and nothing more. Note this also
+            // restores the rotation-spread term below during that early window: it needs no calibration
+            // at all, and the old early return was discarding it for no reason.
+            double lowPercentile = slipCalibration.GetPercentile(15.0);
+            double highPercentile = slipCalibration.GetPercentile(99.0);
+            if (lowPercentile == highPercentile) return 0.0;
 
             double rotationSpreadTerm = 0.0;
             if ((brakePercent ?? 0.0) > 20.0 && wheelRotationCapability
@@ -128,7 +145,7 @@ namespace QAdvanceFeedback.Core.RawCalculator
             }
 
             if (!wheelSlipRatio.HasValue) return rotationSpreadTerm;
-            double fromDistribution = MathHelpers.Offset(lowPercentile.Value, highPercentile.Value, Math.Abs(wheelSlipRatio.Value), false, false);
+            double fromDistribution = MathHelpers.Offset(lowPercentile, highPercentile, Math.Abs(wheelSlipRatio.Value), false, false);
             return Math.Max(rotationSpreadTerm, fromDistribution);
         }
 
@@ -145,7 +162,8 @@ namespace QAdvanceFeedback.Core.RawCalculator
             bool isLockChannel,
             double? wheelSpeedThisWheel, double? wheelSpeedOppositeWheel,
             double? groundSpeedOrFallback, double? brakePercent, double? throttlePercent, double? clutchPercent,
-            double gearAverageDelta, int gearAverageSampleCount)
+            double gearAverageDelta, int gearAverageSampleCount,
+            Calibration.GameCalibrationBounds bounds = null, int isFlying = 0)
         {
             if (!wheelSpeedThisWheel.HasValue || !wheelSpeedOppositeWheel.HasValue || !groundSpeedOrFallback.HasValue)
                 return 0.0;
@@ -155,8 +173,28 @@ namespace QAdvanceFeedback.Core.RawCalculator
 
             double thisWheelDelta = wheelSpeedThisWheel.Value / Math.Abs(gs) - 1.0;
 
+            // SHIPPED PER-GAME BOUNDS (1.0.7.1). SimHub seeds these two LOCALLY and overrides them only
+            // when the running title has a shipped GameCalibration entry. The 0.15 seed is NOT the same
+            // number as GameCalibration.WheelSpeedDeltaHighbound's own 0.2 default - an earlier revision
+            // of this method used the property default as the no-entry fallback, which was a different
+            // structure that happened to produce the same output only because both seeds are overwritten
+            // before use on every reachable path. Written SimHub's way so it stays correct if that
+            // changes.
             double lowBound = 0.02;
             double highBound = 0.15;
+            if (bounds != null)
+            {
+                lowBound = isLockChannel ? bounds.WheelSpeedDeltaLowLockbound : bounds.WheelSpeedDeltaLowbound;
+                highBound = bounds.WheelSpeedDeltaHighbound;
+            }
+
+            // AIRBORNE - SimHub returns before ANY regime handling. Airborne wheels spin freely, so
+            // wheelSpeed/groundSpeed diverges wildly and this branch would otherwise publish a large,
+            // meaningless reading. That matters most on precisely the titles that select this branch: a
+            // rally car over a crest is exactly this case, and this guard is what keeps a jump from
+            // reading as maximum slip. Ordered here, after the bounds resolve and before the regime
+            // split, as ShakeIt orders it.
+            if (isFlying > 0) return 0.0;
 
             // ABSENT-BRAKE FIX (telemetry-integrity pass): an UNKNOWN brake reading must never be
             // treated as "definitely not braking" - that would silently promote an ambiguous frame
@@ -174,7 +212,11 @@ namespace QAdvanceFeedback.Core.RawCalculator
                 // (scaled up slightly for headroom) replaces the fixed low bound - a car-specific
                 // reference beats a fixed guess once one is available.
                 if (gearAverageSampleCount > 10) lowBound = gearAverageDelta * 1.1;
-                highBound = 0.6;
+
+                // SimHub re-reads the shipped high bound here with its OWN 0.6 fallback, which is a
+                // DIFFERENT default from the 0.2 seeded above - so this line is not redundant, and the
+                // former unconditional 0.6 was only correct for a title with no shipped bounds at all.
+                highBound = bounds?.WheelSpeedDeltaHighbound ?? 0.6;
             }
             else
             {
@@ -198,14 +240,20 @@ namespace QAdvanceFeedback.Core.RawCalculator
         /// </summary>
         public static bool QualifiesAsGearCruiseSample(
             double? brakePercent, double? clutchPercent, double? throttlePercent, double? groundSpeedOrFallback,
-            double largestWheelDelta)
+            double largestWheelDelta, double? yawChangePerSecond = null)
         {
             double brake = brakePercent ?? double.MaxValue;
             double clutch = clutchPercent ?? double.MaxValue;
             double throttle = throttlePercent ?? 0.0;
             double gs = groundSpeedOrFallback ?? 0.0;
             return brake <= 0.1 && clutch <= 10.0 && gs > 10.0
-                && largestWheelDelta < 0.3 && largestWheelDelta > 0.0 && throttle > 10.0;
+                && largestWheelDelta < 0.3 && largestWheelDelta > 0.0 && throttle > 10.0
+                // NOT CORNERING (1.0.7.1). SimHub also requires OrientationYawChangePerSecond < 1.5: in
+                // a corner the inner and outer wheels genuinely travel different distances, so the delta
+                // measured there describes the corner rather than the car's straight-line reference.
+                // A title that does not report yaw rate is treated as not cornering, so its behaviour is
+                // unchanged from before this gate existed.
+                && (yawChangePerSecond ?? 0.0) < 1.5;
         }
     }
 }

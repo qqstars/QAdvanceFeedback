@@ -35,20 +35,20 @@ namespace QAdvanceFeedback.Tests
         // ------------------------------------------------------------------------------------
 
         /// <summary>
-        /// REVISED (docs\regression-fix-report.md, Regression 3 - the owner's own explicit clarification
-        /// after the hard-shake-on-first-brake report): a brand-new car's FIRST query, with ZERO local
-        /// evidence of its own, must read PLAIN IDENTITY - never a value borrowed from a different car,
-        /// even a "safe" one. This is the exact inverse of what this test asserted before that
-        /// clarification (see git history/docs\cold-start-and-timing-fix-report.md for the prior
-        /// design this replaces) - the prior version asserted the cross-car seed should pull a
-        /// brand-new car's reading below the raw identity value immediately; the owner's own later
-        /// instruction ("the cold state before any local evidence must be identity, not a borrowed
-        /// scale") makes that the wrong behaviour. See
-        /// <see cref="A_brand_new_cars_own_first_few_observations_gradually_pull_toward_a_capped_cross_car_seed"/>
-        /// for how the seed DOES eventually help, once CarB has SOME evidence of its own.
+        /// SUPERSEDED, v1.0.7 (docs\v107-tiered-coldstart-report.md - the tiered cold-start reference
+        /// system): "identity as the cold state" was this exact hard rule before v1.0.7 - a brand-new
+        /// car's FIRST query, with ZERO local evidence of its own, HAD to read plain identity, never a
+        /// value borrowed from a different car. This is now DELIBERATELY RELAXED for Tier 2/3/4 - THAT is
+        /// the entire point of the tiered reference system: CarB shares CarA's game AND source, so CarB
+        /// resolves to TIER 3 (same source, same game, different car) and immediately borrows CarA's own
+        /// already-earned calibration in full, rather than waiting for CarB to accumulate any evidence of
+        /// its own. A future reader must not "restore" identity-at-zero-evidence here as a bug fix - see
+        /// <see cref="KeyedScaleLearner"/>'s own remarks. The rule is UNCHANGED, and still exactly this
+        /// strict, for genuine TIER 1 (no reference anywhere with the same source) - see
+        /// <see cref="A_brand_new_source_never_seen_for_any_car_still_produces_a_usable_identity_reading"/>.
         /// </summary>
         [Fact]
-        public void A_brand_new_car_with_zero_local_evidence_reads_plain_identity_even_with_an_already_calibrated_source()
+        public void A_brand_new_car_with_zero_local_evidence_immediately_borrows_the_same_games_tier3_reference()
         {
             var engine = new NormalizedWheelLockSlipEngine();
 
@@ -64,60 +64,58 @@ namespace QAdvanceFeedback.Tests
             // ZERO observations of its own yet - genuinely zero local evidence, not merely "cold").
             //
             // RE-EXPRESSED (docs\delta-g-band-mapping-report.md): the car-level number (LockAll) is G-based
-            // now, so it is not read here any more - the "zero local evidence -> plain identity" rule this
-            // test checks lives entirely in KeyedScaleLearner, read directly (mirrors
+            // now, so it is not read here any more - checked directly against KeyedScaleLearner (mirrors
             // PerSourceCalibrationTests.RunScenario's own reasoning).
             double carBOutput = engine.LockScaleLearner.Rescale(Game, "CarB", ShakeIt, 90.0);
+            ColdStartTier tier = engine.LockScaleLearner.ResolveTier(Game, "CarB", ShakeIt);
 
-            // The owner's own explicit cold-start rule: with ZERO local evidence for CarB, output must
-            // be the source's own raw reading, UNCHANGED - not pulled toward CarA's calibration, however
-            // "safe" that might look. "The source contract is already 0-100" - identity IS the honest
-            // answer here, not a placeholder.
-            Assert.Equal(90.0, carBOutput, 1);
+            Assert.Equal(ColdStartTier.Tier3, tier);
+            // CarA's own ceiling is exactly 90 (raw 90 taught as "at the limit"), so Tier 3's full-strength
+            // borrow (no cap - see KeyedScaleLearner's own remarks on why Tier 3 deliberately drops the old
+            // never-amplify gate) maps CarB's raw 90 exactly onto the canonical at-limit anchor, 80 - not
+            // the raw, uncalibrated 90 a true Tier 1 identity read would have given.
+            Assert.Equal(80.0, carBOutput, 1);
         }
 
         /// <summary>
-        /// The seed DOES help - but only once CarB has genuine evidence of its OWN, and only ever in
-        /// the NON-AMPLIFYING direction (docs\regression-fix-report.md). A handful of CarB's own
-        /// physical-limit observations nudge the ramp's own starting point away from bare identity and
-        /// toward CarA's already-learned (capped, never-inflating) reference, continuously - not a
-        /// second jump - converging toward CarB's OWN truth as CarB's own evidence keeps accumulating.
-        /// </summary>
-        /// <summary>
-        /// Directly against <see cref="KeyedScaleLearner"/> (the unit that actually owns the seed/ramp
-        /// mechanism), mirroring <see cref="Warming_up_past_the_old_hard_threshold_produces_no_step_change"/>'s
-        /// own convention - the engine-level equivalent would ALSO require CarB's own shared
-        /// physical-limit detector (a separate, (game,car)-only <c>KeyedGripLearner</c>) to mature before
-        /// <c>ObserveAtPhysicalLimit</c> is ever called for it at all, which is a real, additional,
-        /// correctly-conservative gate but not what this specific test targets.
+        /// SUPERSEDED, v1.0.7: the Tier 3 reference now helps a brand-new car IMMEDIATELY (zero evidence -
+        /// see <see cref="A_brand_new_car_with_zero_local_evidence_immediately_borrows_the_same_games_tier3_reference"/>),
+        /// not just "once CarB has some evidence of its own", and Tier 3 deliberately no longer caps to
+        /// "never amplify" (see <see cref="KeyedScaleLearner"/>'s own reconciliation remarks). What THIS
+        /// test now checks is the property that still matters: CONTINUITY across the transition from
+        /// "zero evidence, full Tier-3 borrow" to "CarB's own first few physical-limit observations" - no
+        /// single-sample jump anywhere close to a hard step, mirroring
+        /// <see cref="Warming_up_past_the_old_hard_threshold_produces_no_step_change"/>'s own bound.
         /// </summary>
         [Fact]
-        public void A_brand_new_cars_own_first_few_observations_gradually_pull_toward_a_capped_cross_car_seed()
+        public void A_brand_new_cars_own_first_few_observations_transition_continuously_from_the_tier3_borrow()
         {
             var learner = new KeyedScaleLearner();
 
-            // CarA matures a (game,source) cross-car seed at native ceiling ~90.
+            // CarA matures a same-game, same-source reference at native ceiling ~90.
             for (int i = 0; i < 40; i++) learner.ObserveAtPhysicalLimit(Game, "CarA", ShakeIt, 90.0);
 
             const double probeRaw = 90.0;
-            double identity = learner.Rescale(Game, "CarB", ShakeIt, probeRaw);
-            Assert.Equal(90.0, identity, 1); // zero evidence for CarB - plain identity, confirmed first.
+            double zeroEvidence = learner.Rescale(Game, "CarB", ShakeIt, probeRaw);
+            // Tier 3, full-strength, zero own evidence: raw 90 maps exactly to CarA's own anchor (80) -
+            // see the sibling test's own remarks.
+            Assert.Equal(80.0, zeroEvidence, 1);
 
-            // CarB's own first FEW physical-limit observations (a tight, repeatable cluster) - dispersion
-            // needs >= 2 samples to be defined at all (see WelfordAccumulator.CoefficientOfVariation's
-            // own remarks - below that, HotWeight is exactly 0 by deliberate design, biasing toward
-            // identity), so this uses 5 to get a genuine, if still small, nonzero weight.
-            for (int i = 0; i < 5; i++) learner.ObserveAtPhysicalLimit(Game, "CarB", ShakeIt, 90.0);
-            double afterAFewSamples = learner.Rescale(Game, "CarB", ShakeIt, probeRaw);
+            double previous = zeroEvidence;
+            double maxJump = 0.0;
+            // CarB's own first few physical-limit observations (a tight, repeatable cluster at the SAME
+            // native reading) - dispersion needs >= 2 samples to be defined at all (see
+            // WelfordAccumulator.CoefficientOfVariation's own remarks), so this uses 5.
+            for (int i = 0; i < 5; i++)
+            {
+                learner.ObserveAtPhysicalLimit(Game, "CarB", ShakeIt, 90.0);
+                double current = learner.Rescale(Game, "CarB", ShakeIt, probeRaw);
+                maxJump = Math.Max(maxJump, Math.Abs(current - previous));
+                previous = current;
+            }
 
-            // With only a handful of qualifying samples, CarB's OWN weight is still small - the seed's
-            // influence is present but limited, so the reading should have moved (however slightly) off
-            // bare identity, never above it (never amplify), and nowhere near CarA's own fully-earned
-            // ~75-ish mapping yet (CarB has not earned that itself).
-            Assert.True(afterAFewSamples <= 90.0 + 1e-6,
-                $"the cross-car seed must never push a reading ABOVE the raw identity value (never amplify) - got {afterAFewSamples}");
-            Assert.True(afterAFewSamples < 90.0,
-                $"with a little of its own evidence, CarB's reading should have moved at least slightly toward the seed, not stayed frozen at bare identity - got {afterAFewSamples}");
+            Assert.True(maxJump < 6.0,
+                $"the transition from a zero-evidence Tier-3 borrow to CarB's own first few observations must not step - max single-sample jump was {maxJump}");
         }
 
         [Fact]
@@ -324,34 +322,56 @@ namespace QAdvanceFeedback.Tests
         }
 
         /// <summary>
-        /// MUTATION EVIDENCE (docs\regression-fix-report.md, Regression 3): reverting the cross-car
-        /// seed gate back to "apply the seed at full strength the instant primary.Count == 0" (the
-        /// pre-fix behaviour) reproduces exactly the reported symptom - a brand-new car's very FIRST
-        /// qualifying frame reads a value pulled away from its own honest identity reading, before any
-        /// evidence for that car exists at all. Captured by directly reproducing the OLD mechanism's own
-        /// arithmetic (average ~90 seed, CanonicalAtLimitAnchor 75, factor 75/90 &lt; 1 in THIS
-        /// particular case - but the OLD code applied whatever the seed said unconditionally, with no
-        /// cap and no per-key evidence gate at all, so a LOWER-native-scale seed - the common case for a
-        /// wholly different, less-sensitive source calibration - would instead have produced a factor
-        /// &gt; 1, i.e. amplification on a car with zero evidence of its own, exactly the hard-shake
-        /// symptom). Reverted immediately after being noted here (this test pins the CURRENT, fixed
-        /// arithmetic only); full suite re-confirmed green.
+        /// SUPERSEDED, v1.0.7 (docs\v107-tiered-coldstart-report.md): the OLD gate this test pinned
+        /// ("never let a borrowed cross-car seed amplify a cold reading") is DELIBERATELY RELAXED for
+        /// Tier 3 (same game, different car) - see <see cref="KeyedScaleLearner"/>'s own reconciliation
+        /// remarks and the v1.0.7 report's own "how the old gate's safety intent is/isn't preserved"
+        /// section. CarB here shares CarA's game AND source, so it resolves to Tier 3 and now DOES
+        /// amplify - clamped only by the ordinary 0-100 output range, not by a "never exceed the raw
+        /// value" gate. This is intentional per this task's own explicit brief; renamed from
+        /// "MutationGuard" (it no longer demonstrates a REJECTED mutation - it demonstrates the NEW,
+        /// accepted behaviour) and paired with
+        /// <see cref="MutationGuard_a_different_game_still_never_amplifies_a_cold_reading"/>, which
+        /// confirms the OLD gate's safety intent IS still preserved for the higher-risk Tier 2 case
+        /// (a completely different game/title, where native-scale conventions are far less likely to be
+        /// genuinely comparable).
         /// </summary>
         [Fact]
-        public void MutationGuard_ungating_the_cross_car_seed_would_apply_a_borrowed_scale_before_any_local_evidence()
+        public void A_same_game_tier3_reference_now_deliberately_amplifies_a_zero_evidence_cold_reading()
         {
             var learner = new KeyedScaleLearner();
 
-            // Mature CarA's own primary tier with a LOW native ceiling (30) - if a brand-new car's very
-            // first query unconditionally borrowed this seed (the old, un-gated mechanism), it would
-            // amplify (factor = 75/30 = 2.5x) a car that has never itself been observed at all.
+            // Mature CarA's own primary tier with a LOW native ceiling (30).
             for (int i = 0; i < 40; i++) learner.ObserveAtPhysicalLimit(Game, "CarA", ShakeIt, 30.0);
 
-            // CarB: brand new, ZERO observations of its own.
+            // CarB: brand new, ZERO observations of its own, SAME game and source as CarA -> Tier 3.
             double carBOutput = learner.Rescale(Game, "CarB", ShakeIt, 50.0);
+            Assert.Equal(ColdStartTier.Tier3, learner.ResolveTier(Game, "CarB", ShakeIt));
 
-            // THE FIX: identity (50.0) - not 50.0 * (75/30) = 125 -> clamped 100, which is what the old,
-            // un-gated cross-car seed would have produced on a car with no evidence of its own at all.
+            // Tier 3 no longer caps - 50 * (80/30) = 133.33, clamped to the ordinary 0-100 output range.
+            Assert.Equal(100.0, carBOutput, 1);
+        }
+
+        /// <summary>
+        /// THE OLD GATE'S SAFETY INTENT, PRESERVED for the case it actually matters most: a completely
+        /// DIFFERENT GAME (Tier 2) is the highest cross-context risk this feature has to offer - two
+        /// unrelated titles' own native source-scale conventions have no reason to agree at all - so
+        /// Tier 2 KEEPS the old "never amplify" cap (see <see cref="KeyedScaleLearner"/>'s own remarks).
+        /// </summary>
+        [Fact]
+        public void MutationGuard_a_different_game_still_never_amplifies_a_cold_reading()
+        {
+            var learner = new KeyedScaleLearner();
+
+            // Mature CarA's own primary tier with a LOW native ceiling (30), in a DIFFERENT game.
+            for (int i = 0; i < 40; i++) learner.ObserveAtPhysicalLimit("SomeOtherGame", "CarA", ShakeIt, 30.0);
+
+            // CarB: brand new, ZERO observations of its own, a DIFFERENT game from CarA -> Tier 2.
+            double carBOutput = learner.Rescale(Game, "CarB", ShakeIt, 50.0);
+            Assert.Equal(ColdStartTier.Tier2, learner.ResolveTier(Game, "CarB", ShakeIt));
+
+            // THE OLD FIX, STILL IN FORCE FOR TIER 2: identity (50.0) - not 50.0 * (80/30) amplified -
+            // the cap still applies exactly as it always did for this cross-context risk profile.
             Assert.Equal(50.0, carBOutput, 1);
         }
     }

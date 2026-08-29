@@ -63,83 +63,70 @@ namespace QAdvanceFeedback.Tests
         }
 
         // ------------------------------------------------------------------------------------
-        // THE LOW-SPEED FIX.
+        // THE LOW-SPEED FIX WAS REMOVED IN 1.0.7.1 - these tests are its inverse, kept rather than
+        // deleted so the trade-off stays on the record.
+        //
+        // An earlier revision took Math.Max of the faithful brake x speed reading and a brake-only
+        // floor ramped across the sensitivity dead zone, because the faithful model is mathematically
+        // zero at or below 15 km/h at default sensitivity. That looked like a blind spot worth
+        // covering. It was removed because SimHub's own GetSimpleBraking has no such floor - verified
+        // assembly-wide, one definition and one call site - and the divergence it caused was severe:
+        // at 15 km/h under braking SimHub publishes 0 where the floor published 100, and the two only
+        // reconverge at 30 km/h. In effect it removed SPEED from the Lock formula below 30 km/h.
+        //
+        // Layer 3's contract is to reproduce ShakeIt exactly. A perceived improvement that makes Raw
+        // and ShakeIt disagree by up to 100 points belongs in the Projected layer's curve, not here.
         // ------------------------------------------------------------------------------------
 
         [Fact]
-        public void Low_speed_fix_produces_a_strong_reading_where_the_faithful_model_is_mathematically_zero()
+        public void The_faithful_model_reads_zero_below_the_sensitivity_dead_zone_exactly_as_ShakeIt_does()
         {
-            double faithful = BrakingVsSpeedModel.Compute(90.0, 8.0, DefaultSensibility);
-            double fixedValue = BrakingVsSpeedModel.ComputeWithLowSpeedFix(90.0, 8.0, DefaultSensibility);
+            // THE KNOWN BLIND SPOT, now deliberate rather than patched over. Default sensitivity puts
+            // the dead zone at threshold(0.5) x SpeedFullKmh(30) = 15 km/h.
+            Assert.Equal(0.0, BrakingVsSpeedModel.Compute(90.0, 8.0, DefaultSensibility), 6);
+            Assert.Equal(0.0, BrakingVsSpeedModel.Compute(100.0, 15.0, DefaultSensibility), 6);
+        }
 
-            Assert.Equal(0.0, faithful, 6);
-            Assert.True(fixedValue > 0.4, $"expected a strong low-speed reading, got {fixedValue}");
+        [Theory]
+        // Pinned against SimHub's own GetSimpleBraking, computed directly from its formula:
+        //   Reshape(Clamp(brake,0,60)/60 * Clamp(speed,0,30)/30, threshold)
+        [InlineData(5.0, 0.0)]
+        [InlineData(10.0, 0.0)]
+        [InlineData(15.0, 0.0)]
+        [InlineData(20.0, 1.0 / 3.0)]
+        [InlineData(25.0, 2.0 / 3.0)]
+        [InlineData(30.0, 1.0)]
+        [InlineData(120.0, 1.0)]
+        public void MatchesShakeItAcrossTheSpeedRange(double speedKmh, double expected)
+        {
+            Assert.Equal(expected, BrakingVsSpeedModel.Compute(60.0, speedKmh, DefaultSensibility), 6);
         }
 
         [Fact]
-        public void Low_speed_fix_never_reduces_the_faithful_reading()
+        public void ReadsZeroAtAStandstillEvenWithFullBrake()
         {
-            for (double speed = 0.0; speed <= 40.0; speed += 2.0)
-            {
-                double faithful = BrakingVsSpeedModel.Compute(85.0, speed, DefaultSensibility);
-                double fixedValue = BrakingVsSpeedModel.ComputeWithLowSpeedFix(85.0, speed, DefaultSensibility);
-                Assert.True(fixedValue >= faithful - 1e-9,
-                    $"at speed={speed}, fixed ({fixedValue}) must never be below faithful ({faithful})");
-            }
+            Assert.Equal(0.0, BrakingVsSpeedModel.Compute(100.0, 0.0, DefaultSensibility), 6);
         }
 
         [Fact]
-        public void Low_speed_fix_never_manufactures_a_reading_from_a_light_brake_dab()
+        public void RisesMonotonicallyWithSpeedAndNeverSteps()
         {
-            for (double speed = 0.0; speed <= 30.0; speed += 3.0)
-            {
-                double fixedValue = BrakingVsSpeedModel.ComputeWithLowSpeedFix(20.0, speed, DefaultSensibility);
-                Assert.Equal(0.0, fixedValue, 6);
-            }
-        }
-
-        [Fact]
-        public void Low_speed_fix_reads_zero_at_a_genuine_standstill_even_with_full_brake()
-        {
-            double result = BrakingVsSpeedModel.ComputeWithLowSpeedFix(100.0, 0.0, DefaultSensibility);
-            Assert.Equal(0.0, result, 6);
-        }
-
-        [Fact]
-        public void Low_speed_fix_ramps_up_from_standstill_rather_than_stepping()
-        {
-            double prev = 0.0;
-            for (double speed = 0.0; speed <= 15.0; speed += 1.0)
-            {
-                double value = BrakingVsSpeedModel.ComputeWithLowSpeedFix(90.0, speed, DefaultSensibility);
-                Assert.True(value >= prev - 1e-9, $"expected a monotonic ramp from standstill, dropped at speed={speed}");
-                prev = value;
-            }
-        }
-
-        [Fact]
-        public void Low_speed_fix_has_no_large_discontinuity_anywhere_across_the_full_speed_range()
-        {
-            double? prev = null;
+            double previous = 0.0;
             for (double speed = 0.0; speed <= 40.0; speed += 0.5)
             {
-                double value = BrakingVsSpeedModel.ComputeWithLowSpeedFix(90.0, speed, DefaultSensibility);
-                if (prev.HasValue)
-                {
-                    Assert.True(System.Math.Abs(value - prev.Value) < 0.15,
-                        $"discontinuity near speed={speed}: {prev.Value} -> {value}");
-                }
-                prev = value;
+                double value = BrakingVsSpeedModel.Compute(90.0, speed, DefaultSensibility);
+                Assert.True(value >= previous - 1e-9, $"dropped at speed={speed}");
+                Assert.True(value - previous < 0.15, $"discontinuity near speed={speed}: {previous} -> {value}");
+                previous = value;
             }
         }
 
         [Fact]
-        public void Low_speed_fix_converges_with_the_faithful_model_at_and_above_SpeedFullKmh()
+        public void ALightBrakeDabNeverProducesAReadingAtAnySpeed()
         {
-            double faithful = BrakingVsSpeedModel.Compute(90.0, BrakingVsSpeedModel.SpeedFullKmh, DefaultSensibility);
-            double fixedValue = BrakingVsSpeedModel.ComputeWithLowSpeedFix(90.0, BrakingVsSpeedModel.SpeedFullKmh, DefaultSensibility);
-
-            Assert.Equal(faithful, fixedValue, 6);
+            for (double speed = 0.0; speed <= 40.0; speed += 2.0)
+                Assert.Equal(0.0, BrakingVsSpeedModel.Compute(20.0, speed, DefaultSensibility), 6);
         }
+
     }
 }

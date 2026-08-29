@@ -51,6 +51,13 @@ namespace QAdvanceFeedback.Tests
             var maxGripEngine = new NormalizedWheelLockSlipEngine { LockNormalizePattern = NormalizePattern.MaxGripOnly };
 
             double raw = 60.0;
+            // TWO frames each - the corner-local at-limit detector that now teaches SMax is DIFFERENTIAL
+            // and reports 0.0 on a run's first frame, so a single Compute leaves the key with no
+            // physical-limit evidence and the four-range curve inactive. See
+            // S90FallbackRatioTests.First_frame_for_a_new_key... for the same adjustment and the full
+            // reasoning. Both engines are warmed identically, which is what this comparison requires.
+            mappingEngine.Compute(BrakingSample(3.0), Corners.Uniform(raw), Corners.Zero, "TestGame", "Car", lockSourceIdentity: "Raw");
+            maxGripEngine.Compute(BrakingSample(3.0), Corners.Uniform(raw), Corners.Zero, "TestGame", "Car", lockSourceIdentity: "Raw");
             NormalizedWheelLockSlipResult mappingResult = mappingEngine.Compute(BrakingSample(3.0), Corners.Uniform(raw), Corners.Zero, "TestGame", "Car", lockSourceIdentity: "Raw");
             NormalizedWheelLockSlipResult maxGripResult = maxGripEngine.Compute(BrakingSample(3.0), Corners.Uniform(raw), Corners.Zero, "TestGame", "Car", lockSourceIdentity: "Raw");
 

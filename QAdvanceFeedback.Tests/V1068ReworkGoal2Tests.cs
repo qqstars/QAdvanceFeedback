@@ -107,7 +107,15 @@ namespace QAdvanceFeedback.Tests
         public void KeyedScaleLearners_primary_tier_average_still_moves_after_1000_plus_observations_even_once_the_full_trust_floor_is_active()
         {
             var scaleLearner = new KeyedScaleLearner();
-            for (int i = 0; i < 1200; i++) scaleLearner.ObserveAtPhysicalLimit("g", "c", "s", 60.0);
+            // Both observers, as the engine always does. Since the anti-correlation fix the ceiling is
+            // derived from the source's own distribution rather than from the mean of its at-limit
+            // readings, so a learner shown only at-limit observations has nothing to take a percentile
+            // of - a state the engine never produces. See KeyedScaleLearner.LearnedCeilingForKey.
+            for (int i = 0; i < 1200; i++)
+            {
+                scaleLearner.ObserveAtPhysicalLimit("g", "c", "s", 60.0);
+                scaleLearner.ObserveGeneral("g", "c", "s", 60.0);
+            }
 
             double? ceilingAt1200 = scaleLearner.LearnedCeiling("g", "c", "s", out bool primary1);
             Assert.True(primary1);
@@ -117,7 +125,11 @@ namespace QAdvanceFeedback.Tests
             // of dispersion) is active - confirm the underlying AVERAGE this floor trusts fully still
             // moves when the incoming readings genuinely change, rather than the ceiling being frozen at
             // whatever value existed at sample 200.
-            for (int i = 0; i < 400; i++) scaleLearner.ObserveAtPhysicalLimit("g", "c", "s", 90.0);
+            for (int i = 0; i < 400; i++)
+            {
+                scaleLearner.ObserveAtPhysicalLimit("g", "c", "s", 90.0);
+                scaleLearner.ObserveGeneral("g", "c", "s", 90.0);
+            }
             double? ceilingAfter = scaleLearner.LearnedCeiling("g", "c", "s", out bool primary2);
 
             Assert.True(primary2);

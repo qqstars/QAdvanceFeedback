@@ -65,8 +65,20 @@ one place allowed to), but Layer 3 and above never reference SimHub types back.
 published `WheelLock.Raw.*`/`WheelSlip.Raw.*` properties. `WheelSlipBranchSelector` (in `Core`,
 not `RawCalculator`, since it is pure boolean priority over public capability flags and reveals no
 formula) picks which signal shape a title supports; `RawCalculatorEngine` dispatches to the matching
-formula and owns every stateful learner. Unnormalised by design - a reading of "40" here means a
+formula and owns every stateful piece. Unnormalised by design - a reading of "40" here means a
 different thing in different cars; that is fixed one layer up.
+
+**Fidelity contract (1.0.7.0):** this layer's job is to reproduce what SimHub's ShakeIt Motors plugin
+publishes, so that a driver switching between the two feels the same thing. Since 1.0.7.0 the
+calibration machinery is a faithful port of SimHub's own rather than a work-alike - see
+`Core\RawCalculator\Calibration\`. Concretely: the histogram, its adaptive bucket ladder, the
+500-positive-sample percentile gate, the `Math.Max(1.0, Max * 0.9) * pct / 100` pre-maturity fallback,
+the `track;car;metric` key, the 7000-point feed cap, and the fixed 0.25 blend against a shipped preset
+are all SimHub's, verified against the shipped `SimHub.Plugins.dll`. **Two deliberate deviations
+remain, both documented at their call site:** the smoothing filters are dt-corrected (SimHub applies a
+fixed per-frame rate, so its time constant varies with a title's telemetry rate - ours is identical at
+60Hz and frame-rate independent elsewhere), and the legacy-vs-non-legacy sub-choice of the last branch
+is not exposed by any capability, so the legacy variant is always assumed.
 
 **Must NOT depend on:** SimHub types (enforced by the test project link-compiling this folder into a
 plain net8.0 assembly with no SimHub package reference - a SimHub dependency creeping in here breaks
@@ -196,6 +208,74 @@ reaches, and using that learned peak as the reference a Raw reading is rescaled 
 Measured directly against seven real telemetry logs (`docs/cold-start-convergence-report.md`), the
 current ramp already converges as fast as the data safely supports — shortening it measurably trades
 away margin against transient over-reporting, which is the risk this design is built to avoid.
+
+### Key Data Points: manual SMax/S90/S75, and when they apply (1.0.7.0)
+
+`Settings\KeyDataPointSettings.cs`, `Core\Normalized\ManualOverrideGate.cs`.
+
+**Learning is never conditional.** `AutoGenerate` selects which numbers reach the output; it does not
+gate observation. `ObserveAtPhysicalLimit`/`ObserveGeneral` and the anchor learner's corner buffering
+all run before the manual block in `ComputeChannel`, unconditionally. Three things follow: the
+`[Learned Value: xx.x]` hint is meaningful in manual mode, toggling back to Auto is instant, and a
+manual value can never corrupt what the learner knows.
+
+**Values are keyed by SLOT = (mode, game, source).**
+
+```
+global mode   ->  "global|src:<sourceIdentity>"
+per-game mode ->  "game:<gameId>|src:<sourceIdentity>"
+```
+
+The source is always part of the key because a number that suits a ShakeIt export does not suit our own
+Raw — the two have different scales. The game is part of it only in per-game mode; omitting it is what
+"global" means. One dictionary holds both namespaces, so global -> per-game -> global returns the
+original global numbers untouched.
+
+**The gate.** `ManualOverrideGate` withholds a manual value until that context has BOTH finished cold
+start (`KeyedScaleLearner.CeilingHandoverConfidence` >= 0.95) AND accumulated 30 seconds of driving.
+Only frames where the car is moving are credited, and any single frame longer than 0.5s is clamped, so
+a pause, a breakpoint or an alt-tab cannot satisfy it.
+
+**The one-time seed lives in the plugin's frame loop**, not in the settings page - it has to happen
+whether or not the page is open. When a slot first becomes eligible, the learned values are written in
+and `ConfigStore.Save` is called directly (not `ApplySettings`, which also rebuilds the projected engine
+- wrong thing to do mid-frame). Because the latch is per slot, a never-played game or a newly selected
+source seeds again on its own. The plugin bumps a revision counter so an open settings page reloads.
+
+**Defaults are per source type**, resolved through `KnownSourceColdStartReference.Classify`: Lock
+85/75/60 and Slip 75 for our Raw and for a ShakeIt export. An UNKNOWN source (a script, an NCalc
+expression) deliberately gets no default at all - there is no honest guess for a signal whose scale has
+never been measured, so such a channel keeps publishing learned values until a slot is seeded.
+
+**Max-Grip-Only / Best Point Only** hides the two lower anchors and keeps them derived at 0.90/0.70 of
+the top one, so switching to the three-point mapping never finds them stale or out of order. Slip
+derives them always - it has no native 90%/75% grip measurement - which is why it ships Best Point Only.
+
+**The manual-mode reset** (`ResetKeyDataPoints`) writes the shipped defaults for a source
+`KnownSourceColdStartReference.Classify` recognises, marking the slot seeded so the one-time learned
+seed cannot immediately overwrite what the driver just asked for. For an UNKNOWN source there is no
+default to write, so it calls `KeyDataPointSettings.ClearSlot` instead - values and seeded latch both -
+which re-arms the one-time seed and leaves the boxes empty until real evidence arrives. Persists
+immediately, like the other reset actions on the page.
+
+**Slip is forced to Max-Grip-Only under Auto** (`EnforceSlipPatternForAutoMode`), and its selector is
+disabled while Auto is on. Slip has no native 90%/75% measurement, so its two lower anchors are always
+derived; offering the three-point mapping while the plugin generates the numbers itself would present
+derived values as measured ones. Manual mode re-enables the choice, because the driver is then supplying
+all three. Lock measures all three and is untouched.
+
+**The two curve graphs** (`RenderGraphDecorations`, `RenderKeyPointMarkers`,
+`RenderSourceToProjectedGraph`) are drawn in code rather than declared, so they track live settings. The
+left one is normalized -> projected, with dashed markers at the canonical normalized positions of the key
+data points (S75 -> 30, S90 -> 60, SMax -> 80 - the four-range curve's own knot table), or SMax alone
+under Max-Grip-Only. The right one is source -> projected end to end; it has no closed form because the
+key data points and the projector compose, so it is sampled every 5 and joined. Both share the same grid:
+a 25%-black rule every 20% of height, the 0% rule solid black as a baseline, and 3px ticks every 20% of
+width.
+
+**Restore never discards them.** `QAdvanceFeedbackSettings.RestoreDefaults` carries both channels'
+`KeyDataPoints` (all slots, plus the Auto/Per-Game switches) across the reset; the three channel-level
+source resets only ever touch source fields.
 
 ### Wheel Lock/Slip Projector: how it works and why
 
@@ -449,10 +529,25 @@ the test build immediately, not just a runtime assumption nobody checks.
 |---|---|
 | `RawCalculatorEngine.cs` | The `ILegacyWheelLockSlipEngine` implementation - dispatches per frame, owns every stateful learner/filter. |
 | `BrakeSpeedSlipModel.cs` | Pedal+speed+RPM-derived per-wheel Lock/Slip model (the branch used when no wheel-level telemetry exists). |
-| `BrakingVsSpeedModel.cs` | Car-level pedal+speed-only Lock/Slip model, plus the low-speed fix. |
-| `DispatchBranchFormulas.cs` | The remaining per-branch formulas (wheel rotation, wheel speed, precalibrated slip, learned distributions, wheel-speed delta). |
-| `WheelRotationLockFilter.cs` | Per-wheel EMA-smoothed lock estimate from wheel rotation rate vs. ground speed. |
-| `StreamingPercentileLearner.cs` | The concrete `IValueDistributionLearner` - a bucketed running histogram (mean + nearest-rank percentile). |
+| `BrakingVsSpeedModel.cs` | Car-level pedal+speed-only Lock/Slip model. A faithful port of SimHub's `GetSimpleBraking`; the former "low-speed fix" was removed in 1.0.7.0 (see that file's own remarks and the measured divergence table). |
+| `DispatchBranchFormulas.cs` | The remaining per-branch formulas (wheel rotation, wheel speed, precalibrated slip, calibrated distributions, wheel-speed delta). |
+| `WheelRotationLockFilter.cs` | Per-wheel EMA-smoothed lock estimate from wheel rotation rate vs. ground speed - SimHub's `SimpleLock01`, with dt-corrected smoothing. |
+| `StreamingPercentileLearner.cs` | A bucketed running histogram (mean + nearest-rank percentile). No longer on the Raw hot path since 1.0.7.0 - superseded by `Calibration\CalibrationData`. |
+
+### `QAdvanceFeedback\Core\RawCalculator\Calibration\` (the ShakeIt calibration port, 1.0.7.0)
+
+Every type here is a port of the SimHub type of the same name, decompiled from the shipped
+`SimHub.Plugins.dll`. They exist so Layer 3 and ShakeIt produce the same numbers from the same inputs,
+rather than merely the same formulas.
+
+| File | Purpose |
+|---|---|
+| `ICalibrationData.cs` | The contract shared by a live calibration and a shipped preset. Note `GetPercentile` returns a plain `double` and never null - that is the whole point. |
+| `CalibrationData.cs` | The live, accumulating histogram: adaptive bucket ladder, positives-only point counter, memoised percentiles, and the running-maximum fallback that keeps it answering from the first sample. |
+| `PreloadedCalibrationData.cs` | A shipped per-game preset: `MeasuredMaximum x CorrectionFactor x pct/100`, blended with live evidence at a fixed 0.25 - permanently, not as a ramp. `GetAverage` deliberately throws. |
+| `CalibrationDataProvider.cs` | Owns every calibration, keyed `track;car;metric`. Pools all four wheels into ONE `Slip` calibration while splitting `RPSToSpeed` by axle - SimHub's own scoping, and the reason the earlier per-wheel Lock learners were retired. |
+| `GameCalibrationBounds.cs` | The three per-game wheel-speed-delta bounds that sit alongside the presets in SimHub's own file. |
+| `TimeMovingAverage.cs` | The per-gear wheel-speed-delta reference. The ONE type here reconstructed from usage rather than decompiled - it lives in `WoteverCommon`, which this project does not ship; see its own remarks for why that cannot matter at this call site. |
 
 ### `QAdvanceFeedback\Core\Normalized\` (Layer 4)
 
@@ -509,7 +604,15 @@ the test build immediately, not just a runtime assumption nobody checks.
 
 | File | Purpose |
 |---|---|
-| `RuntimeDocument.cs` / `RuntimeCache.cs` | The persisted-learned-state document shape and its in-memory dirty-tracked cache. |
+| `RuntimeDocument.cs` / `RuntimeCache.cs` | The persisted-learned-state document shape and its in-memory dirty-tracked cache. Version 11 (1.0.7.0) added Layer 3's own ShakeIt calibration, the converted shipped presets and per-game bounds, and the source-file timestamps that make the start-up re-import cheap - all in the SAME `QAdvanceFeedback.Parameters.json` as the Normalizer's learned state. |
+
+Layer 3's calibration is written with **short JSON names** (`mx`, `v`, `s`, `c`, `p`, `mm`, `cf`,
+`lo`, `hi`, `ll`) because it is the largest section of that file and is rewritten on a timer while
+driving. The naming lives in `ShakeItCalibrationContractResolver` at the project root, not as
+attributes on the Core types, so `Core\` keeps its no-serialiser rule. That resolver also **omits**
+`AutoCalibrationData` (a live object reference the provider re-points every frame) and the derived
+`IsReady`/`Completion` getters. Changing a short name is a breaking file change - do it only with a
+Version bump.
 
 ### `QAdvanceFeedback\Settings\`
 
@@ -520,7 +623,8 @@ the test build immediately, not just a runtime assumption nobody checks.
 | `GForceSettings.cs` | G-Force tab's settings + learned-maxima import/export. |
 | `GeneralSettings.cs` | Diagnostics/CSV-export toggles. |
 | `SourceMode.cs` / `ScriptType.cs` / `SourceButtonMode.cs` | Small enums backing the Sources section. |
-| `DefaultWheelSources.cs` | Builds the shipped default Manual-mode source text (a plain reference to Layer 3's own Raw property). |
+| `DefaultWheelSources.cs` | Builds the shipped default source text for Plugin Internal mode (a plain reference to Layer 3's own Raw property). |
+| `KeyDataPointSettings.cs` | Manual SMax/S90/S75 (Perfect/Great/Good for Slip), stored per slot = (mode, game, source); shipped per-source-type defaults; validation. |
 | `ApplyDirtyState.cs` | Tracks whether the settings UI has unsaved edits, for the Apply button's enabled state. |
 | `SettingsControl.xaml` / `SettingsControl.xaml.cs` | The one WPF settings control (four tabs). |
 

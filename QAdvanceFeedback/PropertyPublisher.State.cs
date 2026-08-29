@@ -93,6 +93,13 @@ namespace QAdvanceFeedback
         private bool _lockSourceFallbackActive;
         private bool _slipSourceFallbackActive;
 
+        // Diag.Lock/Slip.ColdStartTier (v1.0.7, docs\v107-tiered-coldstart-report.md) - which tier
+        // KeyedScaleLearner's own tiered cold-start reference resolver most recently engaged for this
+        // channel's currently-configured key - "Tier1" (no reference borrowed - today's pre-1.0.7
+        // behaviour) until the first frame is computed.
+        private string _lockColdStartTier = "Tier1";
+        private string _slipColdStartTier = "Tier1";
+
         // Surface-keyed learning (docs\branch-dispatch-and-source-keyed-learning-report.md).
         private bool? _wheelOnLooseSurfaceFrontLeft, _wheelOnLooseSurfaceFrontRight, _wheelOnLooseSurfaceRearLeft, _wheelOnLooseSurfaceRearRight;
         private bool _surfaceEverReportedLoose;
@@ -177,6 +184,15 @@ namespace QAdvanceFeedback
         {
             _lockSourceFallbackActive = lockFallbackActive;
             _slipSourceFallbackActive = slipFallbackActive;
+        }
+
+        /// <summary>Diag.Lock/Slip.ColdStartTier (v1.0.7, docs\v107-tiered-coldstart-report.md) - read
+        /// straight off <c>NormalizedWheelLockSlipEngine</c>'s own last-computed state, same pattern as
+        /// <see cref="UpdateSourceScaleCalibration"/>.</summary>
+        public void UpdateColdStartTier(string lockTier, string slipTier)
+        {
+            _lockColdStartTier = lockTier ?? "Tier1";
+            _slipColdStartTier = slipTier ?? "Tier1";
         }
 
         /// <summary>Surface-keyed learning (docs\branch-dispatch-and-source-keyed-learning-report.md) -
@@ -494,6 +510,12 @@ namespace QAdvanceFeedback
             values.Add(_capGameFamily);
             values.Add(_capWheelSlipCalibrationProviderSlipScale);
 
+            // Diag.Lock/Slip.ColdStartTier (v1.0.7) - appended at the END, mirroring how every prior
+            // diagnostic addition to this method was appended rather than inserted mid-list, so no
+            // existing column's position/meaning shifts for a log already being parsed by position.
+            values.Add(_lockColdStartTier);
+            values.Add(_slipColdStartTier);
+
             return values.ToArray();
         }
 
@@ -527,6 +549,8 @@ namespace QAdvanceFeedback
         public double[] SourceSlipSnapshot => (double[])_sourceSlip.Clone();
         public double[] LockProjectedWithoutPulseSnapshot => (double[])_lockProjectedWithoutPulse.Clone();
         public double[] SlipProjectedWithoutPulseSnapshot => (double[])_slipProjectedWithoutPulse.Clone();
+        public string LockColdStartTierSnapshot => _lockColdStartTier;
+        public string SlipColdStartTierSnapshot => _slipColdStartTier;
 
         private static void Fill(double[] lockValues, double[] slipValues, LegacyWheelLockSlipResult result)
         {

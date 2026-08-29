@@ -100,7 +100,27 @@ namespace QAdvanceFeedback.Core.Runtime
         /// owner was explicit that the 30/60 anchors, and this entire four-range mapping, apply to
         /// WheelLock only.
         /// </remarks>
-        public int Version = 8;
+        /// <remarks>
+        /// BUMPED AGAIN, 8 -&gt; 9 (v1.0.7, docs\v107-tiered-coldstart-report.md - the tiered cold-start
+        /// reference system): <see cref="LockScaleCrossCarSeed"/>/<see cref="SlipScaleCrossCarSeed"/> are
+        /// now VESTIGIAL - the old (game,source)-only cross-car seed mechanism they backed is superseded
+        /// by <c>KeyedScaleLearner.ResolveReference</c>, which resolves ALL FOUR tiers directly from
+        /// <see cref="LockScaleLearners"/>/<see cref="SlipScaleLearners"/>' own per-key entries (already
+        /// persisted) rather than a second, separately-maintained seed dictionary - see
+        /// <c>KeyedScaleLearner</c>'s own remarks for why this reconciliation replaces rather than layers
+        /// on top of the old mechanism. <c>KeyedScaleLearner.ObserveAtPhysicalLimit</c> no longer writes to
+        /// the seed, so these two dictionaries are always empty going forward; a Version-8-or-earlier
+        /// file's own seed section is simply READ (for backward-compatible deserialisation - the fields
+        /// still exist so an old file does not fail to parse) and then never acted upon again - a
+        /// one-time, silent, safe drop, not a throw. No NEW field/dictionary was needed for the tiered
+        /// resolver itself, since it deliberately reuses state this class already persists.
+        /// </remarks>
+        /// <remarks>Version 11 (1.0.7.1) adds <see cref="ShakeItCalibration"/> and
+        /// <see cref="ShakeItPrecalibration"/> - additive, so no migration is needed (the same reasoning
+        /// as every earlier additive bump): a Version-9-or-earlier file simply has neither section, both
+        /// deserialise to empty dictionaries, and Layer 3 then behaves as a first run - which is exactly
+        /// the condition that triggers the automatic ShakeIt precalibration import.</remarks>
+        public int Version = 11;
 
         /// <summary>Per (gameId, carId) Lock-channel learner state - key format matches
         /// <see cref="KeyedGripLearner.MakeKey"/>.</summary>
@@ -144,6 +164,45 @@ namespace QAdvanceFeedback.Core.Runtime
         /// S75/S90 anchors - see <c>LockAnchorLearner.ExportAll</c>/<c>ImportAll</c>. WHEELLOCK ONLY -
         /// there is deliberately no Slip equivalent.</summary>
         public Dictionary<string, LockAnchorState> LockAnchors = new Dictionary<string, LockAnchorState>();
+
+        /// <summary>
+        /// Version 11 (1.0.7.1): LAYER 3's own ShakeIt calibration, keyed exactly as SimHub keys its
+        /// own - <c>track;car;metric</c>, see
+        /// <see cref="RawCalculator.Calibration.CalibrationDataProvider.BuildKey"/>. This is the direct
+        /// equivalent of the <c>CalibrationDataV5</c> dictionary SimHub persists, and it is persisted
+        /// here for the same reason: so a calibration simply RESUMES accumulating next run rather than
+        /// rebuilding from zero. There is deliberately no reference/blend/handover machinery around it -
+        /// resuming a histogram cannot produce a transition artefact, which an earlier
+        /// reference-and-blend design demonstrably could.
+        /// </summary>
+        public Dictionary<string, RawCalculator.Calibration.CalibrationData> ShakeItCalibration =
+            new Dictionary<string, RawCalculator.Calibration.CalibrationData>();
+
+        /// <summary>
+        /// Version 11 (1.0.7.1): SHIPPED ShakeIt precalibration, converted from SimHub's own
+        /// <c>ShakeIt\ShakeItPrecalibration\GameData.json</c> - outer key is SimHub's game code, inner key
+        /// is the metric name (<c>Slip</c>, <c>RPSToSpeedFront</c>, ...). Where a preset exists for the
+        /// running game, it supplies three quarters of the published band permanently and this key's own
+        /// live calibration the remaining quarter - SimHub's own fixed 0.25 ratio, not a ramp. See
+        /// <see cref="RawCalculator.Calibration.PreloadedCalibrationData"/>.
+        /// <para/>
+        /// This is the ONE thing SimHub ships that we cannot: their file is theirs to distribute. Ours is
+        /// empty until the driver runs the converter, which is why the converter runs automatically the
+        /// first time no Raw calibration exists at all.
+        /// </summary>
+        public Dictionary<string, Dictionary<string, RawCalculator.Calibration.PreloadedCalibrationData>> ShakeItPrecalibration =
+            new Dictionary<string, Dictionary<string, RawCalculator.Calibration.PreloadedCalibrationData>>();
+
+        /// <summary>Version 11: the per-game wheel-speed-delta bounds that sit alongside
+        /// <see cref="ShakeItPrecalibration"/> on SimHub's own GameCalibration object, keyed by the same
+        /// game-code pattern - see <see cref="RawCalculator.Calibration.GameCalibrationBounds"/>.</summary>
+        public Dictionary<string, RawCalculator.Calibration.GameCalibrationBounds> ShakeItGameBounds =
+            new Dictionary<string, RawCalculator.Calibration.GameCalibrationBounds>();
+
+        /// <summary>Version 11: source file name to its last-write time in UTC ticks. The ShakeIt import
+        /// runs on EVERY launch so a SimHub update that ships new games is picked up automatically; this
+        /// is what keeps that cheap, since an unchanged file is never opened.</summary>
+        public Dictionary<string, long> ShakeItSourceTimestamps = new Dictionary<string, long>();
     }
 
     /// <summary>
