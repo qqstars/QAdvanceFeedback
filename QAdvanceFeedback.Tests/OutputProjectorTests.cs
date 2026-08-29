@@ -1110,21 +1110,53 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void ProjectorAnchorEditor_reads_and_writes_the_real_start_and_end_output_and_switches_to_custom()
         {
+            // RE-SPECIFIED: an edit now records WHICH preset it departed from, rather than collapsing
+            // every edit into one anonymous "Custom" - editing a Linear preset used to look identical to
+            // editing a Curve one in the dropdown.
             var s = ProjectorSettings.CreateShippedDefault(ProjectionChannel.Lock);
+            Assert.Equal(ProjectorPreset.Curve, s.Preset);
             Assert.Equal(0.0, ProjectorAnchorEditor.GetOutput(s, AnchorSlot.Start));
             Assert.Equal(100.0, ProjectorAnchorEditor.GetOutput(s, AnchorSlot.End));
 
             ProjectorAnchorEditor.SetOutput(s, AnchorSlot.Start, 15.0);
             Assert.Equal(15.0, s.StartOutput);
-            Assert.Equal(ProjectorPreset.Custom, s.Preset);
+            Assert.Equal(ProjectorPreset.CurveCustom, s.Preset);
 
             s.Preset = ProjectorPreset.Curve; // reset to prove the End edit also switches it
             ProjectorAnchorEditor.SetOutput(s, AnchorSlot.End, 80.0);
             Assert.Equal(80.0, s.EndOutput);
-            Assert.Equal(ProjectorPreset.Custom, s.Preset);
+            Assert.Equal(ProjectorPreset.CurveCustom, s.Preset);
 
             Assert.Equal(15.0, ProjectorAnchorEditor.GetOutput(s, AnchorSlot.Start));
             Assert.Equal(80.0, ProjectorAnchorEditor.GetOutput(s, AnchorSlot.End));
+        }
+
+        [Fact]
+        public void An_edited_Linear_preset_stays_Linear_flavoured()
+        {
+            var s = ProjectorSettings.CreateShippedDefault(ProjectionChannel.Lock);
+            s.ApplyPreset(ProjectorPreset.Linear, ProjectionChannel.Lock);
+            Assert.Equal(ProjectorPreset.Linear, s.Preset);
+
+            ProjectorAnchorEditor.SetOutput(s, AnchorSlot.Start, 12.0);
+            Assert.Equal(ProjectorPreset.LinearCustom, s.Preset);
+
+            // Editing again does not walk it on to some other state.
+            ProjectorAnchorEditor.SetOutput(s, AnchorSlot.End, 90.0);
+            Assert.Equal(ProjectorPreset.LinearCustom, s.Preset);
+        }
+
+        [Fact]
+        public void A_legacy_Custom_from_an_older_save_is_left_alone()
+        {
+            // Saves written before the two variants existed carry a bare Custom. There is no base shape
+            // to recover, so guessing one would be worse than keeping what is there.
+            var s = ProjectorSettings.CreateShippedDefault(ProjectionChannel.Lock);
+            s.Preset = ProjectorPreset.Custom;
+
+            ProjectorAnchorEditor.SetOutput(s, AnchorSlot.Start, 5.0);
+
+            Assert.Equal(ProjectorPreset.Custom, s.Preset);
         }
 
         [Fact]

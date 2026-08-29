@@ -76,7 +76,7 @@ namespace QAdvanceFeedback.Core.Projection
             if (s.StartInput > 0.0)
                 Accept(px, py, s.StartInput, s.StartOutput);
 
-            bool flattenEnabled = s.Preset != ProjectorPreset.Linear;
+            bool flattenEnabled = !s.Preset.IsLinearShape();
             double effectiveStartInput = s.StartInput > 0.0 ? s.StartInput : 0.0;
 
             AcceptSetpointWithFlatten(px, py, s.EndInput, flattenEnabled,

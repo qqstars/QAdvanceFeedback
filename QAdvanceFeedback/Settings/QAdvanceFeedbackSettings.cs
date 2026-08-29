@@ -16,6 +16,15 @@ namespace QAdvanceFeedback.Settings
     {
         public int Version { get; set; } = 1;
 
+        /// <summary>
+        /// The shipped starting points per source type - see <see cref="Settings.KeyDataPointDefaults"/>.
+        /// <para/>
+        /// Declared HERE, second only to <see cref="Version"/>, because Newtonsoft writes properties in
+        /// declaration order: this is the block a driver is most likely to want to find and retune, so it
+        /// belongs at the top of the file rather than buried under two channels' worth of settings.
+        /// </summary>
+        public KeyDataPointDefaults KeyDataPointDefaults { get; set; } = Settings.KeyDataPointDefaults.CreateShipped();
+
         public WheelChannelSettings Lock { get; set; } = WheelChannelSettings.CreateLockDefaults();
 
         public WheelChannelSettings Slip { get; set; } = WheelChannelSettings.CreateSlipDefaults();
@@ -47,12 +56,32 @@ namespace QAdvanceFeedback.Settings
         /// </summary>
         public void RestoreDefaults()
         {
+            // KEY DATA POINTS SURVIVE A RESTORE (v1.0.7.2, owner's explicit instruction: "reset to
+            // default should NOT clean the saved SMax/S90/S75 for Global, and SMax/S90/S75 for
+            // per-game"). They are not a tuning preference that a fresh start should discard - they are
+            // an accumulated record of what each source and each game actually read, some of it earned
+            // over many sessions and some of it typed by hand. Wiping the per-game table in particular
+            // would silently throw away work the driver cannot easily reconstruct.
+            //
+            // The AutoGenerate/PerGame switches are carried over too: resetting those would flip a
+            // driver who deliberately chose manual back to Auto, which is a behaviour change disguised
+            // as a preferences reset.
+            KeyDataPointSettings lockKeyData = Lock != null ? Lock.KeyDataPoints : null;
+            KeyDataPointSettings slipKeyData = Slip != null ? Slip.KeyDataPoints : null;
+            // Retuned defaults are the driver's own work too - a preferences reset must not silently
+            // revert numbers they measured and typed in themselves.
+            KeyDataPointDefaults defaults = KeyDataPointDefaults;
+
             QAdvanceFeedbackSettings fresh = CreateDefault();
             Version = fresh.Version;
             Lock = fresh.Lock;
             Slip = fresh.Slip;
             GForce = fresh.GForce;
             General = fresh.General;
+
+            if (lockKeyData != null) Lock.KeyDataPoints = lockKeyData;
+            if (slipKeyData != null) Slip.KeyDataPoints = slipKeyData;
+            if (defaults != null) KeyDataPointDefaults = defaults;
         }
     }
 }

@@ -53,6 +53,18 @@ namespace QAdvanceFeedback.Core
         /// <summary>Null when <c>FeedbackCapabilities</c> itself could not be reached this frame
         /// (see <see cref="RawWheelTelemetryBuilder"/>'s remarks) - distinct from a real, known
         /// <c>false</c>.</summary>
+        /// <summary>SimHub's own <c>FeedbackData.IsFlying</c>. Non-zero suppresses the wheel-speed-delta
+        /// branch entirely - airborne wheels spin freely, so wheelSpeed/groundSpeed diverges wildly and
+        /// would otherwise read as maximum slip. Most relevant on rally titles, which are also the ones
+        /// most likely to select that branch. Zero when the title does not report it.</summary>
+        public int IsFlying { get; }
+
+        /// <summary>SimHub's own <c>FeedbackData.OrientationYawChangePerSecond</c>. Used only to EXCLUDE
+        /// cornering frames from the per-gear wheel-speed-delta reference - in a corner the inner and
+        /// outer wheels genuinely travel different distances, so a delta measured there describes the
+        /// corner rather than the car. Null when the title does not report it.</summary>
+        public double? OrientationYawChangePerSecond { get; }
+
         public bool? CapabilityWheelsSlip { get; }
         public bool? CapabilityWheelsRPS { get; }
         public bool? CapabilityWheelsSpeed { get; }
@@ -80,7 +92,9 @@ namespace QAdvanceFeedback.Core
             bool? capabilityWheelsSlipDirectMode = null, bool? capabilityWheelSlipUseSimpleBraking = null,
             bool? capabilityDetectLockFromWheelsSpeed = null, bool? capabilityDetectLockFromWheelsRPSAndDummyRadius = null,
             bool? capabilitySpeed = null, bool? capabilityRpm = null, string capabilityGameFamily = null,
-            double? capabilityWheelSlipCalibrationProviderSlipScale = null)
+            double? capabilityWheelSlipCalibrationProviderSlipScale = null,
+            int isFlying = 0,
+            double? orientationYawChangePerSecond = null)
         {
             WheelRpsFrontLeft = wheelRpsFrontLeft;
             WheelRpsFrontRight = wheelRpsFrontRight;
@@ -108,6 +122,8 @@ namespace QAdvanceFeedback.Core
             CapabilityRpm = capabilityRpm;
             CapabilityGameFamily = capabilityGameFamily;
             CapabilityWheelSlipCalibrationProviderSlipScale = capabilityWheelSlipCalibrationProviderSlipScale;
+            IsFlying = isFlying;
+            OrientationYawChangePerSecond = orientationYawChangePerSecond;
         }
     }
 }

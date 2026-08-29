@@ -83,7 +83,9 @@ namespace QAdvanceFeedback
                 return RawWheelTelemetryBuilder.Build(
                     capabilityWheelsRPS: null, wheelRps: fb?.WheelRPS,
                     capabilityWheelsSpeed: null, wheelSpeed: fb?.WheelSpeed,
-                    capabilityWheelsSlip: null, wheelSlipRatio: fb?.WheelSlip);
+                    capabilityWheelsSlip: null, wheelSlipRatio: fb?.WheelSlip,
+                    isFlying: fb?.IsFlying ?? 0,
+                    orientationYawChangePerSecond: fb?.OrientationYawChangePerSecond);
             }
 
             return RawWheelTelemetryBuilder.Build(
@@ -97,7 +99,9 @@ namespace QAdvanceFeedback
                 capabilitySpeed: caps.Speed,
                 capabilityRpm: caps.RPM,
                 capabilityGameFamily: caps.GameFamily.ToString(),
-                capabilityWheelSlipCalibrationProviderSlipScale: caps.WheelSlipCalibrationProvider?.SlipScale);
+                capabilityWheelSlipCalibrationProviderSlipScale: caps.WheelSlipCalibrationProvider?.SlipScale,
+                isFlying: fb?.IsFlying ?? 0,
+                orientationYawChangePerSecond: fb?.OrientationYawChangePerSecond);
         }
 
         /// <summary>

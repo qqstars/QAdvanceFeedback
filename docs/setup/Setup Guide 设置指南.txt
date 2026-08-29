@@ -1,42 +1,157 @@
-Quick Steps:
-1. Fully shutdown SimHub. And copy QAdvanceFeedback.dll into the SimHub root folder (Default: C:\Program Files (x86)\SimHub).
-2. Launch SimHub. From the left side "Add/Remove Plugins", enabling "ShakeIt Motors" and "QAdvanceFeedback". Check "Show in the left side menu".
-3. Enter the "ShakeIt Motors" setting via Left menu. Click "Profile Manager", then "Import config file".
-4. Import the provided "QAdvanceFeedback - WheelLockSlip.siprofile" file, after importing, you will see "QAdvanceFeedback - WheelLockSlip" under "Any Game". And disable "Auto switch profile".
-5. You are ready now.
-6. Config your vibrating devices:
-    - ShakeIt Motor, such as Simagic HPR, or BaseShaker:
-        - You can via "ShakeIt Motors" - "QAdvanceFeedback - WheelLockSlip", copy and paste "Custom Effect - QAdvanceFeedBack - WheelLock/Slip" into your own ShakeIt profiles.
-        - Or, you can add by yourself, in your own profile, add "Custom Effect", select "Mono", config "FrontLeft", import property "QAdvanceFeedback.WheelLock.Projected.All" in the editor.
-    - Haptic Seat Pad (8 Channels), such as HF-8, Sensit Haptic Extreme 2:
-        - If you are using Sensit Haptic Extreme 2, import "QAdvanceFeedback - GForce" in the "ShakeIt BaseShaker". If you are using HF-8, import in the "ShakeIt Motors".
-            - NOTICE!!! If you are using HF-8, then you MUST active the "QAdvanceFeedback - GForce" profile. But if you are using Simagic HPR at the same time, then you CANNOT active the two different profiles at the same time.
-            - In thise case, you need to COMBINE the two configuration yourself. And then, you need to project the effects to the device channel properly.
-        - Import the sichannels file in the output device channel mapping configuraiton.
-        - Or configure the channels yourself:
-            - QAdvanceFeedBack-Bottom -> FrontLeft/FrontRight：	The far thigh channels
-            - QAdvanceFeedBack-Bottom -> RearLeft/RearRight：		The upper thigh channels
-            - QAdvanceFeedBack-Back 	  -> FrontLeft/FrontRight：	The waist (Low back) channels
-            - QAdvanceFeedBack-Back 	  -> RearLeft/RearRight：		The back (High back) channels
+====================================================================
+QAdvanceFeedback - Setup Guide (English)
+====================================================================
+
+QUICK START (works for everyone, no matter what hardware you have)
+
+1. Fully close SimHub. Copy QAdvanceFeedback.dll into your SimHub install folder
+   (default: C:\Program Files (x86)\SimHub).
+2. Launch SimHub. Go to "Add/Remove Plugins" and enable "QAdvanceFeedback".
+   Tick "Show in the left side menu".
+3. Import the profile that matches your device (see below).
+4. You're done. This plugin's default "Manual" source needs nothing else configured
+   in SimHub - Wheel Lock/Slip and G-Force both work immediately.
+
+Everything below is about WHICH profile to import for your specific hardware, plus
+an optional advanced path. You do not need ShakeIt Motors at all unless you follow
+that advanced path explicitly.
+
+--------------------------------------------------------------------
+A) SHAKEIT MOTORS / BASS SHAKER (e.g. Simagic HPR motors, a bass shaker)
+--------------------------------------------------------------------
+
+1. Enable the "ShakeIt Motors" plugin (Add/Remove Plugins).
+2. Open "ShakeIt Motors" settings -> "Profile Manager" -> "Import config file".
+3. Import "QAdvanceFeedback - WheelLockSlip.siprofile" (in this same folder). After
+   importing, you'll see "QAdvanceFeedback - WheelLockSlip" listed under "Any Game".
+   Turn OFF "Auto switch profile" for it.
+4. Either copy the "Custom Effect - QAdvanceFeedBack - WheelLock/Slip" effect from
+   that imported profile into your own ShakeIt profile, or build your own Custom
+   Effect and point it at property "QAdvanceFeedback.WheelLock.Projected.All" (and/or
+   "QAdvanceFeedback.WheelSlip.Projected.All").
+
+--------------------------------------------------------------------
+B) 8-CHANNEL HAPTIC PAD (e.g. NextLevelRacing HF-8, Razer Freyja, Sensit Haptics
+   MTC-P Extreme 2)
+--------------------------------------------------------------------
+
+1. Import the matching profile from the "G-Force" folder next to this guide:
+   - Sensit Haptics: import via "ShakeIt Bass Shakers" -> Profile Manager.
+   - HF-8 / Razer Freyja: import via "ShakeIt Motors" -> Profile Manager.
+2. In the output device's channel mapping, import the matching .sichannels file
+   from the same "G-Force" folder, or map channels by hand using this table:
+
+   +----------------------------------+----------------------+
+   | QAdvanceFeedback channel         | Body position        |
+   +----------------------------------+----------------------+
+   | Bottom -> FrontLeft / FrontRight | Far thigh             |
+   | Bottom -> RearLeft / RearRight   | Upper thigh           |
+   | Back   -> FrontLeft / FrontRight | Waist / lower back    |
+   | Back   -> RearLeft / RearRight   | Upper back            |
+   +----------------------------------+----------------------+
+
+   (Razer Freyja has 6 channels, not 8 - combine/omit a pair of the above to fit.)
+
+   *** HF-8 owners, read this: *** if you ALSO run Simagic HPR motors at the same
+   time, SimHub can only have one ShakeIt Motors profile active at once - the HF-8
+   profile and a Simagic HPR profile will conflict and cannot both be the active
+   profile simultaneously. If you need both, merge the two profiles' effects into a
+   single profile yourself, then map each effect to the correct device channels.
+
+--------------------------------------------------------------------
+C) ADVANCED (OPTIONAL): driving Wheel Lock/Slip from ShakeIt Motors instead
+--------------------------------------------------------------------
+
+By default this plugin computes Wheel Lock/Slip itself ("Manual" source) and needs
+no ShakeIt Motors setup at all. Only follow this section if you specifically want
+Wheel Lock/Slip driven by SimHub's own ShakeIt legacy-iRacing calculation instead:
+
+1. Enable "ShakeIt Motors" and add its "Wheels lock" / "Wheels slip" effects, with
+   "Use legacy IRacing algorythm" ticked and "Export output value as a property"
+   ticked (property names "WheelLock.IRacing" / "WheelSlip.IRacing").
+2. In this plugin's Wheel Lock / Wheel Slip settings, switch the source mode from
+   "Manual" to "Use ShakeIt output properties".
+3. A newly created ShakeIt profile starts "cold": its own calibration needs a few
+   minutes of driving before its numbers stabilise (see
+   docs/shakeit-export-guide.md for the full detail). This does not affect the
+   default Manual path at all - it only matters if you choose this ShakeIt path.
+
+Full technical detail for this advanced path: docs/shakeit-export-guide.md
 
 
-快速指南：
-1. 彻底关闭SimHub，将 QAdvanceFeedback.dll 拷贝到SimHub安装目录（默认路径：C:\Program Files (x86)\SimHub）。
-2. 启动SimHub，在左侧“添加/移除插件”，启用“震动电机”和“QAdvanceFeedback”。确保勾选“在左侧主菜单中显示”。
-3. 在左侧进入“振动电机”设置。点击“文件管理器”，选择“导入配置文件”。
-4. 导入提供的 QAdvanceFeedback - WheelLockSlip.siprofile，导入后应该会在Any Game下显示“QAdvanceFeedback - WheelLockSlip”。在右侧“自动切换配置文件”选择为“停用”。
-5. 现在应该已经准备好了。
-6. 具体震动设备配置：
-    - 震动电机诸如Simagic HPR，或者BaseShaker震动音响：
-        - 可以通过“振动电机”- “QAdvanceFeedback - WheelLockSlip”直接拷贝“自定义效果 - QAdvanceFeedBack - WheelLock/Slip”，到你自己的震动电机或者振动音响配置文件里。
-        - 或者，你可以自行在你的震动电机或者震动音响配置里，添加“自定义效果”，选择“Mono”，配置“左前”，在编辑器里导入属性：“QAdvanceFeedback.WheelLock.Projected.All”。
-    - 震动坐垫（8通道），例如HF-8，或者Sensit Extreme 2：
-        - 如果是Sensit Haptic Extreme 2在“震动音响”里导入“QAdvanceFeedback - GForce”。如果是HF-8，则是在“震动电机”里导入。
-            - 注意！！！如果您使用HF-8，则必须让“QAdvanceFeedback - GForce”成为您的激活配置文件。如果您同时还有Simagic HPR震动电机，则两者配置文件会出现冲突不能同时使用。
-            - 您需要自己将两个配置文件进行合并，然后在对应设备中正确的进行通道映射和匹配！
-        - 在输出设备的通道设置里，导入对应的sichannels通道映射文件。
-        - 手动配置（配置对应震动效果映射到对应的震动通道）：
-            - QAdvanceFeedBack-Bottom -> FrontLeft/FrontRight：	对应大腿远端的震动单元通道
-            - QAdvanceFeedBack-Bottom -> RearLeft/RearRight：		对应大腿根部的震动单元通道
-            - QAdvanceFeedBack-Back 	  -> FrontLeft/FrontRight：	对应腰部（下背部）的震动单元通道
-            - QAdvanceFeedBack-Back 	  -> RearLeft/RearRight：		对应上背部的震动单元通道
+====================================================================
+QAdvanceFeedback - 设置指南（简体中文）
+====================================================================
+
+快速上手（无论你使用什么硬件，都适用）
+
+1. 彻底关闭 SimHub。将 QAdvanceFeedback.dll 拷贝到 SimHub 安装目录
+   （默认路径：C:\Program Files (x86)\SimHub）。
+2. 启动 SimHub，进入"添加/移除插件"，启用"QAdvanceFeedback"。
+   勾选"在左侧主菜单中显示"。
+3. 导入与你的设备匹配的配置文件（见下文）。
+4. 完成。本插件默认的"Manual"（手动）数据源无需在 SimHub 中做任何其他配置——
+   车轮抱死/打滑与 G 力功能都会立即生效。
+
+下面的内容只是告诉你：针对你的具体硬件，应该导入哪个配置文件，以及一条可选的进阶
+路径。除非你明确按照进阶路径操作，否则完全不需要用到 ShakeIt Motors。
+
+--------------------------------------------------------------------
+A）震动电机 / 低音震动器（例如 Simagic HPR 电机、BaseShaker 震动音响）
+--------------------------------------------------------------------
+
+1. 启用"振动电机"（ShakeIt Motors）插件（添加/移除插件）。
+2. 进入"振动电机"设置 ->"文件管理器" ->"导入配置文件"。
+3. 导入本文件同目录下的"QAdvanceFeedback - WheelLockSlip.siprofile"。导入后，
+   会在"Any Game"下看到"QAdvanceFeedback - WheelLockSlip"。将其"自动切换配置
+   文件"设置为关闭。
+4. 可以直接从该配置文件中拷贝"自定义效果 - QAdvanceFeedBack - WheelLock/Slip"
+   到你自己的震动电机配置里；也可以自行添加一个"自定义效果"，并将其指向属性
+   "QAdvanceFeedback.WheelLock.Projected.All"（和/或
+   "QAdvanceFeedback.WheelSlip.Projected.All"）。
+
+--------------------------------------------------------------------
+B）8 通道震动垫（例如 NextLevelRacing HF-8、Razer Freyja、
+   Sensit Haptics MTC-P Extreme 2）
+--------------------------------------------------------------------
+
+1. 从本指南同目录下的"G-Force"文件夹中，导入与你设备匹配的配置文件：
+   - Sensit Haptics：通过"振动音响"（ShakeIt Bass Shakers）的文件管理器导入。
+   - HF-8 / Razer Freyja：通过"振动电机"（ShakeIt Motors）的文件管理器导入。
+2. 在输出设备的通道映射中，导入同一个"G-Force"文件夹下匹配的 .sichannels 文件；
+   或者参照下表手动配置通道：
+
+   +----------------------------------+------------------------+
+   | QAdvanceFeedback 通道            | 对应身体部位            |
+   +----------------------------------+------------------------+
+   | Bottom -> FrontLeft / FrontRight | 大腿远端                |
+   | Bottom -> RearLeft / RearRight   | 大腿根部                |
+   | Back   -> FrontLeft / FrontRight | 腰部 / 下背部           |
+   | Back   -> RearLeft / RearRight   | 上背部                  |
+   +----------------------------------+------------------------+
+
+   （Razer Freyja 只有 6 个通道，不是 8 个——需要把上表中的某一对通道合并或省略。）
+
+   *** HF-8 用户请特别注意：*** 如果你同时还在使用 Simagic HPR 震动电机，SimHub
+   同一时间只能激活一个"振动电机"配置文件——HF-8 的配置文件和 Simagic HPR 的配
+   置文件会发生冲突，不能同时作为激活配置文件。如果你两者都需要，请自行把两个配
+   置文件里的效果合并到同一个配置文件中，再把每个效果分别映射到正确的设备通道。
+
+--------------------------------------------------------------------
+C）进阶（可选）：改由 ShakeIt Motors 驱动车轮抱死/打滑
+--------------------------------------------------------------------
+
+本插件默认会自行计算车轮抱死/打滑（"Manual"数据源），完全不需要任何 ShakeIt
+Motors 配置。只有当你明确希望改由 SimHub 自身的 ShakeIt 传统 iRacing 算法来驱
+动车轮抱死/打滑时，才需要执行以下步骤：
+
+1. 启用"振动电机"（ShakeIt Motors），添加它的"Wheels lock"/"Wheels slip"效
+   果，勾选"Use legacy IRacing algorythm"，并勾选"Export output value as a
+   property"（属性名分别为"WheelLock.IRacing"/"WheelSlip.IRacing"）。
+2. 在本插件的 Wheel Lock / Wheel Slip 设置中，把数据源模式从"Manual"切换为
+   "Use ShakeIt output properties"。
+3. 新创建的 ShakeIt 配置文件会从"冷启动"状态开始：它自身的校准需要几分钟的驾驶
+   才能让数值稳定下来（完整细节见 docs/shakeit-export-guide.md）。这一点完全不
+   影响默认的 Manual 路径——只有当你选择了这条 ShakeIt 路径时才需要关心。
+
+这条进阶路径的完整技术细节：docs/shakeit-export-guide.md

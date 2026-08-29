@@ -156,8 +156,22 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(0.0, result.LockAll, 6);
         }
 
+        /// <summary>
+        /// INVERTED IN 1.0.7.1, AND KEPT RATHER THAN DELETED. This used to assert the opposite - that a
+        /// low-speed lockup produced a strong cue - which was true only because of a brake-only floor
+        /// layered on top of the faithful formula.
+        /// <para/>
+        /// That floor was removed because SimHub's own GetSimpleBraking has none (verified assembly-wide:
+        /// one definition, one call site), and the divergence was severe rather than cosmetic - at
+        /// 15 km/h under braking SimHub publishes 0 where the floor published 100, converging only at
+        /// 30 km/h. It had effectively removed SPEED from the Lock formula below 30 km/h.
+        /// <para/>
+        /// The blind spot is therefore real and now DELIBERATE: this branch is silent below the
+        /// sensitivity dead zone, exactly as ShakeIt is. If a low-speed cue is wanted, it belongs in the
+        /// Projected layer's own curve, where it cannot make Raw and ShakeIt disagree.
+        /// </summary>
         [Fact]
-        public void Lock_produces_a_strong_cue_for_a_genuine_low_speed_lockup_that_the_faithful_formula_alone_cannot()
+        public void Lock_is_silent_below_the_sensitivity_dead_zone_exactly_as_ShakeIt_is()
         {
             var sample = Sample(newRpm: 900.0, oldRpm: 900.0, brake: 80.0, throttle: 0.0, clutch: 0.0,
                                  lateralLocalVelocity: 0.0, speedKmh: 8.0);
@@ -165,8 +179,7 @@ namespace QAdvanceFeedback.Tests
             var engine = new RawCalculatorEngine();
             var result = engine.Compute(sample);
 
-            Assert.True(result.LockAll > 40.0,
-                $"a genuine low-speed lockup must produce a strong cue, got {result.LockAll}");
+            Assert.Equal(0.0, result.LockAll, 6);
         }
 
         [Fact]
@@ -301,24 +314,31 @@ namespace QAdvanceFeedback.Tests
                 capabilityWheelsSlip: true);
 
         /// <summary>
-        /// THE FIX, proven end to end through the real engine (not the private learner directly):
-        /// FrontLeft's own native <c>WheelSlipRatio</c> reaches +/-1.0 at a hard lock while
-        /// FrontRight's own native reading never exceeds +/-0.1 for the exact same car/session -
-        /// both wheels are, physically, at their OWN full lock on the test frame below. Before the
-        /// fix, Lock's FrontRight was judged against a learner POOLED with FrontLeft's much larger
-        /// scale (see <c>_slipRatioFront</c>) and read far below 100 despite being fully locked on
-        /// its own native scale; Slip used - and, being unchanged, still uses today - that exact
-        /// same pooled reference and behaviour, which this test also pins down as a mutation guard.
+        /// SUPERSEDED IN 1.0.7.1 - AND DELIBERATELY KEPT, INVERTED, RATHER THAN DELETED.
+        /// <para/>
+        /// This test used to prove the full-lock fidelity fix: Lock read a PER-WHEEL slip-ratio learner,
+        /// so a wheel whose native <c>WheelSlipRatio</c> tops out at +/-0.1 still published near 100 at
+        /// its own genuine full lock, instead of being judged against an axle-mate whose native scale
+        /// reaches +/-1.0 and reading far below.
+        /// <para/>
+        /// 1.0.7.1 removed those per-wheel learners because SimHub pools ALL FOUR wheels into a single
+        /// "Slip" calibration - established by decompilation, and not merely at read time: SimHub's own
+        /// ongoing learning (<c>CalibrationDataProvider.Update</c>) feeds every wheel into that same
+        /// object, and <c>GetSlipCalibration</c> accepts a <c>front</c> flag it never reads. Matching
+        /// ShakeIt exactly was the owner's explicit instruction, made after confirming that the pooling
+        /// is SimHub's learning model and not just its read path.
+        /// <para/>
+        /// THE COST IS REAL AND IS PINNED BELOW so it cannot be forgotten: on a car whose two wheels
+        /// report different native slip scales, the quieter wheel now under-reads at its own full lock -
+        /// exactly as ShakeIt does. If that ever needs revisiting, this test is the record of what was
+        /// traded away and why.
         /// </summary>
         [Fact]
-        public void Lock_SlipData_branch_judges_each_wheel_against_its_own_history_not_the_axle_pool()
+        public void Lock_SlipData_branch_now_pools_all_four_wheels_matching_ShakeIt()
         {
             var thresholds = LegacyThresholds.Defaults;
             var engine = new RawCalculatorEngine();
 
-            // Train both wheels' references: FrontLeft alternates between a light reading and a hard
-            // +/-1.0 lock; FrontRight alternates between a light reading and ITS OWN, much smaller,
-            // +/-0.1 hard-lock ceiling - a realistic per-wheel-scale asymmetry, not a corner case.
             for (int i = 0; i < 300; i++)
             {
                 bool hardLockFrame = i % 2 == 0;
@@ -328,8 +348,6 @@ namespace QAdvanceFeedback.Tests
                 engine.Compute(sample, thresholds, null, null, raw);
             }
 
-            // Test frame: FrontRight is at its OWN full-lock reading (-0.1, its historical ceiling)
-            // at the exact same instant FrontLeft is at ITS full-lock reading (-1.0).
             var testRaw = SlipDataOnlySnapshot(-1.0, -0.1);
             var testSample = Sample(newRpm: 5000.0, oldRpm: 5000.0, brake: 0.0, throttle: 0.0, clutch: 0.0,
                                      lateralLocalVelocity: 0.0, speedKmh: 90.0);
@@ -338,16 +356,15 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(WheelSlipBranchNames.SlipData, result.SelectedLockBranch);
             Assert.Equal(WheelSlipBranchNames.SlipData, result.SelectedSlipBranch);
 
-            // THE FIX: judged against its own history, FrontRight's own full-lock reading publishes
-            // near 100 for Lock.
-            Assert.True(result.LockWheels.FrontRight > 90.0,
-                $"Lock.FrontRight should read near its own full-lock ceiling once judged against its own history, got {result.LockWheels.FrontRight}");
+            // BOTH channels now read the same pooled calibration, so both report the SAME value for the
+            // same native input. That identity is the actual contract this test defends.
+            Assert.Equal(result.SlipWheels.FrontRight, result.LockWheels.FrontRight, 6);
 
-            // MUTATION GUARD: Slip is untouched - still reading the OLD axle-pooled reference, so the
-            // exact same native input (-0.1, dwarfed by FrontLeft's own -1.0 in the shared pool)
-            // still reads far below 100 for Slip, unlike Lock now does.
-            Assert.True(result.SlipWheels.FrontRight < 50.0,
-                $"Slip.FrontRight must remain on the old axle-pooled reference (unchanged), got {result.SlipWheels.FrontRight}");
+            // ...and the pooled reference is dominated by FrontLeft's much larger native scale, so
+            // FrontRight's own full-lock reading lands well below 100 - the ShakeIt behaviour, and the
+            // cost recorded in this test's own remarks.
+            Assert.True(result.LockWheels.FrontRight < 50.0,
+                $"pooled against FrontLeft's +/-1.0 scale, FrontRight's -0.1 full lock must read low, got {result.LockWheels.FrontRight}");
         }
     }
 }

@@ -25,6 +25,11 @@
          included, not a re-implementation. -->
     <Compile Include="..\QAdvanceFeedback\Settings\WheelChannelSettings.cs" LinkBase="Settings" />
     <Compile Include="..\QAdvanceFeedback\Settings\ScriptType.cs" LinkBase="Settings" />
+    <!-- Key data points (v1.0.7.2) - the persisted manual SMax/S90/S75 model WheelChannelSettings now
+         carries. Same narrow-Include convention as its neighbours above. -->
+    <Compile Include="..\QAdvanceFeedback\Settings\KeyDataPointSettings.cs" LinkBase="Settings" />
+    <!-- The per-source shipped starting points the config file now carries. -->
+    <Compile Include="..\QAdvanceFeedback\Settings\KeyDataPointDefaults.cs" LinkBase="Settings" />
     <!-- SourceMode (the Manual/ShakeIt-Motors-export toggle) - WheelChannelSettings.cs (above) now
          references this enum. Core\MotorsExport\*.cs already arrives via the Core\**\*.cs wildcard. -->
     <Compile Include="..\QAdvanceFeedback\Settings\SourceMode.cs" LinkBase="Settings" />
@@ -54,6 +59,16 @@
          is the only part actually unit-tested; see ApplyDirtyStateTests.cs's own remarks for why the
          rest (SettingsControl.xaml.cs's control wiring) is not. -->
     <Compile Include="..\QAdvanceFeedback\Settings\ApplyDirtyState.cs" LinkBase="Settings" />
+
+    <!-- Shipped Tier-1 cold-start SMax table. Lives at the project root at the owner's explicit
+         request rather than under Core\, but it is a pure constants/classification table with no
+         SimHub dependency, and Core\Normalized\KeyedScaleLearner.cs now calls it - so it must be
+         link-compiled here or Core no longer builds in this project. -->
+    <Compile Include="..\QAdvanceFeedback\KnownSourceColdStartReference.cs" LinkBase="Adapters" />
+
+    <!-- SimHub ShakeIt precalibration importer (1.0.7.1) - Newtonsoft-only, no SimHub dependency. -->
+    <Compile Include="..\QAdvanceFeedback\ShakeItPrecalibrationConverter.cs" LinkBase="Adapters" />
+    <Compile Include="..\QAdvanceFeedback\ShakeItCalibrationJson.cs" LinkBase="Adapters" />
   </ItemGroup>
   <ItemGroup>
     <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />

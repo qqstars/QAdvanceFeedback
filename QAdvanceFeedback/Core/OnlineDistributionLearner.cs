@@ -63,7 +63,54 @@ namespace QAdvanceFeedback.Core
         /// <see cref="GetPercentile"/> keep moving exactly as before.</summary>
         public const int SampleCountSaturationCap = 1_000_000;
 
-        private readonly Dictionary<double, int> _histogram = new Dictionary<double, int>();
+        /// <summary>
+        /// The bucketed distribution, holding DECAYING weights rather than plain counts.
+        /// <para/>
+        /// WHY IT FORGETS (root-caused from the owner's own c_1_7_1_e_d capture). A purely cumulative
+        /// histogram makes every percentile a one-way ratchet: once a high tail exists it stays inside
+        /// the top 1% until swamped by roughly a HUNDRED times as many lower samples, so a ceiling that
+        /// settled high could never come back down when the car, the tyres or the conditions genuinely
+        /// changed. Measured before this change: a learner settled at 90 was fed ten times as much
+        /// evidence at 30 and did not move at all. That is the same one-way-ratchet failure this project
+        /// already rejected in <c>ReferencedDistributionLearner.OwnKeyExportDamping</c>'s own remarks.
+        /// <para/>
+        /// HOW, WITHOUT AN O(n) PASS PER SAMPLE. Decaying every bucket on every fold-in would be a full
+        /// dictionary walk at 60fps. Instead the INCOMING weight grows geometrically
+        /// (<see cref="_weightScale"/>), which is mathematically identical to decaying everything already
+        /// stored, and the whole table is renormalised only when that scale would threaten precision.
+        /// </summary>
+        private readonly Dictionary<double, double> _histogram = new Dictionary<double, double>();
+
+        /// <summary>The weight the NEXT fold-in carries. Grows by 1/<see cref="HistogramDecayPerSample"/>
+        /// per sample so that older entries are, in relative terms, decayed - see
+        /// <see cref="_histogram"/>.</summary>
+        private double _weightScale = 1.0;
+
+        /// <summary>Per-sample retention for the histogram. 0.99995 gives an effective window of roughly
+        /// 20,000 samples (about five minutes of engaged driving at 60fps).
+        /// <para/>
+        /// DELIBERATELY MUCH SLOWER than <see cref="WeightedAverageDecayPerSample"/> (0.997, ~330
+        /// samples). A mean converges on a few hundred samples; a 99th percentile needs roughly a hundred
+        /// times that many before its tail holds enough samples to be an estimate rather than a single
+        /// reading. Using the mean's rate here would make the ceiling track noise.</summary>
+        private const double HistogramDecayPerSample = 0.99995;
+
+        /// <summary>Renormalisation threshold for <see cref="_weightScale"/> - far below double's range,
+        /// so the scale never approaches overflow or loses precision against the stored weights.</summary>
+        private const double WeightScaleRenormalisationLimit = 1e12;
+
+        /// <summary>
+        /// Converts the histogram's total stored weight into an EQUIVALENT RECENT SAMPLE COUNT, which is
+        /// the unit the readiness bar in <see cref="GetPercentile"/> is expressed in.
+        /// <para/>
+        /// The k-th fold-in was stored with weight <c>(1/d)^k</c>, so after n samples the newest weighs
+        /// <c>(1/d)^(n-1)</c>, which is <c>_weightScale * d</c>. Dividing the total by that renormalises
+        /// the series so the newest sample counts as 1, giving <c>(1-d^n)/(1-d)</c> - which is
+        /// approximately n while the history is short, and saturates at <c>1/(1-d)</c> (20,000 here) once
+        /// it is long. That saturation IS the effective window.
+        /// </summary>
+        private double EquivalentSampleCount(double totalWeight)
+            => totalWeight / (_weightScale * HistogramDecayPerSample);
         private double _sum;
         private int _count;
 
@@ -107,6 +154,24 @@ namespace QAdvanceFeedback.Core
         /// own separate, downstream count term.</summary>
         public int Count => _count;
 
+        /// <summary>How many observations landed in a POSITIVE histogram bucket - the quantity
+        /// <see cref="GetPercentile"/> actually gates on (<see cref="MinSamplesForPercentile"/>), which is
+        /// not the same as <see cref="Count"/> (zero readings are counted there but contribute no
+        /// percentile). Exposed so a caller ramping AWAY from a cold reference can measure the same
+        /// evidence the percentile gate itself uses, rather than a looser proxy - see
+        /// <c>Normalized.KeyedScaleLearner.Tier1ColdCeiling</c>.</summary>
+        public int PositiveSampleCount
+        {
+            get
+            {
+                // The histogram now holds DECAYING weights rather than plain counts (see _histogram's
+                // own remarks), so this reports the EQUIVALENT recent-sample count - what the stored
+                // weight is worth against the current incoming weight - rather than a lifetime tally.
+                double equivalent = EquivalentSampleCount(_histogram.Where(kv => kv.Key > 0.0).Sum(kv => kv.Value));
+                return equivalent >= SampleCountSaturationCap ? SampleCountSaturationCap : (int)equivalent;
+            }
+        }
+
         /// <summary>
         /// Folds one FULLY-TRUSTED (weight 1.0) observation in - see
         /// <see cref="AddValue(double,double)"/> for the weighted overload every pre-existing caller's
@@ -121,9 +186,11 @@ namespace QAdvanceFeedback.Core
         /// something worth corrupting the average over). Values are rounded to 4 decimal places before
         /// bucketing (bounds the histogram's own memory for a long session without materially changing
         /// any percentile a caller would observe - verified in the same replay cited in this class's own
-        /// remarks). <paramref name="weight"/> only affects <see cref="GetAverage"/>'s own decaying
-        /// weighted mean (see this class's own remarks) - the histogram/percentile path always counts a
-        /// fold-in as exactly one sample, regardless of its weight.
+        /// remarks). <paramref name="weight"/> scales the fold-in's contribution to BOTH
+        /// <see cref="GetAverage"/>'s decaying weighted mean AND the histogram behind
+        /// <see cref="GetPercentile"/>/<see cref="PositiveSampleCount"/>, so a caller that reports a
+        /// continuous confidence gets a distribution weighted by that confidence rather than by raw frame
+        /// count. A caller passing the default 1.0 is unaffected in every respect.
         /// </summary>
         public void AddValue(double value, double weight)
         {
@@ -139,8 +206,21 @@ namespace QAdvanceFeedback.Core
             _decayedWeight = _decayedWeight * WeightedAverageDecayPerSample + weight;
 
             double bucket = Math.Round(abs, 4);
-            _histogram.TryGetValue(bucket, out int existing);
-            _histogram[bucket] = existing + 1;
+            _histogram.TryGetValue(bucket, out double existing);
+            // The OBSERVATION weight multiplies the decay weight (docs\cross-channel-smax-report.md).
+            // This path used to add _weightScale alone - i.e. every fold-in counted as exactly one
+            // sample no matter how little the caller trusted it - which was harmless while the only
+            // weighted caller fed GetAverage. It is NOT harmless now that KeyedScaleLearner reads its
+            // ceiling from a percentile of the CONFIDENCE-WEIGHTED at-limit distribution: the corner-local
+            // detector reports low confidence for the many approach frames and high confidence for the
+            // few frames at the limit, so ignoring the weight let the approach outvote the limit by sheer
+            // frame count and put the ceiling straight back onto the anti-correlated value.
+            _histogram[bucket] = existing + weight * _weightScale;
+
+            // Growing the incoming weight is equivalent to decaying everything already stored, without
+            // walking the table - see _histogram's own remarks.
+            _weightScale /= HistogramDecayPerSample;
+            if (_weightScale > WeightScaleRenormalisationLimit) RenormaliseHistogram();
         }
 
         /// <summary>Decaying WEIGHTED mean of every |value| folded in so far (see this class's own
@@ -153,23 +233,72 @@ namespace QAdvanceFeedback.Core
         /// Nearest-rank percentile (0-100) over every STRICTLY POSITIVE bucketed value observed so far
         /// (zeros excluded - matches the <c>includeZero: false</c> default SimHub's own
         /// <c>GetSlipCalibration</c>/<c>GetPercentile</c> call sites use), or null while fewer than
-        /// <see cref="MinSamplesForPercentile"/> qualifying (positive) samples have been observed - the
+        /// <paramref name="minSamples"/> qualifying (positive) samples have been observed - the
         /// caller treats null as "not ready", not as zero.
+        /// <para/>
+        /// <paramref name="minSamples"/> defaults to <see cref="MinSamplesForPercentile"/>, which is
+        /// SimHub's own bar for the RAW slip band - a standalone consumer, where a noisy early percentile
+        /// would reach the output unattenuated. A caller whose own value is already evidence-weighted may
+        /// pass a lower bar: <c>Normalized.KeyedScaleLearner</c> does, because the ceiling it derives from
+        /// this is blended toward its cold anchor by a dispersion-weighted ramp, so an early, thin
+        /// percentile is damped rather than trusted outright. Requiring 500 there would have been a large
+        /// regression in how quickly a car calibrates.
         /// </summary>
-        public double? GetPercentile(double percentile)
+        /// <summary>Rescales every stored weight back down so <see cref="_weightScale"/> returns to 1.0.
+        /// Purely a numeric-hygiene step: every weight is divided by the same factor, so no percentile
+        /// this class reports changes across it.</summary>
+        /// <summary>
+        /// Weight below which a bucket is dropped at renormalisation time, as a fraction of the
+        /// distribution's total weight.
+        /// <para/>
+        /// MULTI-YEAR MEMORY GUARD. Buckets are values rounded to 4 decimals over a 0-100 source scale,
+        /// so this table can hold up to ~1,000,001 distinct entries per key - and there is one learner
+        /// per (game, car, source, surface). Nothing ever removed an entry: a bucket touched once, years
+        /// ago, stayed forever. Renormalisation runs roughly every 552,000 folds (~2.5 hours at 60fps),
+        /// which is the natural place to sweep.
+        /// <para/>
+        /// 1e-9 is far below anything a percentile can resolve. The effective window is ~20,000 samples
+        /// (<see cref="HistogramDecayPerSample"/>), so a bucket last touched 500,000 samples ago has
+        /// already decayed to ~1.4e-11 of current weight - a hundred times below this threshold. Dropping
+        /// it cannot move <see cref="GetPercentile"/>; keeping it only costs memory forever.
+        /// </summary>
+        private const double PruneWeightFraction = 1e-9;
+
+        private void RenormaliseHistogram()
+        {
+            double total = 0.0;
+            foreach (double weight in _histogram.Values) total += weight;
+            double floor = total * PruneWeightFraction;
+
+            foreach (double bucket in _histogram.Keys.ToList())
+            {
+                double rescaled = _histogram[bucket] / _weightScale;
+                // Compare BEFORE rescaling (floor is on the same pre-rescale scale as the stored value),
+                // then either drop the bucket or write the rescaled weight back.
+                if (_histogram[bucket] <= floor) _histogram.Remove(bucket);
+                else _histogram[bucket] = rescaled;
+            }
+            _weightScale = 1.0;
+        }
+
+        public double? GetPercentile(double percentile, int minSamples = MinSamplesForPercentile)
         {
             if (percentile <= 0.0) return 0.0;
 
-            List<KeyValuePair<double, int>> positive = _histogram.Where(kv => kv.Key > 0.0).OrderBy(kv => kv.Key).ToList();
-            int num = positive.Sum(kv => kv.Value);
-            if (num < MinSamplesForPercentile) return null;
+            List<KeyValuePair<double, double>> positive = _histogram.Where(kv => kv.Key > 0.0).OrderBy(kv => kv.Key).ToList();
+            if (positive.Count == 0) return null;
 
-            double pos = (num - 1) * (percentile / 100.0) + 1.0;
+            // Weights are relative, so readiness is measured against the CURRENT incoming weight rather
+            // than against a raw count - "how many recent samples is this distribution worth".
+            double totalWeight = positive.Sum(kv => kv.Value);
+            if (EquivalentSampleCount(totalWeight) < minSamples) return null;
+
+            double pos = (totalWeight - 1) * (percentile / 100.0) + 1.0;
             if (pos <= 1.0) return positive[0].Key;
-            if (pos >= num) return positive[positive.Count - 1].Key;
+            if (pos >= totalWeight) return positive[positive.Count - 1].Key;
 
-            int targetRank = (int)pos - 1;
-            int acc = 0;
+            double targetRank = pos - 1;
+            double acc = 0.0;
             for (int i = 0; i < positive.Count; i++)
             {
                 acc += positive[i].Value;
@@ -183,6 +312,7 @@ namespace QAdvanceFeedback.Core
         /// switch by anything in this plugin today - see this class's own remarks on scope.</summary>
         public void Reset()
         {
+            _weightScale = 1.0;
             _histogram.Clear();
             _sum = 0.0;
             _count = 0;

@@ -127,6 +127,13 @@ namespace QAdvanceFeedback.Settings
         /// </summary>
         public NormalizePattern NormalizePattern { get; set; } = NormalizePattern.Mapping;
 
+        /// <summary>
+        /// The driver-facing key data points for this channel - see <see cref="KeyDataPointSettings"/>.
+        /// Never null: a save written before v1.0.7.2 simply has no entry, and the shipped default
+        /// (Auto on) reproduces exactly the pre-1.0.7.2 behaviour, so there is no migration.
+        /// </summary>
+        public KeyDataPointSettings KeyDataPoints { get; set; } = new KeyDataPointSettings();
+
         public ProjectorSettings Projector { get; set; } = new ProjectorSettings();
 
         public PulseSettings Pulse { get; set; } = new PulseSettings();
@@ -249,6 +256,23 @@ namespace QAdvanceFeedback.Settings
         private static WheelChannelSettings CreateDefaults(bool isLockChannel)
         {
             var settings = new WheelChannelSettings();
+            // NORMALIZE PATTERN - THE TWO CHANNELS DELIBERATELY SHIP DIFFERENT PATTERNS (owner's call,
+            // re-confirmed 2026-08-28 after a build that had wrongly shipped single-point on both):
+            //
+            //   Lock -> Mapping, the full SMax/S90/S75 three-point curve it has always shipped. Lock is
+            //     the channel this plugin anchors physically: LockAnchorLearner measures the source value
+            //     at 90% and 75% of the corner's own g-limit, so all three points are real measurements
+            //     and the shipped defaults (85/75/60) place all three.
+            //   Slip -> MaxGripOnly, the "Perfect point" alone, because Slip has NO native 90%/75% grip
+            //     measurement to place the two lower anchors from. Its Great/Good points are DERIVED from
+            //     the Perfect point (see KeyDataPointSettings.DeriveLowerAnchors) when the driver opts in,
+            //     and derived anchors are not a good enough reason to make a fresh install feel curved.
+            //
+            // The three-point mapping remains available on EITHER channel in EITHER mode - this is only
+            // about what a fresh install feels like before anyone touches the selector.
+            settings.NormalizePattern = isLockChannel
+                ? NormalizePattern.Mapping
+                : NormalizePattern.MaxGripOnly;
             // Global shipped default is now Manual/Raw (docs\relative-fallback-and-raw-default-report.md
             // - FLIPPED from the previous ShakeIt default; see SourceMode's own remarks for the evidence)
             // - NOT ApplyMotorsExportDefaults (which would force ShakeIt).

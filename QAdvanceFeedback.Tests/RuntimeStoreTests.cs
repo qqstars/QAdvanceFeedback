@@ -435,6 +435,86 @@ namespace QAdvanceFeedback.Tests
             Assert.Contains(HealthRegistry.Snapshot(), e => e.Subsystem == HealthSubsystems.RuntimePersistence);
         }
 
+        // ------------------------------------------------------------------------------------
+        // Version 11 (1.0.7.1) - the ShakeIt calibration, and its SHORT JSON names.
+        // ------------------------------------------------------------------------------------
+
+        [Fact]
+        public void ShakeItCalibration_survives_a_real_write_and_reopen()
+        {
+            string key = Core.RawCalculator.Calibration.CalibrationDataProvider.BuildKey("Spa", "Sauber", "Slip");
+            var calibration = new Core.RawCalculator.Calibration.CalibrationData();
+            for (int i = 0; i < 600; i++) calibration.AddValue(0.25);
+            calibration.AddValue(4.0); // moves Max away from the bucket values
+
+            _store = new RuntimeStore(_path, flushInterval: NoAutoFlush);
+            _store.SaveShakeItCalibration(new Dictionary<string, Core.RawCalculator.Calibration.CalibrationData> { [key] = calibration });
+            _store.SaveShakeItGameBounds(new Dictionary<string, Core.RawCalculator.Calibration.GameCalibrationBounds>
+            {
+                ["F1*"] = new Core.RawCalculator.Calibration.GameCalibrationBounds { WheelSpeedDeltaHighbound = 0.42 },
+            });
+            _store.SaveShakeItSourceTimestamps(new Dictionary<string, long> { ["GameData.json"] = 12345L });
+            _store.Flush();
+
+            using (var reopened = new RuntimeStore(_path, flushInterval: NoAutoFlush))
+            {
+                reopened.LoadShakeItCalibration(out var data);
+                Core.RawCalculator.Calibration.CalibrationData restored = data[key];
+
+                // THE PROPERTY THAT MATTERS: the restored calibration must answer identically. A naming
+                // mismatch between writer and reader would read back empty and silently restart every
+                // calibration, which is exactly the failure this test exists to catch.
+                Assert.Equal(calibration.Count, restored.Count);
+                Assert.Equal(calibration.Max, restored.Max, 9);
+                Assert.Equal(calibration.CalibrationPointsAdded, restored.CalibrationPointsAdded, 9);
+                Assert.Equal(calibration.GetPercentile(99.0), restored.GetPercentile(99.0), 9);
+                Assert.Equal(calibration.GetAverage().Value, restored.GetAverage().Value, 9);
+
+                reopened.LoadShakeItGameBounds(out var bounds);
+                Assert.Equal(0.42, bounds["F1*"].WheelSpeedDeltaHighbound, 9);
+
+                reopened.LoadShakeItSourceTimestamps(out var stamps);
+                Assert.Equal(12345L, stamps["GameData.json"]);
+            }
+        }
+
+        [Fact]
+        public void ShakeItCalibration_is_written_with_short_names_and_no_live_only_members()
+        {
+            _store = new RuntimeStore(_path, flushInterval: NoAutoFlush);
+            var calibration = new Core.RawCalculator.Calibration.CalibrationData();
+            calibration.AddValue(0.5);
+            _store.SaveShakeItCalibration(new Dictionary<string, Core.RawCalculator.Calibration.CalibrationData>
+            {
+                [Core.RawCalculator.Calibration.CalibrationDataProvider.BuildKey("Spa", "Sauber", "Slip")] = calibration,
+            });
+            _store.SaveShakeItPrecalibration(new Dictionary<string, Dictionary<string, Core.RawCalculator.Calibration.PreloadedCalibrationData>>
+            {
+                ["F1*"] = new Dictionary<string, Core.RawCalculator.Calibration.PreloadedCalibrationData>
+                {
+                    ["Slip"] = new Core.RawCalculator.Calibration.PreloadedCalibrationData { MeasuredMaximum = 2.0 },
+                },
+            });
+            _store.Flush();
+
+            string json = File.ReadAllText(_path);
+
+            // Short names keep the largest section of this file small - it is rewritten on a timer while
+            // driving, so both its size and its parse cost matter.
+            Assert.Contains("\"mx\"", json);
+            Assert.Contains("\"p\"", json);
+            Assert.Contains("\"mm\"", json);
+            Assert.DoesNotContain("CalibrationPointsAdded", json);
+            Assert.DoesNotContain("MeasuredMaximum", json);
+
+            // Derived getters and the live cross-reference must never be persisted - AutoCalibrationData
+            // in particular is a live object the provider re-points every frame, so writing it would
+            // duplicate a whole histogram inside every preset.
+            Assert.DoesNotContain("AutoCalibrationData", json);
+            Assert.DoesNotContain("IsReady", json);
+            Assert.DoesNotContain("Completion", json);
+        }
+
         private static bool SpinWaitForFile(string path, TimeSpan timeout)
         {
             DateTime deadline = DateTime.UtcNow + timeout;

@@ -48,11 +48,20 @@ namespace QAdvanceFeedback.Core.Projection
         /// the identity transform) so every pre-existing caller/test that predates this mechanism keeps
         /// compiling and behaving EXACTLY as before.</param>
         /// <param name="slipConfidence">The Slip channel's equivalent of <paramref name="lockConfidence"/>.</param>
+        /// <param name="lockFloor">
+        /// TIERED COLD-START REFERENCE SYSTEM (v1.0.7, docs\v107-tiered-coldstart-report.md) - the Lock
+        /// channel's own resolved <see cref="Normalized.ColdStartTier"/> floor (see
+        /// <see cref="Normalized.ColdStartTierFloors"/>), 0.5/0.6/0.7/0.8 for Tier 1/2/3/4 respectively.
+        /// Defaults to <see cref="ColdStartScale.MinSafeFloor"/> (Tier 1's own floor) so every
+        /// pre-existing caller/test that predates this feature keeps compiling and behaving EXACTLY as
+        /// before.</param>
+        /// <param name="slipFloor">The Slip channel's equivalent of <paramref name="lockFloor"/>.</param>
         public ProjectedWheelLockSlipResult Compute(NormalizedWheelLockSlipResult reliable, double dtSeconds,
-            double lockConfidence = 1.0, double slipConfidence = 1.0)
+            double lockConfidence = 1.0, double slipConfidence = 1.0,
+            double lockFloor = ColdStartScale.MinSafeFloor, double slipFloor = ColdStartScale.MinSafeFloor)
         {
-            double lockScale = ColdStartScale.Compute(lockConfidence);
-            double slipScale = ColdStartScale.Compute(slipConfidence);
+            double lockScale = ColdStartScale.Compute(lockConfidence, lockFloor);
+            double slipScale = ColdStartScale.Compute(slipConfidence, slipFloor);
 
             double[] lockRaw =
             {

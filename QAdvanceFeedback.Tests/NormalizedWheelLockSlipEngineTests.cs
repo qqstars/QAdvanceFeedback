@@ -1215,8 +1215,15 @@ namespace QAdvanceFeedback.Tests
                 result = engine.Compute(BrakingSample(3.5), Corners.Uniform(30.0), Corners.Zero,
                     layer3RawLockWheels: Corners.Uniform(90.0));
 
-            Assert.True(engine.LockSourceFallbackActive,
-                "a sustained, substantial (not near-zero) proportional disagreement must still engage the fallback");
+            // RE-SPECIFIED (confidence-blend / forgetting-distribution work): the property that matters
+            // is the OUTCOME - a source under-reporting by ~3x must still publish a correct severity -
+            // not which of the two mechanisms delivered it. There are now two: the relative fallback,
+            // and the per-source scale calibration itself. This test's own remarks above already
+            // describe the fallback's job as covering the window "WHILE that slower calibration is still
+            // catching up"; the calibration is no longer slow (the ceiling is within 10% of settled
+            // after two to five seconds of braking, measured on the owner's capture), so at this sample
+            // count it can now correct the reading on its own. Asserting the flag would be asserting
+            // that calibration is still slow, which is the opposite of what was wanted.
             Assert.True(result.LockAll > 50.0,
                 $"a car whose configured source sustainedly under-reports by ~3x must publish a severity well above the source's own low native reading (30) within a realistic session, not stay capped near it - got {result.LockAll}");
         }
@@ -1328,8 +1335,12 @@ namespace QAdvanceFeedback.Tests
             // DELTA-G COLLAPSE BAND MAPPING - re-expressed against LockFallbackWeight (see the previous
             // test's own remarks); LockSourceFallbackActive (a boolean, unaffected by this task) still
             // reports engage/disengage exactly as before.
+            // The warm-up is deliberately SHORTER than the per-source calibration's own readiness ramp
+            // (KeyedScaleLearner.CeilingReadinessSamples), so the fallback is genuinely the mechanism
+            // under test here rather than racing the calibration. Longer warm-ups now let the
+            // calibration correct the reading by itself - see the re-specified engagement test above.
             var engine = new NormalizedWheelLockSlipEngine();
-            for (int i = 0; i < 100; i++)
+            for (int i = 0; i < 40; i++)
                 engine.Compute(BrakingSample(3.5), Corners.Uniform(30.0), Corners.Zero,
                     layer3RawLockWheels: Corners.Uniform(90.0));
             Assert.True(engine.LockSourceFallbackActive, "the fallback should be engaged after the sustained disagreement above");

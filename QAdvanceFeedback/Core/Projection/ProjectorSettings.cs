@@ -2,11 +2,38 @@ namespace QAdvanceFeedback.Core.Projection
 {
     /// <summary>Named shaping presets for <see cref="OutputProjector"/>. Ported verbatim from the
     /// sibling ReliableWheelLockSlip project's Core/OutputProjector.cs.</summary>
+    /// <summary>Preset helpers - see <see cref="ProjectorPreset"/>.</summary>
+    public static class ProjectorPresetExtensions
+    {
+        /// <summary>
+        /// Whether this preset is a LINEAR shape, customised or not.
+        /// <para/>
+        /// Everything that used to test <c>Preset != Linear</c> has to ask this instead: once editing a
+        /// Linear preset produced <see cref="ProjectorPreset.LinearCustom"/> rather than a bare Custom,
+        /// a plain inequality started treating an edited straight line as a curve - which turned the
+        /// flatten plateaus back on and stopped it being linear at all.
+        /// </summary>
+        public static bool IsLinearShape(this ProjectorPreset preset)
+            => preset == ProjectorPreset.Linear || preset == ProjectorPreset.LinearCustom;
+    }
+
     public enum ProjectorPreset
     {
         Linear,
         Curve,
-        Custom
+
+        /// <summary>Legacy single "edited" state. Still deserialises from saves written before the two
+        /// preset-specific variants below existed, and is treated as <see cref="CurveCustom"/> for
+        /// display; nothing writes it any more.</summary>
+        Custom,
+
+        /// <summary>Linear, then edited. Kept distinct from <see cref="CurveCustom"/> so the dropdown
+        /// still says which shape the driver started from - editing one anchor of a Linear preset used to
+        /// collapse it to a bare "Custom", losing that.</summary>
+        LinearCustom,
+
+        /// <summary>Curve, then edited - see <see cref="LinearCustom"/>.</summary>
+        CurveCustom
     }
 
     /// <summary>

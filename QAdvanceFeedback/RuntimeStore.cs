@@ -134,6 +134,32 @@ namespace QAdvanceFeedback
 
         public void SaveLockAnchors(Dictionary<string, LockAnchorState> data) => _cache.SaveLockAnchors(data);
 
+        /// <summary>Version 11 (1.0.7.1) - Layer 3's ShakeIt calibration and the converted shipped
+        /// presets. See <c>Core.RawCalculator.Calibration.CalibrationDataProvider</c>.</summary>
+        public void LoadShakeItCalibration(out Dictionary<string, Core.RawCalculator.Calibration.CalibrationData> data)
+            => _cache.LoadShakeItCalibration(out data);
+
+        public void SaveShakeItCalibration(Dictionary<string, Core.RawCalculator.Calibration.CalibrationData> data)
+            => _cache.SaveShakeItCalibration(data);
+
+        public void LoadShakeItPrecalibration(out Dictionary<string, Dictionary<string, Core.RawCalculator.Calibration.PreloadedCalibrationData>> data)
+            => _cache.LoadShakeItPrecalibration(out data);
+
+        public void SaveShakeItPrecalibration(Dictionary<string, Dictionary<string, Core.RawCalculator.Calibration.PreloadedCalibrationData>> data)
+            => _cache.SaveShakeItPrecalibration(data);
+
+        public void LoadShakeItGameBounds(out Dictionary<string, Core.RawCalculator.Calibration.GameCalibrationBounds> data)
+            => _cache.LoadShakeItGameBounds(out data);
+
+        public void SaveShakeItGameBounds(Dictionary<string, Core.RawCalculator.Calibration.GameCalibrationBounds> data)
+            => _cache.SaveShakeItGameBounds(data);
+
+        public void LoadShakeItSourceTimestamps(out Dictionary<string, long> data)
+            => _cache.LoadShakeItSourceTimestamps(out data);
+
+        public void SaveShakeItSourceTimestamps(Dictionary<string, long> data)
+            => _cache.SaveShakeItSourceTimestamps(data);
+
         /// <summary>The pre-per-car global Lock peak/samples imported from a legacy-named runtime
         /// file at construction, if any - false when nothing usable was found (fresh install, or the
         /// new file already existed so no legacy import was attempted at all). See this class's own
@@ -224,7 +250,11 @@ namespace QAdvanceFeedback
             if (string.IsNullOrEmpty(_path)) return;
             try
             {
-                string json = JsonConvert.SerializeObject(snapshot, Formatting.Indented);
+                // The ShakeIt calibration types get short JSON names and drop their live-only
+                // members - see ShakeItCalibrationContractResolver. The reader below MUST use the
+                // same settings or every calibration reads back empty.
+                string json = JsonConvert.SerializeObject(
+                    snapshot, ShakeItCalibrationContractResolver.Settings(Formatting.Indented));
                 lock (_fileLock)
                 {
                     string directory = Path.GetDirectoryName(_path);
@@ -286,7 +316,8 @@ namespace QAdvanceFeedback
             {
                 if (!string.IsNullOrEmpty(path) && File.Exists(path))
                 {
-                    var loaded = JsonConvert.DeserializeObject<RuntimeDocument>(File.ReadAllText(path));
+                    var loaded = JsonConvert.DeserializeObject<RuntimeDocument>(
+                        File.ReadAllText(path), ShakeItCalibrationContractResolver.Settings(Formatting.None));
                     if (loaded != null) return Normalise(loaded);
                 }
             }

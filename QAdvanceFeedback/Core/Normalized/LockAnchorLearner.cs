@@ -82,10 +82,12 @@ namespace QAdvanceFeedback.Core.Normalized
     /// collapses from 6.44x/7.67x to EXACTLY Smax's own 2.20x cross-session dispersion (S75=k*Smax
     /// inherits Smax's own dispersion by construction), because Smax is already the one anchor
     /// (<see cref="KeyedScaleLearner"/>'s primary, physically-anchored tier) this codebase has already
-    /// measured to be reliable. Session-scoped only (not exported/imported) so the legacy absolute
-    /// anchors above remain the persisted, backward-compatible answer and no saved-state format changes;
-    /// gated by a minimum corroborating-hit count - a caller that never sees enough corroborating
-    /// crossings this session simply falls back to the legacy anchor, unchanged.
+    /// measured to be reliable. PERSISTED across sessions (see <see cref="LockAnchorState"/>), which is
+    /// what lets a ratio - a property of the tyre/source pairing rather than of one session's conditions
+    /// - accumulate corroboration over time; gated by a minimum corroborating-hit count, so a caller that
+    /// has not yet seen enough corroborating crossings falls back to the legacy anchor, unchanged.
+    /// (An earlier revision of this paragraph described the ratio state as session-scoped. That was never
+    /// true of the shipped code - ExportAll/ImportAll have always round-tripped it.)
     /// </summary>
     public sealed class LockAnchorLearner
     {
@@ -154,6 +156,18 @@ namespace QAdvanceFeedback.Core.Normalized
             public AnchorEstimate E90Ratio;
             public double? LastObservedSmax;
 
+            // PHYSICALLY-DERIVED RATIOS (docs\cross-channel-smax-report.md) - learned RETROSPECTIVELY,
+            // once a braking event has finished, from crossings of 0.75x and 0.90x THAT CORNER'S OWN
+            // detector-identified limit G. Separate fields from E75Ratio/E90Ratio above, which keep
+            // learning from the forward uSpeedAware crossing exactly as before - additive, so the legacy
+            // path and everything that depends on it is untouched.
+            public AnchorEstimate E75PhysicalRatio;
+            public AnchorEstimate E90PhysicalRatio;
+
+            /// <summary>The braking event currently in progress - (G, source, at-limit confidence) per
+            /// qualifying frame. Extracted and cleared by <see cref="ResetRun"/>.</summary>
+            public List<CornerFrame> Run;
+
             // Run-bracket tracking (see this class's own remarks) - the immediately preceding
             // qualifying frame's own (u, source) pair, per target. Reset by ResetRun whenever the
             // caller's own qualifying run breaks (mirrors _lockLastG's own remarks in
@@ -174,6 +188,153 @@ namespace QAdvanceFeedback.Core.Normalized
         /// <summary>How many candidate crossings were accepted and folded into an anchor - session-scoped,
         /// diagnostic only.</summary>
         public int AcceptedObservationCount => _acceptedObservations;
+
+        /// <summary>One buffered frame of the braking event in progress - see <see cref="Key.Run"/>.</summary>
+        internal struct CornerFrame
+        {
+            public double G;
+            public double Source;
+            public double Confidence;
+        }
+
+        /// <summary>Below this peak confidence a braking event is not treated as having reached the
+        /// limit at all, so it teaches nothing. Matches the floor the derivation was measured under
+        /// (medians were unchanged from 0.25 to 0.50 - see <see cref="ObserveCornerFrame"/>).</summary>
+        private const double MinCornerConfidenceToLearn = 0.25;
+
+        /// <summary>Deceleration below this is too small for "75% of it" to mean anything physical.</summary>
+        private const double MinLimitG = 0.3;
+
+        /// <summary>Hard cap on the buffered event, so a pathological never-ending "braking run" cannot
+        /// grow without bound. Far above any real braking event (a long one is a few hundred frames).</summary>
+        private const int MaxRunFrames = 2048;
+
+        /// <summary>
+        /// Buffer one qualifying frame of the braking event in progress. Nothing is learned here - the
+        /// anchors can only be extracted once the event has FINISHED, because the crossings of
+        /// 0.75x/0.90x this corner's limit G happen BEFORE that limit is known.
+        /// <para/>
+        /// WHY RETROSPECTIVE AND NOT A RUNNING REFERENCE. The obvious cheaper design - divide this
+        /// frame's G by a running estimate of the limit learned from earlier corners - was measured and
+        /// rejected: the limit G varies from 1.14g to 4.22g BETWEEN corners on the owner's own capture
+        /// (a hairpin and a fast sweeper are simply different), so a running mean is a poor proxy for
+        /// the corner actually being driven. Measured against each corner's OWN limit the S90 ratio is
+        /// 0.61-0.80 across four sessions; against a running mean it collapses to 0.44-0.54 and scatters.
+        /// </summary>
+        public void ObserveCornerFrame(string gameId, string carId, string sourceIdentity,
+            double magnitudeG, double sourceRawValue, double atLimitConfidence, double? smaxRaw)
+        {
+            if (!ClampMath.IsFinite(magnitudeG) || !ClampMath.IsFinite(sourceRawValue)) return;
+            if (!ClampMath.IsFinite(atLimitConfidence) || atLimitConfidence < 0.0) return;
+
+            Key k = GetOrCreate(gameId, carId, sourceIdentity);
+            if (smaxRaw.HasValue) k.LastObservedSmax = smaxRaw;
+            if (k.Run == null) k.Run = new List<CornerFrame>();
+            if (k.Run.Count >= MaxRunFrames) return;
+            k.Run.Add(new CornerFrame { G = magnitudeG, Source = sourceRawValue, Confidence = atLimitConfidence });
+        }
+
+        /// <summary>
+        /// Extract this key's S75/S90 ratios from the braking event that just finished, then clear it.
+        /// <para/>
+        /// The event's own limit is the frame of PEAK at-limit confidence - the same corner-local
+        /// detector that defines SMax, so all three anchors come from one physical event. From there we
+        /// walk BACK for the last rising crossing of 0.75x and 0.90x that limit's G and read the source,
+        /// expressing each as a fraction of the source AT the limit. Those fractions are what is learned
+        /// (dimensionless, and stable at ~0.49/~0.72 across two cars and two sources); the absolute
+        /// crossings are not, because the limit G differs corner to corner.
+        /// </summary>
+        private static void ExtractCornerAnchors(Key k)
+        {
+            List<CornerFrame> run = k.Run;
+            if (run == null || run.Count < 3) { k.Run?.Clear(); return; }
+
+            int best = 0;
+            for (int i = 1; i < run.Count; i++)
+                if (run[i].Confidence > run[best].Confidence) best = i;
+
+            double gLimit = run[best].G, sLimit = run[best].Source;
+            if (run[best].Confidence < MinCornerConfidenceToLearn || gLimit < MinLimitG || sLimit <= 0.0)
+            {
+                run.Clear();
+                return;
+            }
+
+            ApplyCrossing(run, best, gLimit, sLimit, Target75, ref k.E75PhysicalRatio);
+            ApplyCrossing(run, best, gLimit, sLimit, Target90, ref k.E90PhysicalRatio);
+            run.Clear();
+        }
+
+        private static void ApplyCrossing(List<CornerFrame> run, int limitIndex,
+            double gLimit, double sLimit, double target, ref AnchorEstimate estimate)
+        {
+            double level = target * gLimit;
+            for (int i = limitIndex; i > 0; i--)
+            {
+                if (run[i - 1].G >= level || level > run[i].G) continue;
+                double span = run[i].G - run[i - 1].G;
+                double t = span > 1e-9 ? (level - run[i - 1].G) / span : 0.0;
+                double source = run[i - 1].Source + (run[i].Source - run[i - 1].Source) * t;
+                if (source > 0.0)
+                    ApplyImpactWeighted(ref estimate, source / sLimit, RatioToleranceFloor);
+                return;
+            }
+        }
+
+        /// <summary>
+        /// Corroborating corners at which this key's own learned ratio is trusted COMPLETELY and the
+        /// seed has faded out entirely. Below it the two are blended - see
+        /// <see cref="PhysicalRatioOrSeed"/>.
+        /// </summary>
+        private const int RatioFullConfidenceHits = 5;
+
+        /// <summary>
+        /// This key's physically-derived S75/S90 ratio, FADED IN from the caller's seed as corroborating
+        /// corners accumulate - never switched to outright.
+        /// <para/>
+        /// WHY A RAMP AND NOT A GATE. An earlier revision returned the learned ratio the moment a key
+        /// reached <see cref="MinRatioHitsToPrefer"/> corroborating corners and the seed until then,
+        /// which steps the published curve's knots the instant the second corner lands - the same class
+        /// of single-sample discontinuity <see cref="KeyedScaleLearner"/>'s own readiness ramp exists to
+        /// prevent, and visible to the driver as the shake changing character mid-lap for no reason the
+        /// driving explains. The seed is a REFERENCE, so it should hand over gradually exactly the way
+        /// the SMax tier reference does.
+        /// </summary>
+        private static double PhysicalRatioOrSeed(AnchorEstimate estimate, double seed)
+        {
+            if (estimate.Level <= 0.0 || estimate.Hits <= 0) return seed;
+            double confidence = ClampMath.To01(
+                (estimate.Hits - 1) / (double)Math.Max(1, RatioFullConfidenceHits - 1));
+            return seed + (estimate.Level - seed) * confidence;
+        }
+
+        /// <summary>This key's S75 ratio blended with <paramref name="seedRatio"/> by how many
+        /// corroborating corners have taught it - see <see cref="PhysicalRatioOrSeed"/>. Returns the seed
+        /// unchanged when nothing has been learned yet.</summary>
+        public double PhysicalS75Ratio(string gameId, string carId, string sourceIdentity, double seedRatio)
+        {
+            Key k = Find(gameId, carId, sourceIdentity);
+            return k == null ? seedRatio : PhysicalRatioOrSeed(k.E75PhysicalRatio, seedRatio);
+        }
+
+        /// <summary>S90's counterpart to <see cref="PhysicalS75Ratio"/>.</summary>
+        public double PhysicalS90Ratio(string gameId, string carId, string sourceIdentity, double seedRatio)
+        {
+            Key k = Find(gameId, carId, sourceIdentity);
+            return k == null ? seedRatio : PhysicalRatioOrSeed(k.E90PhysicalRatio, seedRatio);
+        }
+
+        /// <summary>How far this key's own learned S75/S90 ratios have taken over from the seed, 0..1 -
+        /// diagnostic, so a replay/report can show whether a number is seeded or genuinely learned.</summary>
+        public double PhysicalRatioConfidence(string gameId, string carId, string sourceIdentity)
+        {
+            Key k = Find(gameId, carId, sourceIdentity);
+            if (k == null) return 0.0;
+            int hits = Math.Min(
+                k.E75PhysicalRatio.Level > 0.0 ? k.E75PhysicalRatio.Hits : 0,
+                k.E90PhysicalRatio.Level > 0.0 ? k.E90PhysicalRatio.Hits : 0);
+            return ClampMath.To01((hits - 1) / (double)Math.Max(1, RatioFullConfidenceHits - 1));
+        }
 
         public double? LearnedS75(string gameId, string carId, string sourceIdentity)
         {
@@ -222,6 +383,11 @@ namespace QAdvanceFeedback.Core.Normalized
             Key k = GetOrCreate(gameId, carId, sourceIdentity);
             k.LastU = null;
             k.LastSource = null;
+            // THE BRAKING EVENT JUST ENDED, which is the only moment its own limit is known - so this is
+            // where the physically-derived anchors are extracted (see ObserveCornerFrame's own remarks
+            // for why it cannot be done frame-by-frame). Always clears the buffer, including when the
+            // event taught nothing, so a run that never reached the limit cannot leak into the next one.
+            ExtractCornerAnchors(k);
             // LastObservedSmax is deliberately NOT reset here - it is a session-scoped "most recently
             // known Smax", not run-bracket state; a gap between corners does not make Smax itself stale.
         }
@@ -327,6 +493,21 @@ namespace QAdvanceFeedback.Core.Normalized
             estimate.Level += impact * (observed - estimate.Level);
         }
 
+        /// <summary>
+        /// Clamp a hit count arriving from persisted state into [0, <see cref="SampleCountSaturationCap"/>].
+        /// <para/>
+        /// Applied on EVERY import path, legacy included. In-process the counters can never exceed the cap
+        /// (<see cref="ApplyImpactWeighted"/> saturates), so int is comfortably sufficient - the cap is
+        /// 1,000,000 against int's own 2,147,483,647, a 2000x margin that a plugin running continuously
+        /// for years cannot close. Persisted state is the one way a value could arrive from outside that
+        /// invariant (a hand-edited or corrupted save), and while the downstream arithmetic does survive
+        /// it - Math.Pow(2, huge) yields Infinity, which the existing `impact > 1.0` clamp catches - that
+        /// is an accident of IEEE semantics rather than a designed guard, so the value is clamped here
+        /// instead of relying on it.
+        /// </summary>
+        private static int ClampHits(int hits)
+            => hits < 0 ? 0 : (hits > SampleCountSaturationCap ? SampleCountSaturationCap : hits);
+
         private Key Find(string gameId, string carId, string sourceIdentity)
             => _keys.TryGetValue(KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity), out Key k) ? k : null;
 
@@ -360,7 +541,8 @@ namespace QAdvanceFeedback.Core.Normalized
             {
                 bool hasLegacy = pair.Value.E75.Level > 0.0 || pair.Value.E90.Level > 0.0;
                 bool hasRatio = pair.Value.E75Ratio.Level > 0.0 || pair.Value.E90Ratio.Level > 0.0;
-                if (!hasLegacy && !hasRatio) continue;
+                bool hasPhysical = pair.Value.E75PhysicalRatio.Level > 0.0 || pair.Value.E90PhysicalRatio.Level > 0.0;
+                if (!hasLegacy && !hasRatio && !hasPhysical) continue;
                 export[pair.Key] = new LockAnchorState
                 {
                     S75 = pair.Value.E75.Level,
@@ -384,6 +566,14 @@ namespace QAdvanceFeedback.Core.Normalized
                     RatioLevel90 = pair.Value.E90Ratio.Level,
                     RatioHits90 = pair.Value.E90Ratio.Hits,
                     RatioCandidate90 = pair.Value.E90Ratio.CandidateValue,
+                    // See LockAnchorState.PhysicalRatioLevel75's own remarks for why these pool across
+                    // sessions where SMax itself deliberately does not.
+                    PhysicalRatioLevel75 = pair.Value.E75PhysicalRatio.Level,
+                    PhysicalRatioHits75 = pair.Value.E75PhysicalRatio.Hits,
+                    PhysicalRatioCandidate75 = pair.Value.E75PhysicalRatio.CandidateValue,
+                    PhysicalRatioLevel90 = pair.Value.E90PhysicalRatio.Level,
+                    PhysicalRatioHits90 = pair.Value.E90PhysicalRatio.Hits,
+                    PhysicalRatioCandidate90 = pair.Value.E90PhysicalRatio.CandidateValue,
                 };
             }
             return export;
@@ -400,22 +590,35 @@ namespace QAdvanceFeedback.Core.Normalized
                 var k = new Key();
                 if (pair.Value.S75 > 0.0)
                 {
-                    k.E75 = new AnchorEstimate { Level = pair.Value.S75, CandidateValue = pair.Value.Candidate75 > 0.0 ? pair.Value.Candidate75 : pair.Value.S75, Hits = Math.Max(0, pair.Value.Hits75) };
+                    k.E75 = new AnchorEstimate { Level = pair.Value.S75, CandidateValue = pair.Value.Candidate75 > 0.0 ? pair.Value.Candidate75 : pair.Value.S75, Hits = ClampHits(pair.Value.Hits75) };
                 }
                 if (pair.Value.S90 > 0.0)
                 {
-                    k.E90 = new AnchorEstimate { Level = pair.Value.S90, CandidateValue = pair.Value.Candidate90 > 0.0 ? pair.Value.Candidate90 : pair.Value.S90, Hits = Math.Max(0, pair.Value.Hits90) };
+                    k.E90 = new AnchorEstimate { Level = pair.Value.S90, CandidateValue = pair.Value.Candidate90 > 0.0 ? pair.Value.Candidate90 : pair.Value.S90, Hits = ClampHits(pair.Value.Hits90) };
                 }
                 // RATIO-OF-Smax REFINEMENT - absent (both 0/default) on any save persisted before this
                 // refinement shipped; that is the correct, harmless "no ratio evidence yet" cold state
                 // (LearnedS75/90 fall straight back to the legacy k.E75/E90 above), not a migration.
                 if (pair.Value.RatioLevel75 > 0.0)
                 {
-                    k.E75Ratio = new AnchorEstimate { Level = pair.Value.RatioLevel75, CandidateValue = pair.Value.RatioCandidate75 > 0.0 ? pair.Value.RatioCandidate75 : pair.Value.RatioLevel75, Hits = Math.Max(0, pair.Value.RatioHits75) };
+                    k.E75Ratio = new AnchorEstimate { Level = pair.Value.RatioLevel75, CandidateValue = pair.Value.RatioCandidate75 > 0.0 ? pair.Value.RatioCandidate75 : pair.Value.RatioLevel75, Hits = ClampHits(pair.Value.RatioHits75) };
                 }
                 if (pair.Value.RatioLevel90 > 0.0)
                 {
-                    k.E90Ratio = new AnchorEstimate { Level = pair.Value.RatioLevel90, CandidateValue = pair.Value.RatioCandidate90 > 0.0 ? pair.Value.RatioCandidate90 : pair.Value.RatioLevel90, Hits = Math.Max(0, pair.Value.RatioHits90) };
+                    k.E90Ratio = new AnchorEstimate { Level = pair.Value.RatioLevel90, CandidateValue = pair.Value.RatioCandidate90 > 0.0 ? pair.Value.RatioCandidate90 : pair.Value.RatioLevel90, Hits = ClampHits(pair.Value.RatioHits90) };
+                }
+                // PHYSICALLY-DERIVED RATIOS - same convention: absent (0/default) on a save written
+                // before this shipped, which reads as "nothing learned" and correctly starts the
+                // seed-to-learned hand-over ramp from the beginning. Hits is clamped on the way IN as
+                // well as on the way out, so a corrupt or hand-edited save cannot introduce a value the
+                // ramp/impact arithmetic (which raises 2 to the power of Hits-1) would have to survive.
+                if (pair.Value.PhysicalRatioLevel75 > 0.0)
+                {
+                    k.E75PhysicalRatio = new AnchorEstimate { Level = pair.Value.PhysicalRatioLevel75, CandidateValue = pair.Value.PhysicalRatioCandidate75 > 0.0 ? pair.Value.PhysicalRatioCandidate75 : pair.Value.PhysicalRatioLevel75, Hits = ClampHits(pair.Value.PhysicalRatioHits75) };
+                }
+                if (pair.Value.PhysicalRatioLevel90 > 0.0)
+                {
+                    k.E90PhysicalRatio = new AnchorEstimate { Level = pair.Value.PhysicalRatioLevel90, CandidateValue = pair.Value.PhysicalRatioCandidate90 > 0.0 ? pair.Value.PhysicalRatioCandidate90 : pair.Value.PhysicalRatioLevel90, Hits = ClampHits(pair.Value.PhysicalRatioHits90) };
                 }
                 _keys[pair.Key] = k;
             }
@@ -447,5 +650,25 @@ namespace QAdvanceFeedback.Core.Normalized
         public double RatioLevel90;
         public int RatioHits90;
         public double RatioCandidate90;
+
+        // PHYSICALLY-DERIVED RATIOS (docs\cross-channel-smax-report.md) - the S75/S90 ratios learned
+        // retrospectively from each corner's own detector-identified limit G. Additive fields, absent
+        // (defaulting to 0) on any save written before this shipped, which is exactly the correct cold
+        // state: a zero Level means "nothing learned", so the seed ratio is used and the hand-over ramp
+        // starts from the beginning - no migration needed.
+        //
+        // WHY THESE MUST PERSIST. A key needs several corroborating corners before its own ratios take
+        // over from the seed, and a single session frequently does not supply them (measured: two of the
+        // owner's own four sessions ended at 0% hand-over). Pooling ACROSS sessions is what makes the
+        // learned pair reachable at all - and it is legitimate for these specifically, because a RATIO is
+        // a property of the tyre/source pairing rather than of one session's conditions, unlike SMax
+        // itself, whose absolute value stays session-appropriate.
+        public double PhysicalRatioLevel75;
+        public int PhysicalRatioHits75;
+        public double PhysicalRatioCandidate75;
+
+        public double PhysicalRatioLevel90;
+        public int PhysicalRatioHits90;
+        public double PhysicalRatioCandidate90;
     }
 }

@@ -207,6 +207,68 @@ namespace QAdvanceFeedback.Core.Runtime
 
         private static readonly Dictionary<string, LockAnchorState> EmptyLockAnchors = new Dictionary<string, LockAnchorState>();
 
+        // ---- Version 11 (1.0.7.1): Layer 3's ShakeIt calibration, and the converted shipped presets.
+        // NOTE both are stored BY REFERENCE, unlike every other section here. RawCalculatorEngine holds
+        // the live provider and mutates its dictionary every frame; deep-copying on save would cost a
+        // histogram clone at 60fps for no benefit, and the flush path already snapshots under the lock.
+
+        public void LoadShakeItCalibration(out Dictionary<string, RawCalculator.Calibration.CalibrationData> data)
+        {
+            lock (_gate) { data = new Dictionary<string, RawCalculator.Calibration.CalibrationData>(_document.ShakeItCalibration, StringComparer.Ordinal); }
+        }
+
+        public void SaveShakeItCalibration(Dictionary<string, RawCalculator.Calibration.CalibrationData> data)
+        {
+            lock (_gate)
+            {
+                _document.ShakeItCalibration = data ?? new Dictionary<string, RawCalculator.Calibration.CalibrationData>(StringComparer.Ordinal);
+                _dirty = true;
+            }
+        }
+
+        public void LoadShakeItPrecalibration(out Dictionary<string, Dictionary<string, RawCalculator.Calibration.PreloadedCalibrationData>> data)
+        {
+            lock (_gate) { data = new Dictionary<string, Dictionary<string, RawCalculator.Calibration.PreloadedCalibrationData>>(_document.ShakeItPrecalibration, StringComparer.Ordinal); }
+        }
+
+        public void SaveShakeItPrecalibration(Dictionary<string, Dictionary<string, RawCalculator.Calibration.PreloadedCalibrationData>> data)
+        {
+            lock (_gate)
+            {
+                _document.ShakeItPrecalibration = data ?? new Dictionary<string, Dictionary<string, RawCalculator.Calibration.PreloadedCalibrationData>>(StringComparer.Ordinal);
+                _dirty = true;
+            }
+        }
+
+        public void LoadShakeItGameBounds(out Dictionary<string, RawCalculator.Calibration.GameCalibrationBounds> data)
+        {
+            lock (_gate) { data = new Dictionary<string, RawCalculator.Calibration.GameCalibrationBounds>(_document.ShakeItGameBounds, StringComparer.Ordinal); }
+        }
+
+        public void SaveShakeItGameBounds(Dictionary<string, RawCalculator.Calibration.GameCalibrationBounds> data)
+        {
+            lock (_gate)
+            {
+                _document.ShakeItGameBounds = data ?? new Dictionary<string, RawCalculator.Calibration.GameCalibrationBounds>(StringComparer.Ordinal);
+                _dirty = true;
+            }
+        }
+
+        public void LoadShakeItSourceTimestamps(out Dictionary<string, long> data)
+        {
+            lock (_gate) { data = new Dictionary<string, long>(_document.ShakeItSourceTimestamps, StringComparer.Ordinal); }
+        }
+
+        public void SaveShakeItSourceTimestamps(Dictionary<string, long> data)
+        {
+            lock (_gate)
+            {
+                _document.ShakeItSourceTimestamps = data ?? new Dictionary<string, long>(StringComparer.Ordinal);
+                _dirty = true;
+            }
+        }
+
+
         public void LoadGForceLearners(out Dictionary<string, double> accel, out Dictionary<string, double> decel)
         {
             lock (_gate)
@@ -227,6 +289,17 @@ namespace QAdvanceFeedback.Core.Runtime
         }
 
         private static readonly Dictionary<string, double> EmptyMap = new Dictionary<string, double>();
+
+        private static readonly Dictionary<string, RawCalculator.Calibration.CalibrationData> EmptyShakeItCalibration
+            = new Dictionary<string, RawCalculator.Calibration.CalibrationData>();
+
+        private static readonly Dictionary<string, Dictionary<string, RawCalculator.Calibration.PreloadedCalibrationData>> EmptyShakeItPrecalibration
+            = new Dictionary<string, Dictionary<string, RawCalculator.Calibration.PreloadedCalibrationData>>();
+
+        private static readonly Dictionary<string, RawCalculator.Calibration.GameCalibrationBounds> EmptyShakeItBounds
+            = new Dictionary<string, RawCalculator.Calibration.GameCalibrationBounds>();
+
+        private static readonly Dictionary<string, long> EmptyShakeItStamps = new Dictionary<string, long>();
 
         public void Clear()
         {
@@ -269,6 +342,10 @@ namespace QAdvanceFeedback.Core.Runtime
             LockScaleCrossCarSeed = CloneScaleLearners(source.LockScaleCrossCarSeed),
             SlipScaleCrossCarSeed = CloneScaleLearners(source.SlipScaleCrossCarSeed),
             LockAnchors = CloneLockAnchors(source.LockAnchors),
+            ShakeItCalibration = new Dictionary<string, RawCalculator.Calibration.CalibrationData>(source.ShakeItCalibration ?? EmptyShakeItCalibration, StringComparer.Ordinal),
+            ShakeItPrecalibration = new Dictionary<string, Dictionary<string, RawCalculator.Calibration.PreloadedCalibrationData>>(source.ShakeItPrecalibration ?? EmptyShakeItPrecalibration, StringComparer.Ordinal),
+            ShakeItGameBounds = new Dictionary<string, RawCalculator.Calibration.GameCalibrationBounds>(source.ShakeItGameBounds ?? EmptyShakeItBounds, StringComparer.Ordinal),
+            ShakeItSourceTimestamps = new Dictionary<string, long>(source.ShakeItSourceTimestamps ?? EmptyShakeItStamps, StringComparer.Ordinal),
         };
 
         private static Dictionary<string, LockAnchorState> CloneLockAnchors(Dictionary<string, LockAnchorState> source)

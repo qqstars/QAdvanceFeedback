@@ -220,6 +220,13 @@ namespace QAdvanceFeedback.Core
             yield return "Diag.Capabilities.Rpm";
             yield return "Diag.Capabilities.GameFamily";
             yield return "Diag.Capabilities.WheelSlipCalibrationProviderSlipScale";
+
+            // TIERED COLD-START REFERENCE SYSTEM (v1.0.7, docs\v107-tiered-coldstart-report.md) - which
+            // tier (Tier1..Tier4) KeyedScaleLearner's own resolver most recently engaged for each
+            // channel's currently-configured key, so the owner can see which tier engaged on a rig.
+            // Appended at the END, mirroring every prior diagnostic addition to this method.
+            yield return "Diag.Lock.ColdStartTier";
+            yield return "Diag.Slip.ColdStartTier";
         }
 
         /// <summary>
