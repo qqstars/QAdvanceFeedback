@@ -132,6 +132,11 @@ namespace QAdvanceFeedback.Core.Runtime
         public Dictionary<string, double> GForceAccelLearnedMaxima = new Dictionary<string, double>();
         public Dictionary<string, double> GForceDecelLearnedMaxima = new Dictionary<string, double>();
 
+        /// <summary>Lateral learned maxima (v1.0.8). ABSENT from any pre-1.0.8 file, which simply
+        /// leaves the lateral learner cold - no migration needed, since a cold learner already falls
+        /// back to the fixed default by construction.</summary>
+        public Dictionary<string, double> GForceLatLearnedMaxima = new Dictionary<string, double>();
+
         /// <summary>Version 3: the Lock channel's per (gameId, carId, sourceIdentity) COLD calibration
         /// ceiling - see <c>KeyedScaleLearner.ExportAll</c>/<c>ImportAll</c>.</summary>
         public Dictionary<string, ScaleLearnerState> LockScaleLearners = new Dictionary<string, ScaleLearnerState>();

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using QAdvanceFeedback.Core.GForce;
 using Xunit;
 
@@ -22,7 +22,23 @@ namespace QAdvanceFeedback.Tests
         // At phase*frequency chosen so sin(2*pi*f*t) == 1.0 exactly (t = 1/(4f)), the wave sits at its
         // positive peak - i.e. output_L = centre + half, output_R = centre - half exactly. Using this
         // throughout makes the worked examples' "range" assertions exact rather than approximate.
-        private static double PhaseAtPositivePeak(double frequencyHz) => 1.0 / (4.0 * frequencyHz);
+        // v1.0.8: the sine+hold wave starts a cycle AT its maximum, so the leading pad's peak is now
+        // phase 0 rather than a quarter period in. The worked examples below are all taken at a peak,
+        // so only this helper had to move - every expected number is unchanged.
+        private static double PhaseAtPositivePeak(double frequencyHz) => 0.0;
+
+        // The shipped default (40%). Every assertion in this file is taken AT A PEAK, and the wave holds
+        // its maximum at phase 0 for ANY hold - so the band-placement arithmetic these tests pin is
+        // hold-independent, and passing the real default here exercises the shipped path rather than a
+        // 0% special case.
+        private const double DefaultSustain = 0.40;
+
+        // BLEND 0 = the pre-1.0.8 pure left/right pan. Every worked example in this file predates the
+        // blend and pins that behaviour, so they must keep asking for it explicitly - the SHIPPED default
+        // is 0.5, which deliberately produces different numbers (see GForceShakeBlendTests).
+        /// <summary>v1.0.8: what used to be "blend 0" is now the OppositePhase feeling - the two
+        /// pads exactly opposed, which is what every mirror-property test here relies on.</summary>
+        private const ShakeFeeling PurePan = ShakeFeeling.OppositePhase;
 
         [Fact]
         public void Worked_example_1_G40_wheel30_scale1_band12_range34to46_centre40()
@@ -30,7 +46,7 @@ namespace QAdvanceFeedback.Tests
             const double g = 40.0, wheel = 30.0, scale = 1.0, freq = 5.0;
             double contribution = (wheel / 100.0) * scale;
 
-            GForceShake.Apply(g, contribution, freq, PhaseAtPositivePeak(freq), out double left, out double right);
+            GForceShake.Apply(g, contribution, freq, PhaseAtPositivePeak(freq), DefaultSustain, PurePan, out double left, out double right);
 
             Assert.Equal(46.0, left, 6);   // centre(40) + half(6)
             Assert.Equal(34.0, right, 6);  // centre(40) - half(6)
@@ -44,7 +60,7 @@ namespace QAdvanceFeedback.Tests
             const double g = 80.0, wheel = 60.0, scale = 1.0, freq = 5.0;
             double contribution = (wheel / 100.0) * scale;
 
-            GForceShake.Apply(g, contribution, freq, PhaseAtPositivePeak(freq), out double left, out double right);
+            GForceShake.Apply(g, contribution, freq, PhaseAtPositivePeak(freq), DefaultSustain, PurePan, out double left, out double right);
 
             // Raw range would have been 56..104 (centre 80, half 24) - shifted DOWN so the top sits
             // exactly at 100, not squashed: shifted centre 76, range 52..100.
@@ -60,7 +76,7 @@ namespace QAdvanceFeedback.Tests
             const double g = 60.0, wheel = 90.0, scale = 3.0, freq = 5.0;
             double contribution = (wheel / 100.0) * scale; // 2.7 -> band 162, half 81 > 50
 
-            GForceShake.Apply(g, contribution, freq, PhaseAtPositivePeak(freq), out double left, out double right);
+            GForceShake.Apply(g, contribution, freq, PhaseAtPositivePeak(freq), DefaultSustain, PurePan, out double left, out double right);
 
             // Band (162) is wider than the whole 0-100 range - cannot be preserved by any shift, so the
             // owner's own exception applies: effective centre fixed at 50, output squashed to [0,100].
@@ -76,7 +92,7 @@ namespace QAdvanceFeedback.Tests
             {
                 const double contribution = 0.4; // band = centre*0.4, half = centre*0.2 <= 20 - never triggers the squash branch
                 double phase = PhaseAtPositivePeak(freq);
-                GForceShake.Apply(centre, contribution, freq, phase, out double left, out double right);
+                GForceShake.Apply(centre, contribution, freq, phase, DefaultSustain, PurePan, out double left, out double right);
 
                 double expectedBand = centre * contribution;
                 Assert.Equal(expectedBand, left - right, 6);
@@ -99,7 +115,7 @@ namespace QAdvanceFeedback.Tests
             double squashedRight = Math.Max(0.0, g - half);    // 56 (unchanged, in range)
             double squashedBand = squashedLeft - squashedRight; // 44 - NARROWER than the true 48 band
 
-            GForceShake.Apply(g, contribution, freq, PhaseAtPositivePeak(freq), out double left, out double right);
+            GForceShake.Apply(g, contribution, freq, PhaseAtPositivePeak(freq), DefaultSustain, PurePan, out double left, out double right);
 
             Assert.Equal(48.0, left - right, 6); // the REAL implementation preserves the full 48 band...
             Assert.NotEqual(squashedBand, left - right, 6); // ...which a squash would NOT have (44 != 48)
@@ -108,7 +124,7 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void Zero_contribution_is_inert_output_equals_the_plain_gforce_value()
         {
-            GForceShake.Apply(63.4, 0.0, 10.0, 12.345, out double left, out double right);
+            GForceShake.Apply(63.4, 0.0, 10.0, 12.345, DefaultSustain, PurePan, out double left, out double right);
             Assert.Equal(63.4, left, 9);
             Assert.Equal(63.4, right, 9);
         }
@@ -116,11 +132,11 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void Negative_or_non_finite_contribution_is_treated_as_zero_never_produces_NaN()
         {
-            GForceShake.Apply(50.0, -1.0, 5.0, 1.0, out double leftNeg, out double rightNeg);
+            GForceShake.Apply(50.0, -1.0, 5.0, 1.0, DefaultSustain, PurePan, out double leftNeg, out double rightNeg);
             Assert.Equal(50.0, leftNeg, 9);
             Assert.Equal(50.0, rightNeg, 9);
 
-            GForceShake.Apply(50.0, double.NaN, 5.0, 1.0, out double leftNaN, out double rightNaN);
+            GForceShake.Apply(50.0, double.NaN, 5.0, 1.0, DefaultSustain, PurePan, out double leftNaN, out double rightNaN);
             Assert.Equal(50.0, leftNaN, 9);
             Assert.Equal(50.0, rightNaN, 9);
         }
@@ -131,11 +147,19 @@ namespace QAdvanceFeedback.Tests
             const double g = 55.0, contribution = 0.5, freq = 7.0;
             for (double t = 0.0; t < 1.0; t += 0.05)
             {
-                GForceShake.Apply(g, contribution, freq, t, out double left, out double right);
+                GForceShake.Apply(g, contribution, freq, t, DefaultSustain, PurePan, out double left, out double right);
                 double half = (g * contribution) / 2.0;
                 double effectiveCentre = (left + right) / 2.0;
-                Assert.Equal(effectiveCentre + half * Math.Sin(TwoPi * freq * t), left, 6);
-                Assert.Equal(effectiveCentre - half * Math.Sin(TwoPi * freq * t), right, 6);
+
+                // Driven by the REAL wave, not a hard-coded Math.Sin: the property under test is that
+                // the two pads are exact mirrors about the effective centre, which must hold for
+                // whatever shape the wave has (v1.0.8 replaced the sine with a trapezoid).
+                // v1.0.8 replaced the trapezoid with the sine+hold wave, whose channel value is a
+                // normalised 0..1 position rather than a signed -1..+1 one - hence (2n - 1) here.
+                GForceShake.FeelingPair(freq, t, DefaultSustain, PurePan, out double nLeft, out double nRight);
+                Assert.Equal(effectiveCentre + half * (2.0 * nLeft - 1.0), left, 6);
+                Assert.Equal(effectiveCentre + half * (2.0 * nRight - 1.0), right, 6);
+                Assert.Equal(0.0, (left - effectiveCentre) + (right - effectiveCentre), 6);
             }
         }
 
@@ -146,7 +170,7 @@ namespace QAdvanceFeedback.Tests
             for (double contribution = 0.0; contribution <= 4.0; contribution += 0.5)
             for (double t = 0.0; t < 1.0; t += 0.1)
             {
-                GForceShake.Apply(g, contribution, 8.0, t, out double left, out double right);
+                GForceShake.Apply(g, contribution, 8.0, t, DefaultSustain, PurePan, out double left, out double right);
                 Assert.InRange(left, 0.0, 100.0);
                 Assert.InRange(right, 0.0, 100.0);
             }

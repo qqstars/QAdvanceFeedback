@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.Normalized;
 using Xunit;
@@ -45,9 +45,8 @@ namespace QAdvanceFeedback.Tests
             // Warm-up: G at this car's own peak (4.0g, repeated) matures BOTH the shared physical
             // reference and this source's own G-learner, and - once physically-at-limit fires -
             // teaches the scale learner this source's own "critical" raw reading.
-            for (int i = 0; i < 300; i++)
-                engine.Compute(BrakingSample(4.0), Corners.Uniform(criticalRaw), Corners.Zero,
-                    "GameA", "Car1", lockSourceIdentity: sourceIdentity);
+            TestFrames.WarmLockWithCrossings(engine, 4.0, criticalRaw,
+                gameId: "GameA", carId: "Car1", lockSourceIdentity: sourceIdentity);
 
             double slightly = engine.LockScaleLearner.Rescale("GameA", "Car1", sourceIdentity, slightlyRaw);
             double ideal = engine.LockScaleLearner.Rescale("GameA", "Car1", sourceIdentity, idealRaw);
@@ -67,11 +66,8 @@ namespace QAdvanceFeedback.Tests
         {
             var shakeItEngine = new NormalizedWheelLockSlipEngine();
             var rawEngine = new NormalizedWheelLockSlipEngine();
-            for (int i = 0; i < 300; i++)
-            {
-                shakeItEngine.Compute(BrakingSample(4.0), Corners.Uniform(90.0), Corners.Zero, "GameA", "Car1", lockSourceIdentity: "ShakeIt");
-                rawEngine.Compute(BrakingSample(4.0), Corners.Uniform(20.0), Corners.Zero, "GameA", "Car1", lockSourceIdentity: "RawSource");
-            }
+            TestFrames.WarmLockWithCrossings(shakeItEngine, 4.0, 90.0, gameId: "GameA", carId: "Car1", lockSourceIdentity: "ShakeIt");
+            TestFrames.WarmLockWithCrossings(rawEngine, 4.0, 20.0, gameId: "GameA", carId: "Car1", lockSourceIdentity: "RawSource");
 
             double shakeItOutput = shakeItEngine.Compute(BrakingSample(2.0), Corners.Uniform(90.0), Corners.Zero, "GameA", "Car1", lockSourceIdentity: "ShakeIt").LockAll;
             double rawOutput = rawEngine.Compute(BrakingSample(2.0), Corners.Uniform(20.0), Corners.Zero, "GameA", "Car1", lockSourceIdentity: "RawSource").LockAll;

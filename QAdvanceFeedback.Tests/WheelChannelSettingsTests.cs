@@ -427,17 +427,15 @@ namespace QAdvanceFeedback.Tests
         // ------------------------------------------------------------------------------------
 
         [Fact]
-        public void NormalizePattern_ships_three_point_on_Lock_and_single_point_on_Slip()
+        public void NormalizePattern_ships_the_three_point_mapping_on_both_channels()
         {
-            // THE TWO CHANNELS SHIP DIFFERENT PATTERNS, and that asymmetry is the point of this test
-            // (owner's call, re-confirmed 2026-08-28 after a build had wrongly shipped single-point on
-            // both). Lock measures all three of its anchors physically - LockAnchorLearner reads the
-            // source at 90% and 75% of the corner's own g-limit - so the full mapping is what a fresh
-            // install should feel. Slip has no such 90%/75% measurement: its lower anchors are DERIVED
-            // from the Perfect point by fixed percentages, which is not a good enough reason to curve a
-            // fresh install. Either channel can still be switched to either pattern by hand.
+            // v1.0.8 (owner's call after driving 1.0.7.0): Lock's SMax/S90/S75 and Slip's
+            // Perfect/Great/Good are BOTH the shipped default. Slip's two lower anchors are derived from
+            // its Perfect point rather than measured - it has no native 90%/75% grip reading - and an
+            // earlier build shipped Slip single-point for exactly that reason. Driving it settled the
+            // question the other way. Either channel can still be switched by hand.
             Assert.Equal(NormalizePattern.Mapping, WheelChannelSettings.CreateLockDefaults().NormalizePattern);
-            Assert.Equal(NormalizePattern.MaxGripOnly, WheelChannelSettings.CreateSlipDefaults().NormalizePattern);
+            Assert.Equal(NormalizePattern.Mapping, WheelChannelSettings.CreateSlipDefaults().NormalizePattern);
 
             // A bare instance keeps the property initialiser's Mapping - only the channel factories
             // express the shipped choice.
@@ -459,17 +457,16 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void RestoreDefaults_resets_each_channel_to_its_own_shipped_pattern()
         {
-            // Both channels are set to the pattern the OTHER one ships, so a restore that ignored the
-            // per-channel distinction - or that reset both to one shared value - fails here rather than
-            // passing trivially.
+            // Both channels start on the pattern neither one ships, so a restore that silently left the
+            // value alone fails here rather than passing trivially.
             var settings = QAdvanceFeedbackSettings.CreateDefault();
             settings.Lock.NormalizePattern = NormalizePattern.MaxGripOnly;
-            settings.Slip.NormalizePattern = NormalizePattern.Mapping;
+            settings.Slip.NormalizePattern = NormalizePattern.MaxGripOnly;
 
             settings.RestoreDefaults();
 
             Assert.Equal(NormalizePattern.Mapping, settings.Lock.NormalizePattern);
-            Assert.Equal(NormalizePattern.MaxGripOnly, settings.Slip.NormalizePattern);
+            Assert.Equal(NormalizePattern.Mapping, settings.Slip.NormalizePattern);
         }
     }
 }

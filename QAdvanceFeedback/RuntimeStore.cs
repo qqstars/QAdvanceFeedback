@@ -183,11 +183,19 @@ namespace QAdvanceFeedback
         public void LoadGForceLearners(out Dictionary<string, double> accel, out Dictionary<string, double> decel)
             => _cache.LoadGForceLearners(out accel, out decel);
 
+        public void LoadGForceLearners(out Dictionary<string, double> accel, out Dictionary<string, double> decel,
+            out Dictionary<string, double> lateral)
+            => _cache.LoadGForceLearners(out accel, out decel, out lateral);
+
         /// <summary>Saves the G-force channels' current AUTO-learned maxima - called once per frame
         /// from <c>QAdvanceFeedback.DataUpdate</c> (in-memory only, see this class's own remarks; the
         /// background timer/Flush is what actually reaches disk).</summary>
         public void SaveGForceLearners(Dictionary<string, double> accel, Dictionary<string, double> decel)
             => _cache.SaveGForceLearners(accel, decel);
+
+        public void SaveGForceLearners(Dictionary<string, double> accel, Dictionary<string, double> decel,
+            Dictionary<string, double> lateral)
+            => _cache.SaveGForceLearners(accel, decel, lateral);
 
         /// <summary>Synchronous write-if-dirty - every real caller (<c>Plugin.End</c>) runs off the
         /// game/data thread already, so blocking here is both safe and exactly what gives shutdown
@@ -369,6 +377,7 @@ namespace QAdvanceFeedback
             document.SlipLearners ??= new Dictionary<string, GripLearnerState>();
             document.GForceAccelLearnedMaxima ??= new Dictionary<string, double>();
             document.GForceDecelLearnedMaxima ??= new Dictionary<string, double>();
+            document.GForceLatLearnedMaxima ??= new Dictionary<string, double>();
             document.LockScaleLearners ??= new Dictionary<string, ScaleLearnerState>();
             document.SlipScaleLearners ??= new Dictionary<string, ScaleLearnerState>();
             document.SurfaceSupportByGame ??= new Dictionary<string, bool>();

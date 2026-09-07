@@ -223,6 +223,38 @@ namespace QAdvanceFeedback.Core
             if (_weightScale > WeightScaleRenormalisationLimit) RenormaliseHistogram();
         }
 
+        /// <summary>
+        /// Folds in the FACT of an observation that carries no evidence - it advances
+        /// <see cref="Count"/> and ages every decay clock, and changes no value this class reports.
+        /// <para/>
+        /// WHY THIS IS NOT <c>AddValue(value, 0.0)</c>. That overload rejects a non-positive weight
+        /// outright (a zero weight there is a caller bug, and it would also pollute the unweighted
+        /// <c>_sum</c> and plant an empty histogram bucket). This is the deliberate opposite: the caller
+        /// KNOWS the frame carries nothing and wants exactly the bookkeeping, nothing else.
+        /// <para/>
+        /// WHAT IT IS FOR (docs\slip-smax-crossing-gate-design.md). Once Slip's SMax is taught only on
+        /// traction crossings, most at-limit candidate frames must contribute no value - but silently
+        /// dropping them would be wrong in a way that is easy to miss: this class's forgetting is
+        /// PER FOLD-IN, not per second, so feeding it fewer samples stretches the effective memory in
+        /// wall-clock terms. Measured on the reference capture, dropping non-crossing frames stretched
+        /// the histogram half-life from 805 s to 2014 s. Counting them at zero weight keeps the
+        /// forgetting - and <see cref="Count"/>, which drives the caller's confidence ramp - running at
+        /// exactly the rate they ran at before the gate existed.
+        /// </summary>
+        public void AddNonQualifyingObservation()
+        {
+            // Same INT32 overflow guard as AddValue - see SampleCountSaturationCap's own remarks.
+            if (_count < SampleCountSaturationCap) _count++;
+
+            // The decay half of AddValue with a zero numerator: everything already stored ages, nothing
+            // new is contributed.
+            _decayedWeightedSum *= WeightedAverageDecayPerSample;
+            _decayedWeight *= WeightedAverageDecayPerSample;
+
+            _weightScale /= HistogramDecayPerSample;
+            if (_weightScale > WeightScaleRenormalisationLimit) RenormaliseHistogram();
+        }
+
         /// <summary>Decaying WEIGHTED mean of every |value| folded in so far (see this class's own
         /// remarks) - null before the first observation, mirroring the prior plain-mean behaviour's own
         /// <c>Count == 0 -&gt; null</c> (<see cref="GetPercentile"/> is the one with a maturity floor,

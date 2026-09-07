@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.GForce;
@@ -46,17 +46,47 @@ namespace QAdvanceFeedback.Settings
         /// <summary>
         /// AUTO/FIXED mode for the acceleration axis. Default <see cref="GMaxMode.Auto"/>
         /// (docs\robust-auto-gforce-report.md - CHANGED from the original <see cref="GMaxMode.Fixed"/>
-        /// default): below <see cref="GForceMaxLearner.DefaultMinSamples"/> valid samples, AUTO's own
-        /// effective value IS the FIXED default (see <see cref="EffectiveAccelMaxG"/>) - so a freshly
-        /// installed plugin's WORST case under this new default is bit-for-bit identical to shipping
-        /// FIXED, and it can only ever improve on that once real evidence accumulates. There is no path
-        /// in this implementation where AUTO is worse than FIXED (see that method's own remarks).
+        /// default): with NO evidence at all, AUTO's own effective value IS the FIXED default (see
+        /// <see cref="EffectiveAccelMaxG"/>) - so a freshly installed plugin's WORST case under this new
+        /// default is bit-for-bit identical to shipping FIXED, and it can only ever improve on that once
+        /// real evidence accumulates.
+        /// <para/>
+        /// CORRECTED: this used to cite a <c>GForceMaxLearner.DefaultMinSamples</c> threshold, which DOES
+        /// NOT EXIST - a dangling cref describing a minimum-sample gate that was never implemented. The
+        /// real rule is "no evidence at all", and <see cref="RobustBandEstimator.TryEstimate"/> succeeds
+        /// from a SINGLE sample. That matters after a gap longer than the estimator's own window: the
+        /// first sample back evicts the whole window, so one frame can redefine the maximum. See
+        /// <c>GForceWindowGapReportTests</c>, which measures exactly that.
         /// </summary>
         public GMaxMode AccelMaxMode { get; set; } = GMaxMode.Auto;
 
         /// <summary>AUTO/FIXED mode for the deceleration/braking axis. See
         /// <see cref="AccelMaxMode"/>'s remarks.</summary>
         public GMaxMode DecelMaxMode { get; set; } = GMaxMode.Auto;
+
+        /// <summary>AUTO/FIXED mode for the LATERAL axis (v1.0.8). Everything about it mirrors
+        /// <see cref="AccelMaxMode"/> - same learner, same per-(game,car) key, same ramp, same
+        /// persistence - and it ships AUTO for the same reason.
+        /// <para/>
+        /// Before this existed, lateral normalised against a HARD-CODED 1.6 g that no setting could
+        /// reach, so a 1 g car only ever saw 62% of the available split and a 3 g car saturated early.</summary>
+        public GMaxMode LatMaxMode { get; set; } = GMaxMode.Auto;
+
+        private double _fixedLatMaxG = 1.5;
+
+        /// <summary>
+        /// The lateral fallback, used in FIXED mode and as AUTO's own floor before evidence exists.
+        /// Default **1.5 g** - between the braking default (1.5) and the acceleration default (0.75),
+        /// because sustained cornering-g sits closer to braking-g than to acceleration-g: both are
+        /// grip-limited and helped by downforce, whereas acceleration is power-limited. It also replaces
+        /// the old hard-coded 1.6 g lateral reference, slightly lower so a typical GT car actually
+        /// reaches full split rather than falling just short of it.
+        /// </summary>
+        public double FixedLatMaxG
+        {
+            get => _fixedLatMaxG;
+            set => _fixedLatMaxG = value > MinAllowedMaxG ? value : MinAllowedMaxG;
+        }
 
         /// <summary>
         /// Default rationale (feel over physical realism, per the brief's own instruction): **1.5g**
@@ -88,6 +118,94 @@ namespace QAdvanceFeedback.Settings
         {
             get => _fixedAccelMaxG;
             set => _fixedAccelMaxG = value > MinAllowedMaxG ? value : MinAllowedMaxG;
+        }
+
+        // ---- OUTPUT SCALES (v1.0.8) - a per-axis attenuator on the FINAL channel output. -------------
+        // Deliberately NOT applied inside the friction circle: `combined` stays an honest physics
+        // quantity, and these only decide how loudly each component is published. Turning the G-force
+        // axes down while leaving the wheel lock/slip shake alone is what makes the plugin behave as a
+        // lock/slip NOTIFIER rather than a full motion simulation - the owner's own stated use.
+
+        private double _accelOutputScalePercent = 100.0;
+        private double _brakeOutputScalePercent = 100.0;
+        private double _lateralOutputScalePercent = 100.0;
+
+        /// <summary>0-100%, clamped. Scales the ACCELERATION chain's own level term. Default 100.</summary>
+        public double AccelOutputScalePercent
+        {
+            get => _accelOutputScalePercent;
+            set => _accelOutputScalePercent = ClampMath.To0100(value);
+        }
+
+        /// <summary>0-100%, clamped. Scales the BRAKING chain's own level term. Default 100.</summary>
+        public double BrakeOutputScalePercent
+        {
+            get => _brakeOutputScalePercent;
+            set => _brakeOutputScalePercent = ClampMath.To0100(value);
+        }
+
+        /// <summary>0-100%, clamped. Scales the LATERAL boost term. Default 100.</summary>
+        public double LateralOutputScalePercent
+        {
+            get => _lateralOutputScalePercent;
+            set => _lateralOutputScalePercent = ClampMath.To0100(value);
+        }
+
+        // ---- LATERAL SPLIT PER CHANNEL (v1.0.8) ------------------------------------------------------
+        // How much of the lateral headroom - (combined - rLongitudinal) - each channel puts into its
+        // left/right split. Deliberately INVERTED against the longitudinal emphasis: under braking the
+        // terminal pad (Bottom Front) is already loudest, so it takes the LEAST lateral (50%), while the
+        // far pad (Back Low) is quietest and takes the MOST (100%). That is what makes a trail brake read
+        // as the cue travelling BACK and to one side as the corner loads up, instead of everything simply
+        // getting louder in place. Acceleration mirrors it around its own terminal pad.
+
+        private double _brakeBottomFrontLatSplitPercent = 50.0;
+        private double _brakeBottomRearLatSplitPercent = 75.0;
+        private double _brakeBackLowLatSplitPercent = 100.0;
+        private double _accelBottomRearLatSplitPercent = 100.0;
+        private double _accelBackLowLatSplitPercent = 75.0;
+        private double _accelBackTopLatSplitPercent = 50.0;
+
+        /// <summary>0-100%, clamped. Braking chain's TERMINAL pad. Default 50.</summary>
+        public double BrakeBottomFrontLatSplitPercent
+        {
+            get => _brakeBottomFrontLatSplitPercent;
+            set => _brakeBottomFrontLatSplitPercent = ClampMath.To0100(value);
+        }
+
+        /// <summary>0-100%, clamped. Braking chain's MIDDLE pad. Default 75.</summary>
+        public double BrakeBottomRearLatSplitPercent
+        {
+            get => _brakeBottomRearLatSplitPercent;
+            set => _brakeBottomRearLatSplitPercent = ClampMath.To0100(value);
+        }
+
+        /// <summary>0-100%, clamped. Braking chain's FAR pad. Default 100.</summary>
+        public double BrakeBackLowLatSplitPercent
+        {
+            get => _brakeBackLowLatSplitPercent;
+            set => _brakeBackLowLatSplitPercent = ClampMath.To0100(value);
+        }
+
+        /// <summary>0-100%, clamped. Acceleration chain's FAR pad. Default 100.</summary>
+        public double AccelBottomRearLatSplitPercent
+        {
+            get => _accelBottomRearLatSplitPercent;
+            set => _accelBottomRearLatSplitPercent = ClampMath.To0100(value);
+        }
+
+        /// <summary>0-100%, clamped. Acceleration chain's MIDDLE pad. Default 75.</summary>
+        public double AccelBackLowLatSplitPercent
+        {
+            get => _accelBackLowLatSplitPercent;
+            set => _accelBackLowLatSplitPercent = ClampMath.To0100(value);
+        }
+
+        /// <summary>0-100%, clamped. Acceleration chain's TERMINAL pad. Default 50.</summary>
+        public double AccelBackTopLatSplitPercent
+        {
+            get => _accelBackTopLatSplitPercent;
+            set => _accelBackTopLatSplitPercent = ClampMath.To0100(value);
         }
 
         private double _brakeBottomRearSustainPercent = 50.0;
@@ -164,15 +282,31 @@ namespace QAdvanceFeedback.Settings
         /// </summary>
         public bool IntegrateWheelLockAndSlip { get; set; } = true;
 
-        private double _shakeFrequencyHz = 10.0;
+        /// <summary>The feeling a fresh install ships with. Named rather than repeated, because
+        /// <see cref="_shakeFrequencyHz"/>'s own default is derived from it - see there.</summary>
+        public const ShakeFeeling DefaultShakeFeeling = Core.GForce.ShakeFeeling.OppositePhase;
+
+        private double _shakeFrequencyHz = DefaultShakeFrequencyFor(DefaultShakeFeeling);
 
         /// <summary>Hz, clamped to [<see cref="Core.GForce.GForceShake.MinFrequencyHz"/> (1),
         /// <see cref="Core.GForce.GForceShake.MaxFrequencyHz"/> (20)] in the setter itself - see
-        /// <see cref="GForceEngine.ShakeFrequencyHz"/>'s own remarks. Default **10 Hz** (raised from an
-        /// earlier 3 Hz default - docs\shake-frequency-default-report.md): the owner tried 3 Hz on real
-        /// hardware from the driver's seat and reports 10 Hz feels much better. The 1-20 Hz bounds
-        /// themselves are UNCHANGED by this - 10 sits comfortably inside them, so only the shipped
-        /// default moved, not the floor/ceiling. NOT the Layer 5 pulse's own separate, UNCHANGED 200 ms
+        /// <see cref="GForceEngine.ShakeFrequencyHz"/>'s own remarks.
+        /// <para/>
+        /// **THE SHIPPED DEFAULT IS DERIVED FROM <see cref="DefaultShakeFeeling"/>, NOT WRITTEN OUT**
+        /// (owner, 2026-09-06), so a fresh install and the Restore-defaults button both land on the
+        /// frequency the shipped feeling would itself select. It was a literal 5.0 while
+        /// <see cref="DefaultShakeFrequencyFor"/> gave OppositePhase 10 Hz, which meant a fresh install
+        /// opened at 5 Hz showing "Opposite phase" and jumped to 10 the moment the driver touched the
+        /// dropdown - the same class of drift the two shake scales had. Today this resolves to **10 Hz**.
+        /// <para/>
+        /// History: 3 Hz originally, then 10, then briefly 5
+        /// (docs\shake-frequency-default-report.md) - the 5 was chosen when the wheel-driven modes still
+        /// shook around a centre at roughly half their nominal band and the zero-floor travel made the
+        /// same setting read busier. The per-feeling reset supersedes it as the single source of the
+        /// number. The 1-20 Hz bounds are UNCHANGED throughout.
+        /// <para/>
+        /// One Hz means ONE FULL Max-Min-Max travel of a single pad per second, not one left-right-left
+        /// pan - see <c>ShakeFrequencyDefinitionTests</c>, which pins that for every mode and blend. NOT the Layer 5 pulse's own separate, UNCHANGED 200 ms
         /// (5 Hz) gap floor (<see cref="Core.Projection.PulseSettings.MinGapMs"/>) on the Wheel
         /// Lock/Slip tabs - this property only ever affects the G-Force "Integrate Wheel Lock and Slip"
         /// shake.</summary>
@@ -182,11 +316,166 @@ namespace QAdvanceFeedback.Settings
             set => _shakeFrequencyHz = ClampMath.Clamp(value, Core.GForce.GForceShake.MinFrequencyHz, Core.GForce.GForceShake.MaxFrequencyHz);
         }
 
-        private double _wheelLockShakeScale = 1.5;
+        /// <summary>
+        /// How the shake is spread across the eight pads (v1.0.8) - see
+        /// <see cref="Core.GForce.ShakeApplyMode"/>. Ships
+        /// <see cref="ShakeApplyMode.HigherOfGForceOrLockSlip"/> so a fresh install feels both cues
+        /// rather than only whichever the active chain happens to carry.
+        /// <para/>
+        /// CHANGING THIS DOES NOT TOUCH THE TWO SHAKE SCALES (owner's decision, 2026-09-06) - see
+        /// <see cref="WheelLockShakeScale"/>.
+        /// </summary>
+        public ShakeApplyMode ShakeApplyMode { get; set; } = DefaultShakeApplyMode;
+
+        /// <summary>The mode a fresh install ships with, and the row the shipped scale and trigger
+        /// defaults are read from. Named rather than repeated so those three can never drift apart -
+        /// which they did once before, see <see cref="WheelLockShakeScale"/>.</summary>
+        public const ShakeApplyMode DefaultShakeApplyMode = Core.GForce.ShakeApplyMode.HigherOfGForceOrLockSlip;
+
+        /// <summary>
+        /// THE LOCK/SLIP SCALE EACH MODE STARTS FROM (owner's own numbers, 2026-09-07, after seat time):
+        /// 1.3 for <see cref="ShakeApplyMode.HigherOfGForceOrLockSlip"/>, 1.5 for
+        /// <see cref="ShakeApplyMode.PerChannel"/>, 1.3 for <see cref="ShakeApplyMode.AllChannelsGForce"/>,
+        /// 1.0 for <see cref="ShakeApplyMode.AllChannelsLockSlip"/>.
+        /// <para/>
+        /// NOTE THE REVERSAL. On 2026-09-06 the owner had this reset REMOVED ("changing the mode will not
+        /// impact the scale"), on the grounds that the scale's definition is identical in every mode. It
+        /// is back on 2026-09-07 because seat time produced a different number for each mode, and a table
+        /// of per-mode values is only reachable if switching the mode applies it. Switching therefore
+        /// overwrites a hand-tuned scale again - deliberately.
+        /// </summary>
+        public static double DefaultShakeScaleFor(ShakeApplyMode mode)
+        {
+            switch (mode)
+            {
+                case Core.GForce.ShakeApplyMode.PerChannel: return 1.5;
+                case Core.GForce.ShakeApplyMode.AllChannelsLockSlip: return 1.0;
+                default: return 1.3;   // HigherOfGForceOrLockSlip and AllChannelsGForce
+            }
+        }
+
+        /// <summary>
+        /// THE "START SHAKING ABOVE" EACH MODE STARTS FROM (owner, 2026-09-07): 5 for the two modes whose
+        /// band is anchored to a channel's own G-force level
+        /// (<see cref="ShakeApplyMode.HigherOfGForceOrLockSlip"/> and
+        /// <see cref="ShakeApplyMode.PerChannel"/>), 30 for the two that drive every pad from one shared
+        /// band regardless of where the load is.
+        /// <para/>
+        /// The reason for the split is what a low wheel value DOES in each mode. On a per-channel band a
+        /// trace of lock is a trace of extra width on top of an animation that was already there, so it
+        /// can be admitted early; on an all-channels band it is a floor under all eight pads at once,
+        /// which at a low threshold reads as the permanent background buzz the threshold exists to stop.
+        /// </summary>
+        public static double DefaultShakeTriggerFor(ShakeApplyMode mode)
+        {
+            switch (mode)
+            {
+                case Core.GForce.ShakeApplyMode.PerChannel:
+                case Core.GForce.ShakeApplyMode.HigherOfGForceOrLockSlip:
+                    return 5.0;
+                default:
+                    return 30.0;   // AllChannelsGForce and AllChannelsLockSlip
+            }
+        }
+
+        /// <summary>
+        /// How the two pads of a pair relate while shaking (v1.0.8) - see
+        /// <see cref="Core.GForce.ShakeFeeling"/>. Replaces the old "Both-sides blend (%)" spinner:
+        /// only three points on that slider were distinct to feel, and the hold setting silently
+        /// cancelled itself towards the middle of it.
+        /// <para/>
+        /// Picking a feeling from the dropdown OVERWRITES <see cref="ShakeFrequencyHz"/> with
+        /// <see cref="DefaultShakeFrequencyFor"/> - owner's explicit instruction, 2026-09-06: "set the
+        /// frequency as 10HZ (Even the user override to their own frequency value); if enabled
+        /// 'Blending' ... set the Shake Frequency as 5HZ instead". A hand-tuned value is deliberately
+        /// discarded, because Blending's fixed 50% hold makes the same rate read considerably busier
+        /// than the two phase-locked feelings do.
+        /// <para/>
+        /// This is NOT in tension with the shipped 5 Hz default (<see cref="ShakeFrequencyHz"/>): a
+        /// fresh install has never touched the dropdown, so it keeps 5 Hz until the driver picks a
+        /// feeling. Contrast <see cref="ShakeApplyMode"/>, which does NOT rewrite the scales.
+        /// </summary>
+        public ShakeFeeling ShakeFeeling { get; set; } = DefaultShakeFeeling;
+
+        /// <summary>The shake frequency each feeling is SET TO when the driver picks it from the dropdown
+        /// - **5 Hz for <see cref="ShakeFeeling.OppositePhase"/>, 10 Hz for the other two** (owner,
+        /// 2026-09-06, after seat time; the first cut had the split the other way round). Because
+        /// OppositePhase is also <see cref="DefaultShakeFeeling"/>, this is what a fresh install and
+        /// Restore-defaults both land on, so the shipped frequency is 5 Hz again.
+        /// <para/>
+        /// The HOLD is not defaulted per feeling in the same way: the two phase-locked feelings share the
+        /// one configured value, and <see cref="ShakeFeeling.Blending"/> does not take a default at all -
+        /// it PINS its hold at <see cref="Core.GForce.GForceShake.BlendingHoldFraction"/> (50%, the
+        /// owner's "equivalent to set 'Hold on min/max' as 50%") and the UI hides the control, so there
+        /// is no per-feeling hold value for the driver to be handed.</summary>
+        public static double DefaultShakeFrequencyFor(ShakeFeeling feeling)
+            => feeling == Core.GForce.ShakeFeeling.OppositePhase ? 5.0 : 10.0;
+
+        private double _shakeSustainPercent = 30.0;
+
+        /// <summary>
+        /// PERCENT (0-90) of the CYCLE the shake spends held at its extremes - the driver-facing form of
+        /// <see cref="GForceEngine.ShakeSustainFraction"/>, converted in <see cref="ApplyTo"/>.
+        /// Default **30** (owner, 2026-09-06; it was 40 under the old trapezoid) - the same number the
+        /// owner's own worked example of the sine+hold shape used.
+        /// <para/>
+        /// Higher reads as SHARPER, not faster: the period is <see cref="ShakeFrequencyHz"/> alone and
+        /// does not move with this. See <see cref="Core.GForce.GForceShake.SineHoldWave"/> for the shape,
+        /// including why 0 is exactly a cosine. IGNORED by
+        /// <see cref="Core.GForce.ShakeFeeling.Blending"/>, which pins its own 50%.
+        /// </summary>
+        public double ShakeSustainPercent
+        {
+            get => _shakeSustainPercent;
+            set => _shakeSustainPercent = ClampMath.Clamp(value, 0.0, Core.GForce.GForceShake.MaxSustainFraction * 100.0);
+        }
+
+        // NO ShakeBlendPercent ANY MORE (v1.0.8). The "Both-sides blend (%)" spinner became
+        // ShakeFeeling's three named choices; the setting outlived it as write-only state that ApplyTo
+        // pushed into an engine property nothing read. Old config files simply carry an ignored key.
+
+        private double _shakeTriggerThresholdPercent = DefaultShakeTriggerFor(DefaultShakeApplyMode);
+
+        /// <summary>
+        /// The wheel lock/slip value (0-100, UNSCALED) at or above which a shake may start. Default 5
+        /// (v1.0.8, lowered from 20).
+        /// <para/>
+        /// A SOFT SWITCH FOR "INTEGRATE WHEEL LOCK AND SLIP" (owner's own framing). Below it the wheel
+        /// signal is treated as absent, so EVERY mode falls back to exactly what it would publish with
+        /// the integration turned off - plain G-force, no shake, on all eight pads. That is true of the
+        /// wheel-driven modes too: with no wheel cue there is nothing for them to be louder than.
+        /// <para/>
+        /// THE SCALES ARE NOT APPLIED TO THIS TEST. It is compared against the raw <c>Max(lock, slip)</c>
+        /// as the source reports it, NOT against the scaled contribution that drives the band - so
+        /// raising a scale makes the shake stronger without making it start any earlier. A lock of 18
+        /// with a 1.5 scale is still below a threshold of 20. See
+        /// <see cref="GForceEngine.ShakeTriggerThreshold"/> and <c>GForceEngine.AdvanceShake</c> for the
+        /// finish-the-cycle and keep-the-rhythm behaviour built around it.
+        /// </summary>
+        public double ShakeTriggerThresholdPercent
+        {
+            get => _shakeTriggerThresholdPercent;
+            set => _shakeTriggerThresholdPercent = ClampMath.To0100(value);
+        }
+
+        private double _wheelLockShakeScale = DefaultShakeScaleFor(DefaultShakeApplyMode);
 
         /// <summary>Non-negative, clamped in the setter. Default **1.5** (150%) - RAISED from an
         /// original 1.0 (docs\shake-tuning-report.md), per driver feedback asking for a more obvious
-        /// shake by default. Displayed in the UI as "1.0 = 100%" so the multiplier reads intuitively;
+        /// shake by default.
+        /// <para/>
+        /// **THE SAME NUMBER IN EVERY MODE, AND A MODE SWITCH NEVER REWRITES IT** (owner's decision,
+        /// 2026-09-06). A previous revision reset both scales to a per-mode default on the reasoning
+        /// that the setting meant a different thing in each mode. It does not:
+        /// <c>contribution = scale x wheel/100</c> is computed identically in all four modes, and the
+        /// Lock and Slip scales are applied to their own channels individually before the engine takes
+        /// the larger. What differs is only what that contribution MULTIPLIES - the pad's own G-force
+        /// level in the two G-force modes, the full 0-100 range in the two wheel-driven ones - so the
+        /// band saturates at a different wheel value per mode (at 1.5, a wheel-driven mode reaches a
+        /// full-width band from wheel 67 up). That is a consequence worth knowing, not a change of
+        /// meaning, and it is not grounds for overwriting a hand-tuned value.
+        /// <para/>
+        /// Displayed in the UI as "1.0 = 100%" so the multiplier reads intuitively;
         /// deliberately NOT re-expressed as a separately-stored percentage field (which would create a
         /// second control scaling the same amplitude term as this one and risk contradicting it) - see
         /// <see cref="GForceEngine.ShakeFrequencyHz"/>'s sibling remarks and the report for the full
@@ -200,7 +489,7 @@ namespace QAdvanceFeedback.Settings
             set => _wheelLockShakeScale = value >= 0.0 ? value : 0.0;
         }
 
-        private double _wheelSlipShakeScale = 1.5;
+        private double _wheelSlipShakeScale = DefaultShakeScaleFor(DefaultShakeApplyMode);
 
         /// <summary>Non-negative, clamped in the setter. Default **1.5** (150%) - see
         /// <see cref="WheelLockShakeScale"/>'s remarks for the full rationale (identical, mirrored for
@@ -213,7 +502,10 @@ namespace QAdvanceFeedback.Settings
 
         private double _sustainTimeConstantSeconds = 0.15;
         private double _transientTimeConstantSeconds = 0.08;
-        private double _transientGain = 1.2;
+        // SWEEP SPEED. Default 1.2 -> **1.0** (owner, 2026-09-06, after seat time: a slower, smoother
+        // transition reads better). Lower = the sweep travels more gradually across the pads for the
+        // same pedal input; higher = it snaps through the three stages sooner.
+        private double _transientGain = 1.0;
 
         /// <summary>Seconds, clamped positive. See <see cref="GForceEngine.SustainTimeConstantSeconds"/>'s
         /// remarks for the default's reasoning.</summary>
@@ -237,6 +529,20 @@ namespace QAdvanceFeedback.Settings
         {
             get => _transientGain;
             set => _transientGain = value >= 0.0 ? value : 0.0;
+        }
+
+        private double _retriggerStrictness = 1.2;
+
+        /// <summary>How hard a pedal stab has to be to restart the travel animation mid-corner. Default
+        /// **1.2**. Clamped to the engine's own bounds in the setter, so a hand-edited config cannot
+        /// smuggle in a zero threshold - see <see cref="GForceEngine.RetriggerStrictness"/> for the full
+        /// derivation and what higher/lower actually feels like.</summary>
+        public double RetriggerStrictness
+        {
+            get => _retriggerStrictness;
+            set => _retriggerStrictness = ClampMath.IsFinite(value)
+                ? ClampMath.Clamp(value, GForceEngine.MinRetriggerStrictness, GForceEngine.MaxRetriggerStrictness)
+                : 1.2;
         }
 
         private double _autoTransitionAnimationScale = 1.2;
@@ -288,6 +594,7 @@ namespace QAdvanceFeedback.Settings
             engine.SustainTimeConstantSeconds = SustainTimeConstantSeconds;
             engine.TransientTimeConstantSeconds = TransientTimeConstantSeconds;
             engine.TransientGain = TransientGain;
+            engine.RetriggerStrictness = RetriggerStrictness;
             // NOT a single TransitionAnimationScale push any more (docs\robust-auto-gforce-report.md) -
             // the engine's own per-frame Compute call now always receives the two MODE-DEPENDENT,
             // per-key blended scales explicitly (see EffectiveAccelTransitionScale/
@@ -296,7 +603,23 @@ namespace QAdvanceFeedback.Settings
             // fallback for a caller that invokes Compute without either override.
             engine.TransitionAnimationScale = FixedTransitionAnimationScale;
             engine.IntegrateWheelLockAndSlip = IntegrateWheelLockAndSlip;
+            engine.ShakeApplyMode = ShakeApplyMode;
+            engine.ShakeFeeling = ShakeFeeling;
+
+            engine.AccelOutputScale = AccelOutputScalePercent / 100.0;
+            engine.BrakeOutputScale = BrakeOutputScalePercent / 100.0;
+            engine.LateralOutputScale = LateralOutputScalePercent / 100.0;
+
+            engine.BrakeBottomFrontLatSplit = BrakeBottomFrontLatSplitPercent / 100.0;
+            engine.BrakeBottomRearLatSplit = BrakeBottomRearLatSplitPercent / 100.0;
+            engine.BrakeBackLowLatSplit = BrakeBackLowLatSplitPercent / 100.0;
+            engine.AccelBottomRearLatSplit = AccelBottomRearLatSplitPercent / 100.0;
+            engine.AccelBackLowLatSplit = AccelBackLowLatSplitPercent / 100.0;
+            engine.AccelBackTopLatSplit = AccelBackTopLatSplitPercent / 100.0;
             engine.ShakeFrequencyHz = ShakeFrequencyHz;
+            // THE ONLY PERCENT->FRACTION CONVERSION for this setting; see ShakeSustainPercent's remarks.
+            engine.ShakeSustainFraction = ShakeSustainPercent / 100.0;
+            engine.ShakeTriggerThreshold = ShakeTriggerThresholdPercent;
             engine.WheelLockShakeScale = WheelLockShakeScale;
             engine.WheelSlipShakeScale = WheelSlipShakeScale;
         }
@@ -324,8 +647,64 @@ namespace QAdvanceFeedback.Settings
         /// </summary>
         public const double DecelLearnMaxPlausibleG = 8.0;
 
+        /// <summary>
+        /// FLOOR ON EVERY LEARNED MAXIMUM - 0.5 g on all three axes (owner's decision).
+        /// <para/>
+        /// WHAT IT IS FOR. Applies ONLY to the learned value, never to the Fixed*MaxG a driver typed;
+        /// and with no evidence at all the fixed default already governs. So it covers exactly one case:
+        /// the learner HAS evidence but it is implausibly low - a session with almost no cornering, or
+        /// almost no braking. Without it that learns ~0.1 g and the cue then saturates on the slightest
+        /// input.
+        /// <para/>
+        /// WHY AN ABSOLUTE FLOOR IS THE RIGHT ANSWER, not a defect. It was objected that a floor
+        /// OVERESTIMATES genuinely low-grip content - a car on snow pulls ~0.4 g, a truck perhaps 0.2 g,
+        /// and normalising those against 0.5 makes flat-out effort read below full scale. The owner's
+        /// answer settles it: THAT IS CORRECT. A real truck does not produce a strong G-force transition,
+        /// and a seat pad should not pretend otherwise. Below roughly half a g there is no forceful event
+        /// to report, so reporting proportionally less is honest rather than broken.
+        /// <para/>
+        /// This is a deliberate trade against pure per-vehicle normalisation: above the floor the cue
+        /// still means "at THIS car's limit", while below it the cue means "not much force here" - which
+        /// is what a driver of that vehicle actually experiences.
+        /// <para/>
+        /// THREE SEPARATE CONSTANTS, equal today. The axes have genuinely different physics (braking and
+        /// cornering are grip-limited; acceleration is power-limited and spans ~0.2 g for a laden truck
+        /// to ~1.5 g for an F1 launch), so they are kept independently adjustable rather than collapsed
+        /// into one shared value that would have to be re-reasoned for all three at once.
+        /// <para/>
+        /// THE EFFECTIVE FLOOR IS <c>Min(this constant, the driver's own Fixed*MaxG)</c> - see
+        /// <see cref="FloorFor"/>. A driver who typed something BELOW 0.5 has said, explicitly, that
+        /// values that low are wanted on this axis, so the floor steps out of the way rather than
+        /// overriding them. Typing 1.5 leaves the floor at 0.5; typing 0.2 lowers it to 0.2, and a
+        /// learner converging on 0.3 is then allowed all the way down to 0.3.
+        /// </summary>
+        public const double MinLearnedLatMaxG = 0.5;
+
+        /// <summary>See <see cref="MinLearnedLatMaxG"/> - the acceleration axis's own floor.</summary>
+        public const double MinLearnedAccelMaxG = 0.5;
+
+        /// <summary>See <see cref="MinLearnedLatMaxG"/> - the deceleration axis's own floor.</summary>
+        public const double MinLearnedDecelMaxG = 0.5;
+
+        /// <summary>
+        /// The floor actually applied to a learned value: the axis's own constant, but never higher than
+        /// what the driver typed for that axis. See <see cref="MinLearnedLatMaxG"/>'s remarks - a typed
+        /// value below 0.5 is an explicit statement that low readings are wanted here, and the floor
+        /// defers to it instead of overriding it.
+        /// </summary>
+        private static double FloorFor(double axisFloor, double typedValue) => Math.Min(axisFloor, typedValue);
+
+        /// <summary>
+        /// Lateral axis's learning-path reject ceiling. Real cornering peaks: road car ~0.9 g, GT3
+        /// ~1.5-2.0 g, F1 ~5-6 g. 8 g mirrors <see cref="DecelLearnMaxPlausibleG"/> - cornering and
+        /// braking are both grip-limited and reach similar magnitudes - and still decisively excludes a
+        /// wall-impact-scale spike.
+        /// </summary>
+        public const double LatLearnMaxPlausibleG = 8.0;
+
         private readonly GForceMaxLearner _accelLearner = new GForceMaxLearner(AccelLearnMaxPlausibleG);
         private readonly GForceMaxLearner _decelLearner = new GForceMaxLearner(DecelLearnMaxPlausibleG);
+        private readonly GForceMaxLearner _latLearner = new GForceMaxLearner(LatLearnMaxPlausibleG);
         private readonly TelemetryLearningGate _learningGate = new TelemetryLearningGate();
 
         // ---- RAMP-IN WHEN AUTO ENGAGES (docs\robust-auto-gforce-report.md, owner's explicit spec) -
@@ -335,6 +714,7 @@ namespace QAdvanceFeedback.Settings
         // remarks for the full mechanism.
         private readonly Dictionary<string, MaxRamp> _accelRamps = new Dictionary<string, MaxRamp>(StringComparer.Ordinal);
         private readonly Dictionary<string, MaxRamp> _decelRamps = new Dictionary<string, MaxRamp>(StringComparer.Ordinal);
+        private readonly Dictionary<string, MaxRamp> _latRamps = new Dictionary<string, MaxRamp>(StringComparer.Ordinal);
 
         private static MaxRamp RampFor(Dictionary<string, MaxRamp> ramps, string gameId, string carId)
         {
@@ -482,6 +862,52 @@ namespace QAdvanceFeedback.Settings
         /// <summary>The learned acceleration max for a specific (gameId, carId) - present mainly for
         /// direct testability of the per-game/per-car keying; see <see cref="CurrentLearnedAccelMaxG"/>
         /// for the UI-facing no-arg equivalent.</summary>
+        /// <summary>
+        /// The lateral equivalent of <see cref="ObserveAccelG"/>. Fed the ABSOLUTE lateral magnitude:
+        /// cornering direction is irrelevant to how much grip the car has, and - UNLIKE the longitudinal
+        /// pair - there is no accelerating/braking distinction to make either. Lateral is one axis with
+        /// one maximum, so whichever reading is highest wins regardless of what the car was doing
+        /// longitudinally at the time.
+        /// <para/>
+        /// UNGATED BY MAGNITUDE, deliberately. A minimum-magnitude threshold was tried and removed: a
+        /// sweep of it on a real log was monotonic with no knee (the estimate climbs all the way as the
+        /// threshold rises, because trimming the bottom always slides the estimator's pool window up), so
+        /// it was a feel knob with no derivable correct value rather than a noise filter. The floor
+        /// (<see cref="MinLearnedLatMaxG"/>) handles the case that actually mattered, and is a far more
+        /// predictable thing to reason about. <see cref="GForceMaxLearner.Observe"/> still rejects NaN
+        /// and non-positive magnitudes on its own.
+        /// </summary>
+        public void ObserveLatG(string gameId, string carId, double magnitude, DateTime? timestampUtc = null)
+            => _latLearner.Observe(gameId, carId, magnitude, timestampUtc ?? DateTime.UtcNow);
+
+        /// <summary>The lateral equivalent of <see cref="GetLearnedAccelMaxG"/>.</summary>
+        public double GetLearnedLatMaxG(string gameId, string carId) => _latLearner.GetLearnedMax(gameId, carId);
+
+        /// <summary>The lateral equivalent of <see cref="CurrentLearnedAccelMaxG"/>.</summary>
+        public double CurrentLearnedLatMaxG => _latLearner.GetLearnedMax(_currentGameId, _currentCarId);
+
+        /// <summary>The lateral equivalent of <see cref="TryGetCurrentAccelAutoDetected"/>.</summary>
+        public bool TryGetCurrentLatAutoDetected(out double detectedG)
+        {
+            detectedG = _latLearner.GetLearnedMax(_currentGameId, _currentCarId);
+            if (detectedG > MinAllowedMaxG) return true;
+            detectedG = 0.0;
+            return false;
+        }
+
+        /// <summary>The lateral equivalent of <see cref="EffectiveAccelMaxG"/>.</summary>
+        public double EffectiveLatMaxG(string gameId, string carId, DateTime? timestampUtc = null)
+        {
+            if (LatMaxMode == GMaxMode.Fixed) return FixedLatMaxG;
+            double learned = _latLearner.GetLearnedMax(gameId, carId);
+            // The floor applies to the LEARNED value only - see MinLearnedLatMaxG's own remarks for why
+            // the fixed value is left exactly as the driver typed it.
+            double rawTarget = learned > MinAllowedMaxG
+                ? Math.Max(learned, FloorFor(MinLearnedLatMaxG, FixedLatMaxG))
+                : FixedLatMaxG;
+            return RampFor(_latRamps, gameId, carId).Effective(rawTarget, FixedLatMaxG, timestampUtc ?? DateTime.UtcNow);
+        }
+
         public double GetLearnedAccelMaxG(string gameId, string carId) => _accelLearner.GetLearnedMax(gameId, carId);
 
         /// <summary>The learned deceleration max for a specific (gameId, carId). See
@@ -524,7 +950,9 @@ namespace QAdvanceFeedback.Settings
         {
             if (AccelMaxMode == GMaxMode.Fixed) return FixedAccelMaxG;
             double learned = _accelLearner.GetLearnedMax(gameId, carId);
-            double rawTarget = learned > MinAllowedMaxG ? learned : FixedAccelMaxG;
+            double rawTarget = learned > MinAllowedMaxG
+                ? Math.Max(learned, FloorFor(MinLearnedAccelMaxG, FixedAccelMaxG))
+                : FixedAccelMaxG;
             return RampFor(_accelRamps, gameId, carId).Effective(rawTarget, FixedAccelMaxG, timestampUtc ?? DateTime.UtcNow);
         }
 
@@ -533,7 +961,9 @@ namespace QAdvanceFeedback.Settings
         {
             if (DecelMaxMode == GMaxMode.Fixed) return FixedDecelMaxG;
             double learned = _decelLearner.GetLearnedMax(gameId, carId);
-            double rawTarget = learned > MinAllowedMaxG ? learned : FixedDecelMaxG;
+            double rawTarget = learned > MinAllowedMaxG
+                ? Math.Max(learned, FloorFor(MinLearnedDecelMaxG, FixedDecelMaxG))
+                : FixedDecelMaxG;
             return RampFor(_decelRamps, gameId, carId).Effective(rawTarget, FixedDecelMaxG, timestampUtc ?? DateTime.UtcNow);
         }
 
@@ -610,17 +1040,32 @@ namespace QAdvanceFeedback.Settings
         /// learning survives a SimHub restart, matching how the Lock/Slip <see cref="Core.Normalized.GripLearner"/>
         /// states already do.</summary>
         public void ExportLearnedMaxima(out Dictionary<string, double> accel, out Dictionary<string, double> decel)
+            => ExportLearnedMaxima(out accel, out decel, out _);
+
+        /// <summary>Three-axis overload (v1.0.8). The two-argument version is kept so a caller that does
+        /// not persist lateral still compiles and behaves exactly as before.</summary>
+        public void ExportLearnedMaxima(out Dictionary<string, double> accel, out Dictionary<string, double> decel,
+            out Dictionary<string, double> lateral)
         {
             accel = _accelLearner.ExportLearnedMaxima();
             decel = _decelLearner.ExportLearnedMaxima();
+            lateral = _latLearner.ExportLearnedMaxima();
         }
 
         /// <summary>Restores both learners from a previously persisted snapshot - called once at
         /// Init. See <see cref="GForceMaxLearner.ImportLearnedMaxima"/>'s remarks.</summary>
         public void ImportLearnedMaxima(Dictionary<string, double> accel, Dictionary<string, double> decel)
+            => ImportLearnedMaxima(accel, decel, null);
+
+        /// <summary>Three-axis overload (v1.0.8) - see <see cref="ExportLearnedMaxima(out Dictionary{string, double},
+        /// out Dictionary{string, double}, out Dictionary{string, double})"/>. A null lateral snapshot is
+        /// exactly what a pre-1.0.8 runtime file yields, and simply leaves that learner cold.</summary>
+        public void ImportLearnedMaxima(Dictionary<string, double> accel, Dictionary<string, double> decel,
+            Dictionary<string, double> lateral)
         {
             _accelLearner.ImportLearnedMaxima(accel);
             _decelLearner.ImportLearnedMaxima(decel);
+            if (lateral != null) _latLearner.ImportLearnedMaxima(lateral);
         }
 
         // ---- Recommended shaker frequency range (data only - the settings UI displays this, it does

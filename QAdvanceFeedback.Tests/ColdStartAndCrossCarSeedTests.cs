@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.Normalized;
 using Xunit;
@@ -55,8 +55,7 @@ namespace QAdvanceFeedback.Tests
             // CarA warms up: 300 hard-braking frames at its own 4.0g peak, Raw/ShakeIt reading 90 at
             // that moment - matures CarA's own physical reference AND teaches the scale learner
             // "90 native == the critical anchor" for (F12025, ShakeIt).
-            for (int i = 0; i < 300; i++)
-                engine.Compute(BrakingSample(4.0), Corners.Uniform(90.0), Corners.Zero, Game, "CarA", lockSourceIdentity: ShakeIt);
+            TestFrames.WarmLockWithCrossings(engine, 4.0, 90.0, gameId: Game, carId: "CarA", lockSourceIdentity: ShakeIt);
 
             // Mid-session car switch, same source, no exiting the game: CarB has NEVER been seen before
             // (a genuinely fresh (game,car,source) key) - query it with the SAME raw reading CarA's own
@@ -134,8 +133,7 @@ namespace QAdvanceFeedback.Tests
             // owner reported - not "reads as high as an already-matured car".
             var engine = new NormalizedWheelLockSlipEngine();
 
-            for (int i = 0; i < 300; i++)
-                engine.Compute(BrakingSample(4.0), Corners.Uniform(95.0), Corners.Zero, Game, "InGameCar", lockSourceIdentity: ShakeIt);
+            TestFrames.WarmLockWithCrossings(engine, 4.0, 95.0, gameId: Game, carId: "InGameCar", lockSourceIdentity: ShakeIt);
 
             // A hard, genuine full-lock event (raw 98) on a car switched to mid-session, no persisted
             // state for it at all - must be a USABLE cue, not the "totally not responded... I don't feel
@@ -163,8 +161,7 @@ namespace QAdvanceFeedback.Tests
             // isolation this test actually exercises) - mirrors this file's own repeated reasoning above.
             var engine = new NormalizedWheelLockSlipEngine();
 
-            for (int i = 0; i < 300; i++)
-                engine.Compute(BrakingSample(4.0), Corners.Uniform(90.0), Corners.Zero, Game, "CarA", lockSourceIdentity: ShakeIt);
+            TestFrames.WarmLockWithCrossings(engine, 4.0, 90.0, gameId: Game, carId: "CarA", lockSourceIdentity: ShakeIt);
 
             // Same car, but a source that has NEVER been configured for ANY car in this game - no
             // cross-car seed can exist for it.

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using QAdvanceFeedback.Core.Normalized;
 
 namespace QAdvanceFeedback.Core.GForce
@@ -106,7 +106,7 @@ namespace QAdvanceFeedback.Core.GForce
         /// <see cref="MaxStageProgressPerSecond"/> (at 1.2, that's ~4.2/s), shrinking the felt distinction
         /// between a gentle and a violent input beyond that point.
         /// </summary>
-        public double TransientGain { get; set; } = 1.2;
+        public double TransientGain { get; set; } = 1.0;
 
         /// <summary>See <see cref="GForceEngine"/>'s class remarks (braking's MIDDLE pad, Bottom Rear) -
         /// UNCHANGED meaning/default from the previous pass, now doubling as the staged model's own MID
@@ -137,8 +137,29 @@ namespace QAdvanceFeedback.Core.GForce
         /// </summary>
         public const double LiveMagnitudeClampG = 15.0;
 
-        /// <summary>How far a fully-saturated lateral bias pushes the left/right split apart.</summary>
-        public double LateralBiasGain { get; set; } = 0.5;
+        // ---- OUTPUT SCALES (v1.0.8). Attenuate the published output per axis; see
+        // ---- Settings.GForceSettings.AccelOutputScalePercent for why they are not applied inside the
+        // ---- friction circle.
+        public double AccelOutputScale { get; set; } = 1.0;
+        public double BrakeOutputScale { get; set; } = 1.0;
+        public double LateralOutputScale { get; set; } = 1.0;
+
+        // ---- LATERAL SPLIT PER CHANNEL (v1.0.8) - the share of the lateral headroom each pad turns into
+        // ---- a left/right split. Defaults are deliberately inverted against the longitudinal emphasis;
+        // ---- see Settings.GForceSettings' own remarks.
+        public double BrakeBottomFrontLatSplit { get; set; } = 0.50;
+        public double BrakeBottomRearLatSplit { get; set; } = 0.75;
+        public double BrakeBackLowLatSplit { get; set; } = 1.00;
+        public double AccelBottomRearLatSplit { get; set; } = 1.00;
+        public double AccelBackLowLatSplit { get; set; } = 0.75;
+        public double AccelBackTopLatSplit { get; set; } = 0.50;
+
+        /// <summary>
+        /// Which chain's lateral splits to use when there is no longitudinal G at all - a steady-state
+        /// mid-corner. Owner's decision: KEEP THE LAST ACTIVE CHAIN, so the lateral cue stays where the
+        /// animation already was instead of jumping to a fixed set when longitudinal G fades away.
+        /// </summary>
+        private bool _lastChainWasBraking = true;
 
         /// <summary>The owner's driver-facing lateral direction toggle - unchanged from the previous
         /// pass, unaffected by this restructure (lateral bias is independent of the longitudinal
@@ -176,6 +197,94 @@ namespace QAdvanceFeedback.Core.GForce
             get => _shakeFrequencyHz;
             set => _shakeFrequencyHz = ClampMath.Clamp(value, GForceShake.MinFrequencyHz, GForceShake.MaxFrequencyHz);
         }
+
+        /// <summary>How the shake is spread across the eight pads (v1.0.8) - see
+        /// <see cref="Core.GForce.ShakeApplyMode"/> for what each mode does. Defaults to
+        /// <see cref="ShakeApplyMode.PerChannel"/>, the only behaviour that existed before, so an engine
+        /// constructed directly behaves exactly as it did.</summary>
+        public ShakeApplyMode ShakeApplyMode { get; set; } = ShakeApplyMode.PerChannel;
+
+        /// <summary>How the two pads of a pair relate while shaking - see <see cref="ShakeFeeling"/>.
+        /// Replaces the old free blend number; <see cref="ShakeBlend"/> is retained only as a
+        /// persistence/compatibility shim and no longer reaches the wave.</summary>
+        public ShakeFeeling ShakeFeeling { get; set; } = ShakeFeeling.OppositePhase;
+
+        /// <summary>
+        /// True for the two modes whose oscillation comes from the WHEEL value rather than from a
+        /// G-force level - <see cref="ShakeApplyMode.AllChannelsLockSlip"/> and
+        /// <see cref="ShakeApplyMode.HigherOfGForceOrLockSlip"/>.
+        /// <para/>
+        /// Two places have to know this and would otherwise silently mis-handle the newer mode: the
+        /// shake-start corner scoring (which must score against the band actually about to be used) and
+        /// the no-G-force fallback (where a G-force-derived band does not exist at all).
+        /// </summary>
+        /// <summary>
+        /// One pad's <see cref="ShakeApplyMode.HigherOfGForceOrLockSlip"/> output: the shared zero-floor
+        /// wave scaled to THIS pad's own band, which is the greater of the wheel band and this pad's
+        /// G-force value (owner's specification, v1.0.8).
+        /// <para/>
+        /// The floor is ALWAYS zero and the peak is always <c>Max(wheelBand, thisPad'sGForce)</c>, so the
+        /// pad travels the full height of whichever cue is louder. One oscillator drives every pad - only
+        /// the amplitude differs - which is why this takes a normalised 0..1 multiplier rather than a
+        /// finished value.
+        /// </summary>
+        /// <param name="normalized">This frame's 0..1 wave position for this side.</param>
+        /// <param name="wheelBand">The wheel-driven band, shared by every pad.</param>
+        /// <param name="padBase">This pad's post-lateral G-force value, still on the 0-1 base scale.</param>
+        private static double ScaleToPadBand(double normalized, double wheelBand, double padBase)
+        {
+            double gForce = ClampMath.To0100(padBase * 100.0);
+            return ClampMath.To0100(Math.Max(wheelBand, gForce) * normalized);
+        }
+
+        /// <summary>Whether this mode's pads travel from a ZERO FLOOR on one shared, wheel-derived band.
+        /// <see cref="ShakeApplyMode.HigherOfGForceOrLockSlip"/> LEFT this group on 2026-09-07: it now
+        /// keeps PerChannel's own centred range and merely raises the ceiling, so only
+        /// <see cref="ShakeApplyMode.AllChannelsLockSlip"/> is left with a true zero floor.</summary>
+        private bool UsesLockSlipWave => ShakeApplyMode == ShakeApplyMode.AllChannelsLockSlip;
+
+        private double _shakeSustainFraction = 0.40;
+
+        /// <summary>
+        /// Share of each half-period the wave holds at an extreme, 0 to
+        /// <see cref="GForceShake.MaxSustainFraction"/> (0.90), clamped in the setter. Default 0.40 -
+        /// see <see cref="GForceShake.Wave"/> for the shape and why 0 is a triangle rather than the
+        /// pre-1.0.8 sine.
+        /// <para/>
+        /// Stored as a FRACTION here while the settings layer and UI carry a PERCENT
+        /// (<see cref="Settings.GForceSettings.ShakeSustainPercent"/>); the conversion lives in
+        /// <see cref="Settings.GForceSettings.ApplyTo"/>, so the driver-facing "40" and this 0.40 can
+        /// never drift into two independently-edited numbers.
+        /// </summary>
+        public double ShakeSustainFraction
+        {
+            get => _shakeSustainFraction;
+            set => _shakeSustainFraction = ClampMath.IsFinite(value)
+                ? ClampMath.Clamp(value, 0.0, GForceShake.MaxSustainFraction)
+                : 0.0;
+        }
+
+        // NO ShakeBlend ANY MORE (v1.0.8). The "Both-sides blend (%)" share became ShakeFeeling's three
+        // named choices, and the property outlived the mechanism as write-only state: ApplyTo kept
+        // setting it and nothing ever read it back, so a persisted blend silently did nothing.
+
+        private double _shakeTriggerThreshold = 5.0;
+
+        /// <summary>
+        /// The wheel lock/slip value (0-100, UNSCALED) at or above which a shake may start. Default 20.
+        /// Below it the shake stays silent, so the small amounts of lock/slip present during ordinary
+        /// driving no longer produce a permanent background buzz. Compared against
+        /// <c>Max(lock, slip)</c>, matching the drive itself.
+        /// </summary>
+        public double ShakeTriggerThreshold
+        {
+            get => _shakeTriggerThreshold;
+            set => _shakeTriggerThreshold = ClampMath.IsFinite(value) ? ClampMath.To0100(value) : 5.0;
+        }
+
+        /// <summary>The sustain actually reaching the wave, after the blend's own dwell is accounted for -
+        /// see <see cref="GForceShake.EffectiveSustain"/>.</summary>
+        private double EffectiveShakeHold => GForceShake.EffectiveHold(ShakeSustainFraction, ShakeFeeling);
 
         private double _wheelLockShakeScale = 1.5;
 
@@ -235,6 +344,13 @@ namespace QAdvanceFeedback.Core.GForce
 
         private bool _shakeActive;
         private double _shakePhaseSeconds;
+        private bool _shakeReleasing;
+        private bool _shakeReversed;              // flips the cycle's traversal order; alternates per shake
+        private bool _shakeHasRunBefore;          // false until the first shake of the session has started
+        private double _lastLeftOut, _lastRightOut;   // last PUBLISHED pair, for the start-corner choice
+        private double _shakeCycleStartSeconds;
+        private double _shakeReleaseEndSeconds;
+        private double _shakeHeldContribution;
 
         // ------------------------------------------------------------------------------------
         // STAGED TRAVEL - new state (docs\lock-and-animation-report.md). Two independent tracks per
@@ -244,6 +360,11 @@ namespace QAdvanceFeedback.Core.GForce
         private double _brakeSustainLevel;
         private double _brakeStageProgress;
         private double _brakeTravelRate;
+
+        /// <summary>The HIGHEST raw brake ratio seen since this chain's current sweep began - see
+        /// <see cref="AnimationLevel"/> for what it is for and why the low-passed level alone was not
+        /// enough. Reset with the sweep whenever the chain goes inactive.</summary>
+        private double _brakeAnimationPeak;
 
         /// <summary>The previous frame's ratio for delta purposes - deliberately ALWAYS starts at 0.0
         /// (not "no previous value yet"), so a telemetry stream that starts already at a sustained,
@@ -271,6 +392,9 @@ namespace QAdvanceFeedback.Core.GForce
         private double _accelSustainLevel;
         private double _accelStageProgress;
         private double _accelTravelRate;
+
+        /// <summary>Acceleration's mirror of <see cref="_brakeAnimationPeak"/>.</summary>
+        private double _accelAnimationPeak;
 
         /// <summary>See <see cref="_brakePreviousRatio"/>'s remarks.</summary>
         private double _accelPreviousRatio;
@@ -305,6 +429,62 @@ namespace QAdvanceFeedback.Core.GForce
         /// of ordinary sweeps.
         /// </summary>
         private const double MinStageProgressPerSecond = 1.0;
+
+        /// <summary>Bounds for <see cref="RetriggerStrictness"/>. The floor is not 0: a strictness of
+        /// zero would make the threshold zero, re-arming the sweep on ANY rise at all, which is exactly
+        /// the "keeps triggering during continuous braking" behaviour the setting exists to avoid.</summary>
+        public const double MinRetriggerStrictness = 0.1;
+
+        /// <summary>See <see cref="MinRetriggerStrictness"/>. At 5.0 the pedal would have to cover the
+        /// car's whole range in 40 ms, which is effectively "never re-arm".</summary>
+        public const double MaxRetriggerStrictness = 5.0;
+
+        private double _retriggerStrictness = 1.2;
+
+        /// <summary>
+        /// HOW STRICT THE MID-BRAKE RE-TRIGGER IS, as a multiple of "fast enough to cross the whole
+        /// range inside one sweep" (owner's own derivation, 2026-09-06). **Driver-configurable since
+        /// 2026-09-07** - it is the one number here that only seat time can settle, so it is a setting
+        /// rather than a constant. Default **1.2**, the bottom of the owner's own suggested 1.2-1.5.
+        /// <para/>
+        /// The threshold itself is <see cref="MaxStageProgressPerSecond"/> x this, in RATIO per second -
+        /// ratio, not raw g, which is what makes it self-scaling exactly as the owner wanted: the
+        /// threshold is <c>maxG / sweepDuration x strictness</c> in absolute terms, so a low-max-G car
+        /// (slower stops, smaller absolute deltas) needs a proportionally smaller delta to earn its
+        /// animation, and a high-max-G car is not retriggered by every small stab.
+        /// <para/>
+        /// At the shipped 0.2 s fastest sweep, 1.2 means "the pedal moved far enough to cover the car's
+        /// whole braking range in 167 ms" - a deliberate stab, not the continuous modulation of a long
+        /// corner entry. HIGHER is stricter (a harder stab is needed); LOWER re-arms more readily and
+        /// eventually feels busy. Clamped in the setter, so neither a hand-edited config nor a bad
+        /// spinner value can produce a zero or negative threshold.
+        /// </summary>
+        public double RetriggerStrictness
+        {
+            get => _retriggerStrictness;
+            set => _retriggerStrictness = ClampMath.IsFinite(value)
+                ? ClampMath.Clamp(value, MinRetriggerStrictness, MaxRetriggerStrictness)
+                : 1.2;
+        }
+
+        /// <summary>Rising ratio-per-second that re-arms a COMPLETED sweep - see
+        /// <see cref="RetriggerStrictness"/>. Computed rather than stored so a mid-session Apply takes
+        /// effect on the very next frame, like every other setting this engine reads.</summary>
+        private double RetriggerRatioRatePerSecond => MaxStageProgressPerSecond * RetriggerStrictness;
+
+        /// <summary>
+        /// Fraction of the sweep the FAR pad holds at its peak before the travel starts (owner,
+        /// 2026-09-06: "hold on start channel maximum a little bit longer ... shift the animation a few
+        /// milliseconds").
+        /// <para/>
+        /// WHY IT WAS NEEDED. The owner's reading of the old shape was right: the far pad was at its
+        /// peak for a single instant at p=0 and only ever fell from there, while the MIDDLE pad rises
+        /// into its peak and then falls away from it - so the middle pad spent roughly twice as long
+        /// near maximum as the pad that opens the animation. Freezing the opening keyframe for the
+        /// first quarter of the sweep gives the far pad a real plateau, making its time at maximum
+        /// comparable to the middle pad's, and delays the whole travel slightly as asked.
+        /// </summary>
+        private const double StartHoldFraction = 0.25;
 
         /// <summary>
         /// Named, justified dead band for the COASTING case (owner's own requirement - "a small, steady
@@ -359,6 +539,16 @@ namespace QAdvanceFeedback.Core.GForce
 
             _shakeActive = false;
             _shakePhaseSeconds = 0.0;
+            // The v1.0.8 shake state belongs to the session, not to whatever came before it: a new session
+            // must not inherit the previous one's release timer, alternation parity, or remembered pair.
+            _shakeReleasing = false;
+            _shakeHeldContribution = 0.0;
+            _shakeCycleStartSeconds = 0.0;
+            _shakeReleaseEndSeconds = 0.0;
+            _shakeReversed = false;
+            _shakeHasRunBefore = false;
+            _lastLeftOut = 0.0;
+            _lastRightOut = 0.0;
             _direction.Reset();
         }
 
@@ -375,7 +565,8 @@ namespace QAdvanceFeedback.Core.GForce
         public GForceOutput Compute(
             ITelemetrySample sample, double accelMaxG, double decelMaxG,
             double wheelLockAll0100 = 0.0, double wheelSlipAll0100 = 0.0,
-            double? accelTransitionScale = null, double? decelTransitionScale = null)
+            double? accelTransitionScale = null, double? decelTransitionScale = null,
+            double latMaxG = 1.5)
         {
             if (sample == null) return GForceOutput.Empty;
 
@@ -386,27 +577,24 @@ namespace QAdvanceFeedback.Core.GForce
 
             LongitudinalMotionState direction = _direction.Resolve(sample);
 
-            if (IntegrateWheelLockAndSlip)
-            {
-                if (!_shakeActive) { _shakeActive = true; _shakePhaseSeconds = 0.0; }
-                else if (ClampMath.IsFinite(dtSeconds) && dtSeconds > 0.0) { _shakePhaseSeconds += dtSeconds; }
-            }
-            else
-            {
-                _shakeActive = false;
-                _shakePhaseSeconds = 0.0;
-            }
-
             double lockContribution = WheelLockShakeScale * (ClampMath.To0100(wheelLockAll0100) / 100.0);
             double slipContribution = WheelSlipShakeScale * (ClampMath.To0100(wheelSlipAll0100) / 100.0);
-            double shakeContribution = IntegrateWheelLockAndSlip ? Math.Max(lockContribution, slipContribution) : 0.0;
+
+            // THE TRIGGER GATE (v1.0.8) reads the UNSCALED wheel values, not the scaled contributions, so
+            // "shake above 20" means the same 20 the driver sees on the Wheel Lock/Slip tabs however the
+            // scales are set. Still Max(lock, slip), like the drive itself.
+            double gateValue = Math.Max(ClampMath.To0100(wheelLockAll0100), ClampMath.To0100(wheelSlipAll0100));
+            bool aboveThreshold = IntegrateWheelLockAndSlip && gateValue >= ShakeTriggerThreshold;
+
+            double shakeContribution = AdvanceShake(
+                aboveThreshold, Math.Max(lockContribution, slipContribution), dtSeconds);
 
             double? longG = sample.New?.LongitudinalG;
             double? lateralGForFallback = sample.New?.LateralG;
             if (!longG.HasValue)
             {
                 return lateralGForFallback.HasValue
-                    ? ComputeLateralOnlyFallback(lateralGForFallback.Value, shakeContribution)
+                    ? ComputeLateralOnlyFallback(lateralGForFallback.Value, shakeContribution, latMaxG)
                     : GForceOutput.Empty;
             }
 
@@ -460,25 +648,40 @@ namespace QAdvanceFeedback.Core.GForce
             double accelSustained = AdvanceSustainLevel(dtSeconds, rAccel, accelChainActive, ref _accelSustainLevel);
 
             double brakeProgress = AdvanceStageProgress(
-                dtSeconds, rBrake, decelChainActive, ref _brakePreviousRatio, ref _brakeTravelRate, ref _brakeStageProgress);
+                dtSeconds, rBrake, decelChainActive, ref _brakePreviousRatio, ref _brakeTravelRate,
+                ref _brakeStageProgress, out bool brakeRestarted);
             double accelProgress = AdvanceStageProgress(
-                dtSeconds, rAccel, accelChainActive, ref _accelPreviousRatio, ref _accelTravelRate, ref _accelStageProgress);
+                dtSeconds, rAccel, accelChainActive, ref _accelPreviousRatio, ref _accelTravelRate,
+                ref _accelStageProgress, out bool accelRestarted);
+
+            // A RE-ARMED SWEEP GETS A FRESH PEAK. Without this the new animation would be scaled by the
+            // old event's high-water mark, so a second, gentler stab would read as loud as the first.
+            if (brakeRestarted) _brakeAnimationPeak = 0.0;
+            if (accelRestarted) _accelAnimationPeak = 0.0;
+
+            // THE SWEEP IS SCALED BY THE PEAK OF THE TARGET, NOT BY THE LOW-PASSED LEVEL - see
+            // AnimationLevel. Tracked on the RAW ratio so a hard stamp registers on the frame it happens.
+            AdvanceAnimationPeak(dtSeconds, rBrake, decelChainActive, ref _brakeAnimationPeak);
+            AdvanceAnimationPeak(dtSeconds, rAccel, accelChainActive, ref _accelAnimationPeak);
+
+            double brakeAnimated = AnimationLevel(brakeSustained, _brakeAnimationPeak, brakeProgress);
+            double accelAnimated = AnimationLevel(accelSustained, _accelAnimationPeak, accelProgress);
 
             // ---- Braking chain: far=BackLow, mid=BottomRear, terminal=BottomFront.
             StagedShape(brakeProgress, ClampMath.To01(BrakeBottomRearSustainFraction), ClampMath.To01(BrakeBackLowSustainFraction),
                 effectiveDecelTransitionScale,
                 out double brakeFarShape, out double brakeMidShape, out double brakeTerminalShape);
-            double brakeBackLowSustained = brakeSustained * brakeFarShape;
-            double brakeBottomRearSustained = brakeSustained * brakeMidShape;
-            double brakeBottomFrontSustained = brakeSustained * brakeTerminalShape;
+            double brakeBackLowSustained = brakeAnimated * brakeFarShape;
+            double brakeBottomRearSustained = brakeAnimated * brakeMidShape;
+            double brakeBottomFrontSustained = brakeAnimated * brakeTerminalShape;
 
             // ---- Acceleration chain: far=BottomRear, mid=BackLow, terminal=BackTop.
             StagedShape(accelProgress, ClampMath.To01(AccelBackLowSustainFraction), ClampMath.To01(AccelBottomRearSustainFraction),
                 effectiveAccelTransitionScale,
                 out double accelFarShape, out double accelMidShape, out double accelTerminalShape);
-            double accelBottomRearSustained = accelSustained * accelFarShape;
-            double accelBackLowSustained = accelSustained * accelMidShape;
-            double accelBackTopSustained = accelSustained * accelTerminalShape;
+            double accelBottomRearSustained = accelAnimated * accelFarShape;
+            double accelBackLowSustained = accelAnimated * accelMidShape;
+            double accelBackTopSustained = accelAnimated * accelTerminalShape;
 
             // Bottom Rear and Back Low are shared between the two chains; brake and accel energy can
             // never both be non-zero for the same frame (mutually exclusive by direction), so a plain
@@ -488,22 +691,155 @@ namespace QAdvanceFeedback.Core.GForce
             double backLowLevel = ClampMath.To01(brakeBackLowSustained + accelBackLowSustained);
             double backTopLevel = ClampMath.To01(accelBackTopSustained);
 
-            // ---- Lateral left/right bias - unchanged, independent of the longitudinal logic above.
+            // ---- LATERAL, AS A FRICTION CIRCLE (v1.0.8, owner's own model and worked examples).
+            //
+            // Lateral is no longer a MULTIPLIER on each pad. It used to be
+            // `pad x (1 +/- gain*bias)`, which had two fatal problems: under hard braking the strong
+            // side was already at 100 so there was no headroom left to lean into (all the asymmetry had
+            // to come from the weak side dropping), and while shaking the two pads' ranges stopped
+            // overlapping so the shake never alternated at all.
+            //
+            // It is now ADDITIVE HEADROOM taken from the friction circle. Longitudinal and lateral grip
+            // cannot both be at maximum at once, so their combined magnitude is the hypotenuse:
+            //
+            //     combined = sqrt(rLong^2 + rLat^2)
+            //     level_ch = rLong x that channel's own staged shape      (terminal shape = 1.0)
+            //     boost_ch = (combined - rLong) x that channel's own lateral split
+            //     L/R      = clamp(level_ch +/- boost_ch)
+            //
+            // The owner's worked example: 72% brake with 70% lateral gives combined 100.4%, so 28.4
+            // points of headroom. Bottom Front (split 50%) reads 86.2/57.8; Bottom Rear (level 36,
+            // split 75%) reads 57.3/14.7; Back Low (level 18, split 100%) reads 46.4/0. The splits are
+            // inverted against the longitudinal emphasis on purpose, which is what makes a trail brake
+            // read as the cue travelling BACK and to one side rather than everything just getting louder.
             double? lateralG = sample.New?.LateralG;
-            double lateralBias = 0.0;
-            if (lateralG.HasValue)
+            double safeLatMax = latMaxG > 1e-6 ? latMaxG : 1e-6;
+            double signedLatRatio = lateralG.HasValue
+                ? ApplyLateralDirection(ClampMath.Clamp(lateralG.Value / safeLatMax, -1.0, 1.0))
+                : 0.0;
+            double latRatio = Math.Abs(signedLatRatio);
+
+            // WHICH CHAIN OWNS THE SPLITS. Normally the one with energy; with neither active (a
+            // steady-state corner) the LAST one, so the cue does not jump as longitudinal G fades.
+            const double chainEnergyEpsilon = 1e-6;
+            if (brakeSustained > chainEnergyEpsilon || accelSustained > chainEnergyEpsilon)
+                _lastChainWasBraking = brakeSustained >= accelSustained;
+            bool brakingChain = _lastChainWasBraking;
+
+            double longRatio = brakingChain ? brakeSustained : accelSustained;
+            double combined = Math.Sqrt(longRatio * longRatio + latRatio * latRatio);
+            double lateralHeadroom = Math.Max(0.0, combined - longRatio) * ClampMath.To01(LateralOutputScale);
+
+            double levelScale = ClampMath.To01(brakingChain ? BrakeOutputScale : AccelOutputScale);
+
+            // Each channel's lateral split - 0 for a pad the active chain does not drive (Back Top under
+            // braking, Bottom Front under power), which the owner's six-value spec leaves out by design.
+            double bottomFrontSplit = brakingChain ? ClampMath.To01(BrakeBottomFrontLatSplit) : 0.0;
+            double bottomRearSplit = ClampMath.To01(brakingChain ? BrakeBottomRearLatSplit : AccelBottomRearLatSplit);
+            double backLowSplit = ClampMath.To01(brakingChain ? BrakeBackLowLatSplit : AccelBackLowLatSplit);
+            double backTopSplit = brakingChain ? 0.0 : ClampMath.To01(AccelBackTopLatSplit);
+
+            // Positive lateral biases the RIGHT pads (see LateralDirection's own remarks), so the sign
+            // decides which side receives the boost and which gives it up.
+            double lateralSign = signedLatRatio >= 0.0 ? 1.0 : -1.0;
+
+            PairFromLevelAndBoost(bottomFrontLevel * levelScale, lateralHeadroom * bottomFrontSplit, lateralSign,
+                out double bottomFrontBaseL, out double bottomFrontBaseR);
+            PairFromLevelAndBoost(bottomRearLevel * levelScale, lateralHeadroom * bottomRearSplit, lateralSign,
+                out double bottomRearBaseL, out double bottomRearBaseR);
+            PairFromLevelAndBoost(backLowLevel * levelScale, lateralHeadroom * backLowSplit, lateralSign,
+                out double backLowBaseL, out double backLowBaseR);
+            PairFromLevelAndBoost(backTopLevel * levelScale, lateralHeadroom * backTopSplit, lateralSign,
+                out double backTopBaseL, out double backTopBaseR);
+
+            double bottomFrontLeft, bottomFrontRight, bottomRearLeft, bottomRearRight;
+            double backLowLeft, backLowRight, backTopLeft, backTopRight;
+
+            if (shakeContribution > 0.0 && ShakeApplyMode == ShakeApplyMode.AllChannelsLockSlip)
             {
-                double safeLatMax = LateralReferenceG > 1e-6 ? LateralReferenceG : 1e-6;
-                lateralBias = ApplyLateralDirection(ClampMath.Clamp(lateralG.Value / safeLatMax, -1.0, 1.0));
+                // LOCK/SLIP ONLY - one wave from the wheel value alone, on all eight pads, with NO
+                // lateral involvement at all (owner's decision: this mode must depend on nothing else).
+                GForceShake.ApplyLockSlipOnly(
+                    shakeContribution, ShakeFrequencyHz, _shakePhaseSeconds, EffectiveShakeHold,
+                    ShakeFeeling, out double lockSlipLeft, out double lockSlipRight, _shakeReversed);
+
+                bottomFrontLeft = bottomRearLeft = backLowLeft = backTopLeft = ClampMath.To0100(lockSlipLeft);
+                bottomFrontRight = bottomRearRight = backLowRight = backTopRight = ClampMath.To0100(lockSlipRight);
+            }
+            else if (shakeContribution > 0.0 && ShakeApplyMode == ShakeApplyMode.HigherOfGForceOrLockSlip)
+            {
+                // HIGHER OF THE TWO, PER CHANNEL, ON PER-CHANNEL'S OWN SHAPE (owner's REDEFINITION,
+                // 2026-09-07). It used to travel from a zero floor on a band shared by all eight pads,
+                // which threw away the per-channel G-force shape entirely. It now runs EXACTLY the
+                // PerChannel path - same centre, same band, same lateral "both pads follow the stronger
+                // side" rule - and then does one thing differently:
+                //
+                //     low  = PerChannel's low, UNCHANGED
+                //     high = Min(100, Max(PerChannel's high, 100 x contribution))
+                //
+                // so the minimum is always identical to PerChannel's and only the ceiling is lifted by
+                // the wheel. A quiet wheel leaves the G-force animation intact and barely audible on top;
+                // a wheel past its own limit pushes every channel's ceiling to 100 and the shake takes
+                // over regardless of G-force.
+                double wheelCeiling = ClampMath.To0100(100.0 * shakeContribution);
+
+                ShakePairRaisedCeiling(bottomFrontBaseL, bottomFrontBaseR, shakeContribution, wheelCeiling,
+                    out bottomFrontLeft, out bottomFrontRight);
+                ShakePairRaisedCeiling(bottomRearBaseL, bottomRearBaseR, shakeContribution, wheelCeiling,
+                    out bottomRearLeft, out bottomRearRight);
+                ShakePairRaisedCeiling(backLowBaseL, backLowBaseR, shakeContribution, wheelCeiling,
+                    out backLowLeft, out backLowRight);
+                ShakePairRaisedCeiling(backTopBaseL, backTopBaseR, shakeContribution, wheelCeiling,
+                    out backTopLeft, out backTopRight);
+            }
+            else if (shakeContribution > 0.0 && ShakeApplyMode == ShakeApplyMode.AllChannelsGForce)
+            {
+                // ALL CHANNELS, G-FORCE - the ACTIVE CHAIN'S TERMINAL pad sets one band for everybody,
+                // read from its POST-LATERAL output (owner: "the shaking value reference is based on the
+                // ACTUAL final output"). Terminal picked by direction, not by which wheel signal is
+                // larger - see ShakeApplyMode's own remarks.
+                double terminalBase = direction == LongitudinalMotionState.SpeedingUp
+                    ? Math.Max(backTopBaseL, backTopBaseR)
+                    : Math.Max(bottomFrontBaseL, bottomFrontBaseR);
+
+                GForceShake.Apply(
+                    terminalBase * 100.0, shakeContribution,
+                    ShakeFrequencyHz, _shakePhaseSeconds, EffectiveShakeHold, ShakeFeeling,
+                    out double sharedLeft, out double sharedRight, _shakeReversed);
+
+                bottomFrontLeft = bottomRearLeft = backLowLeft = backTopLeft = ClampMath.To0100(sharedLeft);
+                bottomFrontRight = bottomRearRight = backLowRight = backTopRight = ClampMath.To0100(sharedRight);
+            }
+            else if (shakeContribution > 0.0)
+            {
+                // PER-CHANNEL - each pair shakes around ITS OWN post-lateral output, and both pads of a
+                // pair follow the STRONGER side while shaking. That equalisation is what keeps the shake
+                // genuinely alternating under a cornering load; without it the two ranges stop
+                // overlapping and the same side stays louder at every instant. The lateral cue returns
+                // the moment the shake stops.
+                ShakePair(bottomFrontBaseL, bottomFrontBaseR, shakeContribution, out bottomFrontLeft, out bottomFrontRight);
+                ShakePair(bottomRearBaseL, bottomRearBaseR, shakeContribution, out bottomRearLeft, out bottomRearRight);
+                ShakePair(backLowBaseL, backLowBaseR, shakeContribution, out backLowLeft, out backLowRight);
+                ShakePair(backTopBaseL, backTopBaseR, shakeContribution, out backTopLeft, out backTopRight);
+            }
+            else
+            {
+                // SILENT - publish the friction-circle pair as-is, lateral split and all.
+                bottomFrontLeft = ClampMath.To0100(bottomFrontBaseL * 100.0);
+                bottomFrontRight = ClampMath.To0100(bottomFrontBaseR * 100.0);
+                bottomRearLeft = ClampMath.To0100(bottomRearBaseL * 100.0);
+                bottomRearRight = ClampMath.To0100(bottomRearBaseR * 100.0);
+                backLowLeft = ClampMath.To0100(backLowBaseL * 100.0);
+                backLowRight = ClampMath.To0100(backLowBaseR * 100.0);
+                backTopLeft = ClampMath.To0100(backTopBaseL * 100.0);
+                backTopRight = ClampMath.To0100(backTopBaseR * 100.0);
             }
 
-            double leftFactor = 1.0 - LateralBiasGain * lateralBias;
-            double rightFactor = 1.0 + LateralBiasGain * lateralBias;
-
-            ShakePadPair(bottomFrontLevel * 100.0, leftFactor, rightFactor, shakeContribution, out double bottomFrontLeft, out double bottomFrontRight);
-            ShakePadPair(bottomRearLevel * 100.0, leftFactor, rightFactor, shakeContribution, out double bottomRearLeft, out double bottomRearRight);
-            ShakePadPair(backLowLevel * 100.0, leftFactor, rightFactor, shakeContribution, out double backLowLeft, out double backLowRight);
-            ShakePadPair(backTopLevel * 100.0, leftFactor, rightFactor, shakeContribution, out double backTopLeft, out double backTopRight);
+            // REMEMBER THE TERMINAL PAIR for the next shake's start-corner choice. The terminal channel is
+            // the one the driver's attention is on (and the one AllChannelsGForce already keys off), and
+            // there is only ONE oscillator, so one channel has to decide where a shake opens.
+            _lastLeftOut = direction == LongitudinalMotionState.SpeedingUp ? backTopLeft : bottomFrontLeft;
+            _lastRightOut = direction == LongitudinalMotionState.SpeedingUp ? backTopRight : bottomFrontRight;
 
             return new GForceOutput(
                 bottomFrontLeft: bottomFrontLeft,
@@ -557,8 +893,11 @@ namespace QAdvanceFeedback.Core.GForce
         /// </summary>
         private double AdvanceStageProgress(
             double dtSeconds, double rawRatio, bool active,
-            ref double previousRatio, ref double travelRate, ref double stageProgress)
+            ref double previousRatio, ref double travelRate, ref double stageProgress,
+            out bool restarted)
         {
+            restarted = false;
+
             // "Hold rather than guess" (this plugin family's own standing convention for a missing/
             // invalid dt - e.g. the very first sample of a session): a frame with no usable dt cannot
             // be timed, so EVERYTHING here (including whether to reset an inactive chain) is held
@@ -578,8 +917,28 @@ namespace QAdvanceFeedback.Core.GForce
             // previousRatio always starts at 0.0 (see its own field remarks) - a cold start already at
             // a sustained, nonzero ratio still gets a legitimate initial delta-from-zero kick.
             double clampedRatio = ClampMath.To01(rawRatio);
-            double deltaRatio = Math.Abs(clampedRatio - previousRatio);
+            double signedDelta = clampedRatio - previousRatio;
+            double deltaRatio = Math.Abs(signedDelta);
             previousRatio = clampedRatio;
+
+            // ---- RE-ARM A FINISHED SWEEP ON A FAST RISE (owner, 2026-09-06). --------------------
+            // The defect: progress only ever reset when the CHAIN went inactive, so once the sweep had
+            // completed, a driver already on the brake got no animation at all from a later hard stab -
+            // "even with a small value for a while, a quick dec later will NOT be triggered".
+            //
+            // Three rules, all the owner's:
+            //  - ONLY WHEN NOTHING IS RUNNING. A sweep in progress is never cut short and restarted;
+            //    that would read as a stutter rather than a new event.
+            //  - ONLY ON A RISE. The delta is SIGNED here on purpose: dec-G falling away fast - lifting
+            //    off the brake - must not trigger anything. (The travel RATE below still uses the
+            //    magnitude, so a release still sweeps out at a matching speed.)
+            //  - THE THRESHOLD SELF-SCALES with the car - see RetriggerRatioRatePerSecond.
+            if (stageProgress >= 1.0 && signedDelta / dtSeconds >= RetriggerRatioRatePerSecond)
+            {
+                stageProgress = 0.0;
+                travelRate = 0.0;
+                restarted = true;
+            }
 
             double observedRatePerSecond = deltaRatio / dtSeconds;
             double decayedRate = ExponentialDecayToZero(travelRate, dtSeconds, TransientTimeConstantSeconds);
@@ -658,50 +1017,308 @@ namespace QAdvanceFeedback.Core.GForce
         /// p=1 resting fraction) would leak this scale into the settled/sustain reading - the dedicated
         /// "sustain unchanged at every scale value" test is what catches that.
         /// </summary>
+        /// <summary>The travelling keyframes' own FIXED shoulder values (owner, 2026-09-06): the pad one
+        /// step behind or ahead of the lit one sits at half, the pad two steps away at a quarter. These
+        /// are deliberately NOT the configured sustain fractions - only the FINAL, resting keyframe reads
+        /// those, so retuning a sustain changes where the animation comes to rest without flattening the
+        /// travel on the way there.</summary>
+        private const double TravelShoulderNear = 0.50;
+        private const double TravelShoulderFar = 0.25;
+
         private static void StagedShape(double progress, double midFraction, double lowFraction, double peak, out double farValue, out double midValue, out double terminalValue)
         {
             const double high = 1.0; // TRUE, scale-independent terminal ceiling - NEVER replaced by peak.
-            double mid = midFraction;
-            double low = lowFraction;
 
-            // Keyframe 0 (stage 1): far=PEAK, mid=LOW, terminal=LOW.
-            // Keyframe 1 (stage 2): far=MID,  mid=PEAK, terminal=LOW.
-            // Keyframe 2 (stage 3 = sustain): far=LOW, mid=MID, terminal=HIGH (unscaled).
-            double p = ClampMath.To01(progress);
+            // OWNER'S OWN SPECIFICATION, 2026-09-06, for a target output of 100:
+            //   start        Low/Rear/Front = 100 / 50 / 25   <- FIXED shoulders
+            //   a few ms on                 =  50 / 100 / 50  <- FIXED shoulders
+            //   at rest                     =  25 / 50 / 100  <- the CONFIGURED sustains
+            //
+            // WHAT CHANGED AND WHY. The shoulders used to read the configured sustain fractions at every
+            // keyframe, so the far pad's opening value and the terminal's opening value were the same
+            // number that also describes where things settle. That conflated two different ideas and, at
+            // the shipped sustains, left the terminal opening at 0.25 while the far pad's own later
+            // resting value was also 0.25 - the travel had nothing to say. The two leading slots still
+            // take `peak` (the driver's Transition scale), which is what amplifies the travel itself.
+            double raw = ClampMath.To01(progress);
+
+            // THE OPENING KEYFRAME IS HELD for StartHoldFraction of the sweep, then the three-keyframe
+            // travel plays out across whatever is left - see StartHoldFraction for why.
+            if (raw < StartHoldFraction)
+            {
+                farValue = peak;
+                midValue = TravelShoulderNear;
+                terminalValue = TravelShoulderFar;
+                return;
+            }
+
+            double p = (raw - StartHoldFraction) / (1.0 - StartHoldFraction);
 
             if (p <= 0.5)
             {
                 double t = p / 0.5;
-                farValue = peak + (mid - peak) * t;
-                midValue = low + (peak - low) * t;
-                terminalValue = low; // unchanged across stage 0->1 (LOW at both keyframes)
+                // far: PEAK -> near shoulder. mid: near shoulder -> PEAK. terminal: far shoulder -> near.
+                farValue = peak + (TravelShoulderNear - peak) * t;
+                midValue = TravelShoulderNear + (peak - TravelShoulderNear) * t;
+                terminalValue = TravelShoulderFar + (TravelShoulderNear - TravelShoulderFar) * t;
             }
             else
             {
                 double t = (p - 0.5) / 0.5;
-                farValue = mid + (low - mid) * t;   // unaffected by peak - far's own transit peak already passed at p<=0.5.
-                midValue = peak + (mid - peak) * t;
-                terminalValue = low + (high - low) * t; // always the TRUE high=1.0 - never peak.
+                // Only this half lands on the CONFIGURED sustains - the resting shape.
+                farValue = TravelShoulderNear + (lowFraction - TravelShoulderNear) * t;
+                midValue = peak + (midFraction - peak) * t;
+                terminalValue = TravelShoulderNear + (high - TravelShoulderNear) * t;
             }
         }
 
-        private void ShakePadPair(
-            double baseLevel0100, double leftFactor, double rightFactor, double shakeContribution,
-            out double left, out double right)
+        /// <summary>
+        /// Tracks the HIGHEST raw ratio this chain has seen since its current sweep began, so the sweep
+        /// can be scaled by what the driver actually asked for rather than by how far a low-pass filter
+        /// happened to have got. Resets with the sweep when the chain goes inactive.
+        /// </summary>
+        private static void AdvanceAnimationPeak(double dtSeconds, double rawRatio, bool active, ref double peak)
         {
-            double centreL, centreR;
-            if (shakeContribution > 0.0)
+            // Same "hold rather than guess" rule AdvanceStageProgress uses for an unusable dt.
+            if (!ClampMath.IsFinite(dtSeconds) || dtSeconds <= 0.0) return;
+
+            if (!active) { peak = 0.0; return; }
+
+            double clamped = ClampMath.To01(rawRatio);
+            if (clamped > peak) peak = clamped;
+        }
+
+        /// <summary>
+        /// The level the staged shape is multiplied by: THE PEAK OF THE TARGET EARLY IN THE SWEEP,
+        /// handing over to the plain low-passed level as the sweep completes.
+        /// <para/>
+        /// THE BUG THIS FIXES (owner, 2026-09-06): "drag the slide bar quickly from 0 to dec 100 and Low
+        /// is almost never over 25, Rear almost never over 50; only Front animates from ~70 to 100". Both
+        /// mechanisms were racing. The sustain level rises with its own 0.15 s time constant while the
+        /// stage progress sweeps in as little as 200 ms - so at the instant the FAR pad's keyframe is at
+        /// its peak, the level multiplying it is still near zero, and by the time the level has arrived
+        /// the sweep has already moved on and collapsed that pad's shape. The leading pads could
+        /// therefore never show the travel at all; only the terminal, which peaks last, ever looked right.
+        /// <para/>
+        /// Scaling the sweep by the peak of the RAW ratio instead removes the race: a hard stamp puts the
+        /// full value under the far pad on the very frame it happens ("try to catch up with the maximum
+        /// of the target G-Force as much as possible"), while a gentle build has a correspondingly low
+        /// peak and stays soft - which is exactly the difference in feel the owner asked for. The
+        /// <c>(1 - progress)</c> handover means the resting shape is still driven by the live level, so a
+        /// long brake settles wherever the pedal actually is rather than at a stale peak.
+        /// <para/>
+        /// It can only ever RAISE the early level (<c>lead >= sustained</c> by construction), never lower
+        /// it, so no previously-correct steady state moves.
+        /// </summary>
+        private static double AnimationLevel(double sustained, double animationPeak, double progress)
+        {
+            double lead = Math.Max(animationPeak, sustained);
+            double p = ClampMath.To01(progress);
+            return sustained + (lead - sustained) * (1.0 - p);
+        }
+
+        /// <summary>
+        /// THE SHAKE GATE AND ITS RHYTHM (v1.0.8). Returns the contribution to use this frame - 0 when the
+        /// shake is silent - and owns every piece of shake timing state.
+        /// <para/>
+        /// Four owner requirements, all about the shake feeling like one continuous rhythm rather than a
+        /// signal that restarts whenever the wheel value wobbles:
+        /// <list type="number">
+        /// <item>THRESHOLD. Below <see cref="ShakeTriggerThreshold"/> the shake does not start. Small
+        /// amounts of lock/slip are constant during normal driving and produced a permanent low buzz that
+        /// masked the real events.</item>
+        /// <item>ONE RHYTHM. Once running, the phase only ever advances. A changing wheel value moves the
+        /// band's WIDTH and nothing else, so the beat stays where the driver's body has locked onto it.</item>
+        /// <item>FINISH THE CYCLE. When the value drops away the shake does not cut off mid-swing; it runs
+        /// to the end of the cycle it had already begun, so every gesture is a whole one.</item>
+        /// <item>RE-ARM INSIDE THAT TAIL KEEPS THE RHYTHM. A wheel value that crosses back over the
+        /// threshold during the trailing cycle rejoins the beat already in progress - it does NOT restart
+        /// the phase, which would read as a stutter. Only a shake that starts from true silence realigns.</item>
+        /// </list>
+        /// During the trailing cycle the LAST above-threshold contribution is held rather than the current
+        /// (sub-threshold) one: the point is to complete the gesture at the size it was already being felt
+        /// at, not to collapse it as it finishes.
+        /// </summary>
+        private double AdvanceShake(bool aboveThreshold, double liveContribution, double dtSeconds)
+        {
+            if (!IntegrateWheelLockAndSlip)
             {
-                GForceShake.Apply(baseLevel0100, shakeContribution, ShakeFrequencyHz, _shakePhaseSeconds, out centreL, out centreR);
-            }
-            else
-            {
-                centreL = baseLevel0100;
-                centreR = baseLevel0100;
+                _shakeActive = false;
+                _shakeReleasing = false;
+                _shakePhaseSeconds = 0.0;
+                _shakeHeldContribution = 0.0;
+                return 0.0;
             }
 
-            left = ClampMath.To0100(centreL * leftFactor);
-            right = ClampMath.To0100(centreR * rightFactor);
+            double dt = ClampMath.IsFinite(dtSeconds) && dtSeconds > 0.0 ? dtSeconds : 0.0;
+            double period = ShakeFrequencyHz > 0.0 ? 1.0 / ShakeFrequencyHz : 0.0;
+
+            if (aboveThreshold)
+            {
+                if (!_shakeActive)
+                {
+                    // A GENUINELY NEW SHAKE - open at whichever corner moves the pads FURTHEST from where
+                    // they currently sit, so the first frame is the biggest jolt available rather than a
+                    // fixed pose that might happen to be where the pads already are.
+                    //
+                    // The direction alternates every time: if a shake stops and restarts quickly, the
+                    // opposite side leads, which reads as one continuing rhythm rather than two separate
+                    // events. On the very first shake of a session there is nothing to alternate from, so
+                    // the side with the SHORTER travel leads (owner's rule).
+                    _shakeActive = true;
+
+                    // THE BAND THE SHAKE IS ABOUT TO USE - and it is MODE-DEPENDENT, so the corner choice
+                    // is scored against the real thing. AllChannelsLockSlip's band does not come from the
+                    // G-force level at all, so using the pads' current level there (0 after a silence with
+                    // no G-force) would collapse every corner onto the same point and make the choice
+                    // meaningless. The other two modes do shake around the level, and use the last
+                    // published terminal pair for it.
+                    double referenceCentre, band;
+                    if (UsesLockSlipWave)
+                    {
+                        band = ClampMath.To0100(100.0 * liveContribution);
+                        referenceCentre = band / 2.0;
+                    }
+                    else
+                    {
+                        referenceCentre = (_lastLeftOut + _lastRightOut) / 2.0;
+                        band = referenceCentre * liveContribution;
+                    }
+
+                    double low, high;
+                    if (UsesLockSlipWave)
+                    {
+                        // ZERO FLOOR - these modes span exactly 0..band (see GForceShake.NormalizedPair),
+                        // so scoring the start corner against PadRange's centred, PeakExcursionFactor-
+                        // shrunk range would score against a range the shake never actually uses.
+                        low = 0.0;
+                        high = band;
+                    }
+                    else
+                    {
+                        GForceShake.PadRange(referenceCentre, band, out low, out high);
+                    }
+
+                    bool leadLeft = _shakeHasRunBefore
+                        ? !_shakeReversed
+                        : GForceShake.FirstEverLeadIsLeft(_lastLeftOut, _lastRightOut, low, high);
+
+                    GForceShake.ShakeStartCorner corner = GForceShake.ChooseStartCorner(
+                        _lastLeftOut, _lastRightOut, referenceCentre, band,
+                        leadLeft);
+
+                    _shakeReversed = _shakeHasRunBefore ? !_shakeReversed : !leadLeft;
+                    _shakeHasRunBefore = true;
+
+                    _shakePhaseSeconds = GForceShake.PhaseForCorner(
+                        corner, ShakeFrequencyHz, EffectiveShakeHold, ShakeFeeling, _shakeReversed);
+                    _shakeCycleStartSeconds = _shakePhaseSeconds;
+                }
+                else
+                {
+                    // Either still running, or re-armed inside the trailing cycle: keep the beat.
+                    _shakePhaseSeconds += dt;
+                }
+                _shakeReleasing = false;
+                _shakeHeldContribution = liveContribution;
+                return liveContribution;
+            }
+
+            if (!_shakeActive) return 0.0;   // silent, and staying silent
+
+            if (!_shakeReleasing)
+            {
+                // Just dropped below the threshold - mark where the current cycle ends and run to it.
+                //
+                // COMPUTED AS AN EXPLICIT REMAINDER, not Ceiling(elapsed)*period. The phase is built by
+                // repeatedly adding dt, so after a few seconds it drifts a few ULPs; when a dropout lands
+                // ON a cycle boundary the division returns 5.99999... instead of 6.0 and Ceiling then
+                // picks the boundary the shake is ALREADY standing on - ending the release instantly and
+                // cutting off exactly the gesture this is here to complete. Observed at frame 30 of a
+                // 40-frame run. Taking the fractional position and treating "no meaningful remainder" as
+                // a whole cycle is stable from either side of the boundary.
+                _shakeReleasing = true;
+                if (period > 0.0)
+                {
+                    double elapsedCycles = (_shakePhaseSeconds - _shakeCycleStartSeconds) / period;
+                    double positionInCycle = elapsedCycles - Math.Floor(elapsedCycles);
+                    double remaining = (1.0 - positionInCycle) * period;
+                    if (remaining <= period * 1e-6) remaining = period;   // sitting on a boundary
+                    _shakeReleaseEndSeconds = _shakePhaseSeconds + remaining;
+                }
+                else
+                {
+                    _shakeReleaseEndSeconds = _shakePhaseSeconds;
+                }
+            }
+
+            _shakePhaseSeconds += dt;
+            if (_shakePhaseSeconds >= _shakeReleaseEndSeconds)
+            {
+                _shakeActive = false;
+                _shakeReleasing = false;
+                _shakePhaseSeconds = 0.0;
+                _shakeHeldContribution = 0.0;
+                return 0.0;
+            }
+
+            return _shakeHeldContribution;
+        }
+
+        /// <summary>
+        /// One pad pair's shaken output, taken from its own post-lateral values.
+        /// <para/>
+        /// BOTH PADS FOLLOW THE STRONGER ONE (owner's decision). The lateral split has already pushed the
+        /// two sides apart by this point; shaking each around its own value leaves their ranges
+        /// non-overlapping under any real cornering load, so the loud side never changes and the shake
+        /// stops reading as an alternation at all (measured: 75.9-100 against 32.5-51.4, zero swaps per
+        /// cycle). Taking the stronger side for both restores it.
+        /// </summary>
+        private void ShakePair(double baseLeft01, double baseRight01, double shakeContribution,
+            out double left, out double right)
+        {
+            double stronger = Math.Max(baseLeft01, baseRight01) * 100.0;
+
+            GForceShake.Apply(stronger, shakeContribution, ShakeFrequencyHz, _shakePhaseSeconds,
+                EffectiveShakeHold, ShakeFeeling, out double shakenL, out double shakenR, _shakeReversed);
+
+            left = ClampMath.To0100(shakenL);
+            right = ClampMath.To0100(shakenR);
+        }
+
+        /// <summary>
+        /// <see cref="ShakeApplyMode.HigherOfGForceOrLockSlip"/>'s pair: PerChannel's own range with the
+        /// ceiling raised to the wheel's, the floor untouched. See the call site for the owner's rule.
+        /// </summary>
+        private void ShakePairRaisedCeiling(double baseLeft01, double baseRight01,
+            double shakeContribution, double wheelCeiling, out double left, out double right)
+        {
+            // IDENTICAL to ShakePair up to here - the same "both pads follow the stronger side while
+            // shaking" equalisation, so the two modes cannot drift apart.
+            double stronger = ClampMath.To0100(Math.Max(baseLeft01, baseRight01) * 100.0);
+            double band = stronger * shakeContribution;
+
+            GForceShake.PadRange(stronger, band, out double low, out double high);
+            double raised = Math.Min(100.0, Math.Max(high, wheelCeiling));
+
+            GForceShake.ApplyRange(low, raised, ShakeFrequencyHz, _shakePhaseSeconds,
+                EffectiveShakeHold, ShakeFeeling, _shakeReversed, out double l, out double r);
+
+            left = ClampMath.To0100(l);
+            right = ClampMath.To0100(r);
+        }
+
+        /// <summary>
+        /// Splits one channel's level into a left/right pair using its lateral boost. Additive, so the
+        /// boost is genuine extra headroom on the loaded side rather than a multiplier that has nowhere
+        /// to go once the level is already at full scale.
+        /// </summary>
+        private static void PairFromLevelAndBoost(double level01, double boost01, double lateralSign,
+            out double left01, out double right01)
+        {
+            double signed = boost01 * lateralSign;
+            left01 = level01 - signed;
+            right01 = level01 + signed;
         }
 
         /// <summary>Standard, frame-rate-independent exponential smoothing (unchanged from the previous
@@ -729,17 +1346,49 @@ namespace QAdvanceFeedback.Core.GForce
         /// Degraded fallback for when <see cref="ITelemetryFrame.LongitudinalG"/> is unavailable but
         /// <see cref="ITelemetryFrame.LateralG"/> is not - unchanged from the previous pass.
         /// </summary>
-        private GForceOutput ComputeLateralOnlyFallback(double lateralG, double shakeContribution = 0.0)
+        private GForceOutput ComputeLateralOnlyFallback(double lateralG, double shakeContribution = 0.0,
+            double latMaxG = 1.5)
         {
-            double safeLatMax = LateralReferenceG > 1e-6 ? LateralReferenceG : 1e-6;
-            double magnitudeRatio = ClampMath.To01(Math.Abs(lateralG) / safeLatMax);
+            // With no longitudinal G at all, the friction circle degenerates to `combined == rLat` and
+            // every channel's level is 0 - so the whole output IS the lateral split. The active chain's
+            // splits still decide the shape (owner's decision: keep the LAST chain), and this path writes
+            // one pair to all eight pads, so the terminal split is the representative one.
+            double safeLatMax = latMaxG > 1e-6 ? latMaxG : 1e-6;
+            double signedLatRatio = ApplyLateralDirection(ClampMath.Clamp(lateralG / safeLatMax, -1.0, 1.0));
+            double headroom = Math.Abs(signedLatRatio) * ClampMath.To01(LateralOutputScale);
+            double split = ClampMath.To01(_lastChainWasBraking ? BrakeBottomFrontLatSplit : AccelBackTopLatSplit);
 
-            double lateralBias = ApplyLateralDirection(ClampMath.Clamp(lateralG / safeLatMax, -1.0, 1.0));
+            PairFromLevelAndBoost(0.0, headroom * split, signedLatRatio >= 0.0 ? 1.0 : -1.0,
+                out double baseL, out double baseR);
 
-            double leftFactor = 1.0 - LateralBiasGain * lateralBias;
-            double rightFactor = 1.0 + LateralBiasGain * lateralBias;
+            double left, right;
+            if (shakeContribution > 0.0 && UsesLockSlipWave)
+            {
+                // The wheel-driven wave ignores G-force by definition, so it still applies on this
+                // degraded path - and still without lateral bias. HigherOfGForceOrLockSlip reduces to
+                // exactly this here too: with no usable G-force there is no other half to be higher
+                // than. The remaining modes coincide anyway, since this fallback already writes one
+                // value to all eight pads.
+                GForceShake.ApplyLockSlipOnly(
+                    shakeContribution, ShakeFrequencyHz, _shakePhaseSeconds, EffectiveShakeHold,
+                    ShakeFeeling, out left, out right, _shakeReversed);
+                left = ClampMath.To0100(left);
+                right = ClampMath.To0100(right);
+            }
+            else if (shakeContribution > 0.0)
+            {
+                ShakePair(baseL, baseR, shakeContribution, out left, out right);
+            }
+            else
+            {
+                // Silent: publish the split as-is. ShakePair would collapse it, since it deliberately
+                // takes the STRONGER side for both pads.
+                left = ClampMath.To0100(baseL * 100.0);
+                right = ClampMath.To0100(baseR * 100.0);
+            }
 
-            ShakePadPair(magnitudeRatio * 100.0, leftFactor, rightFactor, shakeContribution, out double left, out double right);
+            _lastLeftOut = left;
+            _lastRightOut = right;
 
             return new GForceOutput(
                 bottomFrontLeft: left, bottomFrontRight: right,

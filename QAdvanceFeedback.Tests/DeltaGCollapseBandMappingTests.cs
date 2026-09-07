@@ -57,6 +57,29 @@ namespace QAdvanceFeedback.Tests
             return new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromMilliseconds(16));
         }
 
+        /// <summary>
+        /// Drives Slip's learned ceiling to <paramref name="atLimitRaw"/> through TRACTION CROSSINGS -
+        /// the source climbing while achieved G falls away from this car's own peak, which is the only
+        /// evidence <see cref="SlipCrossingGate"/> accepts. The G fall is shallow enough (0.5% of peak
+        /// per frame) to stay above the 85%-of-peak bar that makes a frame an at-limit candidate at all.
+        /// </summary>
+        private static void WarmSlipCeilingWithCrossings(
+            NormalizedWheelLockSlipEngine engine, double peak, double atLimitRaw)
+        {
+            double step = peak * 0.005;
+            for (int i = 0; i < 30; i++)
+                engine.Compute(ThrottleSample(peak), Corners.Zero, Corners.Uniform(atLimitRaw));
+
+            for (int c = 0; c < 40; c++)
+            {
+                for (int i = 0; i < 10; i++)
+                    engine.Compute(ThrottleSample(peak - i * step), Corners.Zero,
+                                   Corners.Uniform(Math.Max(1.0, atLimitRaw - 9.0 + i)));
+                for (int i = 0; i < 10; i++)
+                    engine.Compute(ThrottleSample(peak - (9 - i) * step), Corners.Zero, Corners.Uniform(atLimitRaw));
+            }
+        }
+
         // ------------------------------------------------------------------------------------
         // RISING BRANCH - band correspondence at STEADY STATE (ΔG=0, so b=0 and Normalized = R(u)
         // exactly) - the owner's own literal specification, verified at all three anchors, identically
@@ -112,10 +135,14 @@ namespace QAdvanceFeedback.Tests
             var slipEngine = new NormalizedWheelLockSlipEngine();
             const double peak = 3.0;
             for (int i = 0; i < 300; i++)
-            {
                 lockEngine.Compute(BrakingSample(peak), Corners.Uniform(50.0), Corners.Zero);
-                slipEngine.Compute(ThrottleSample(peak), Corners.Zero, Corners.Uniform(50.0));
-            }
+
+            // Slip's ceiling is now warmed through TRACTION CROSSINGS rather than by holding a constant
+            // source (docs\slip-smax-crossing-gate-design.md - a constant source at constant G is the
+            // standing-start signature, and Slip no longer accepts it as evidence). Lock above is
+            // deliberately left exactly as it was: the crossing gate is Slip-only, and this test's whole
+            // point is the two channels' different raw readings, so Lock's fixture must not move.
+            WarmSlipCeilingWithCrossings(slipEngine, peak, atLimitRaw: 50.0);
 
             // A quiet frame (below the trigger threshold) resets each channel's own collapse detector
             // "previous g" to null WITHOUT feeding a second qualifying observation into the learner (see

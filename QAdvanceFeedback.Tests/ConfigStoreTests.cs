@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using QAdvanceFeedback.Core.GForce;
@@ -149,6 +149,7 @@ namespace QAdvanceFeedback.Tests
             settings.GForce.AccelBottomRearSustainPercent = 40.0;
             settings.GForce.AccelBackLowSustainPercent = 60.0;
             settings.GForce.LateralDirection = LateralDirectionMode.Reversed;
+            settings.GForce.RetriggerStrictness = 2.4;
             settings.GForce.RecommendedFromHz = 250.0;
             settings.GForce.RecommendedToHz = 30.0;
             settings.General.EnableDiagnostics = true;
@@ -166,6 +167,7 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(40.0, loaded.GForce.AccelBottomRearSustainPercent, 6);
             Assert.Equal(60.0, loaded.GForce.AccelBackLowSustainPercent, 6);
             Assert.Equal(LateralDirectionMode.Reversed, loaded.GForce.LateralDirection);
+            Assert.Equal(2.4, loaded.GForce.RetriggerStrictness, 6);
             Assert.Equal(250.0, loaded.GForce.RecommendedFromHz, 6);
             Assert.Equal(30.0, loaded.GForce.RecommendedToHz, 6);
             Assert.True(loaded.General.EnableDiagnostics);
@@ -181,9 +183,10 @@ namespace QAdvanceFeedback.Tests
             // default change, not a weakened assertion: the owner wants a fresh install to feel this
             // without hunting for the toggle.
             Assert.True(loaded.GForce.IntegrateWheelLockAndSlip);
-            Assert.Equal(10.0, loaded.GForce.ShakeFrequencyHz, 6);
-            Assert.Equal(1.5, loaded.GForce.WheelLockShakeScale, 6);
-            Assert.Equal(1.5, loaded.GForce.WheelSlipShakeScale, 6);
+            // Derived from the shipped Shake feeling - see GForceSettings.ShakeFrequencyHz.
+            Assert.Equal(5.0, loaded.GForce.ShakeFrequencyHz, 6);
+            Assert.Equal(1.3, loaded.GForce.WheelLockShakeScale, 6);
+            Assert.Equal(1.3, loaded.GForce.WheelSlipShakeScale, 6);
         }
 
         [Fact]

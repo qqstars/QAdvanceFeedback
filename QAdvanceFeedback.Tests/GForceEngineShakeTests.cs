@@ -283,10 +283,21 @@ namespace QAdvanceFeedback.Tests
 
             engine.Reset();
 
-            // Immediately after Reset, the very first frame's shake phase is back at t=0 (sin(0)=0) -
-            // left and right must be equal (both == the frame's own centre) on that first frame.
-            var r = engine.Compute(Sample(-1.0, 0.02), AccelMax, DecelMax, wheelLockAll0100: 50.0, wheelSlipAll0100: 0.0);
-            Assert.Equal(r.BottomRearLeft.Value, r.BottomRearRight.Value, 6);
+            // Immediately after Reset the shake state is back to "never ran", so the next frame must be
+            // identical to a brand-new engine's first frame.
+            //
+            // REWRITTEN for v1.0.8: this used to assert left == right, which held only because the phase
+            // started at the wave's zero crossing. A shake now deliberately OPENS at its widest
+            // left/right split (GForceShake.MaxPanPhaseSeconds), so equality no longer applies - but
+            // "Reset really did clear the phase" is still exactly what this test is for, and comparing
+            // against a fresh engine states that directly instead of via the old start convention.
+            var fresh = new GForceEngine { IntegrateWheelLockAndSlip = true };
+
+            var afterReset = engine.Compute(Sample(-1.0, 0.02), AccelMax, DecelMax, wheelLockAll0100: 50.0, wheelSlipAll0100: 0.0);
+            var neverRan = fresh.Compute(Sample(-1.0, 0.02), AccelMax, DecelMax, wheelLockAll0100: 50.0, wheelSlipAll0100: 0.0);
+
+            Assert.Equal(neverRan.BottomRearLeft.Value, afterReset.BottomRearLeft.Value, 6);
+            Assert.Equal(neverRan.BottomRearRight.Value, afterReset.BottomRearRight.Value, 6);
         }
     }
 }

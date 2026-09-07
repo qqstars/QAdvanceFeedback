@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using QAdvanceFeedback.Core;
@@ -161,8 +161,7 @@ namespace QAdvanceFeedback.Tests
             var engine = new NormalizedWheelLockSlipEngine();
 
             // 80 qualifying hard-braking frames at genuine physical limit (4.0g).
-            for (int i = 0; i < 80; i++)
-                engine.Compute(BrakingSample(4.0), Corners.Uniform(90.0), Corners.Zero, "F12025", "Sauber", lockSourceIdentity: "ShakeIt");
+            TestFrames.WarmLockWithCrossings(engine, 4.0, 90.0, cycles: 8, gameId: "F12025", carId: "Sauber", lockSourceIdentity: "ShakeIt");
 
             // Probe the SAME 90-native reading at low g (not itself a fresh teaching event) - a cold
             // (weight 0) engine would read exactly 90 (identity); a FULLY calibrated one (weight 1) reads
@@ -297,10 +296,8 @@ namespace QAdvanceFeedback.Tests
             // docs\regression-fix-report.md) - and comfortably enough evidence (150/200 = 75% of
             // CalibrationConfidenceScaleSamples) for both to be meaningfully, not just partially,
             // calibrated.
-            for (int i = 0; i < 150; i++)
-                wetEngine.Compute(BrakingSample(3.2), Corners.Uniform(65.0), Corners.Zero, "F12025", "Sauber", lockSourceIdentity: "ShakeIt");
-            for (int i = 0; i < 150; i++)
-                dryEngine.Compute(BrakingSample(4.8), Corners.Uniform(90.0), Corners.Zero, "F12025", "Sauber", lockSourceIdentity: "ShakeIt");
+            TestFrames.WarmLockWithCrossings(wetEngine, 3.2, 65.0, cycles: 20, gameId: "F12025", carId: "Sauber", lockSourceIdentity: "ShakeIt");
+            TestFrames.WarmLockWithCrossings(dryEngine, 4.8, 90.0, cycles: 20, gameId: "F12025", carId: "Sauber", lockSourceIdentity: "ShakeIt");
 
             // RE-EXPRESSED (docs\delta-g-band-mapping-report.md) - read directly against
             // KeyedScaleLearner, per this file's own repeated reasoning above.

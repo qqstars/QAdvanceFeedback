@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.Normalized;
 using Xunit;
@@ -51,7 +51,7 @@ namespace QAdvanceFeedback.Tests
             // must stay close to the car-level severity itself.
             var engine = new NormalizedWheelLockSlipEngine();
             const double peak = 4.0;
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(peak), Corners.Uniform(50.0), Corners.Zero);
+            TestFrames.WarmLockWithCrossings(engine, peak, 50.0);
 
             var frontBiasedRaw = new Corners(100.0, 80.0, 40.0, 40.0);
             engine.Compute(BrakingSample(peak), frontBiasedRaw, Corners.Zero);
@@ -82,7 +82,7 @@ namespace QAdvanceFeedback.Tests
             // Removed; the ONE invariant that must hold (and does, by construction) is kept below.
             var engine = new NormalizedWheelLockSlipEngine();
             const double peak = 3.0;
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(peak), Corners.Uniform(50.0), Corners.Zero);
+            TestFrames.WarmLockWithCrossings(engine, peak, 50.0);
 
             var raw = new Corners(60.0, 80.0, 60.0, 40.0); // the owner's own worked-example wheel pattern
             engine.Compute(BrakingSample(peak * 0.9), raw, Corners.Zero);
@@ -99,7 +99,7 @@ namespace QAdvanceFeedback.Tests
             // formula produced the constant.
             var engine = new NormalizedWheelLockSlipEngine();
             const double peak = 4.0;
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(peak), Corners.Uniform(50.0), Corners.Zero);
+            TestFrames.WarmLockWithCrossings(engine, peak, 50.0);
 
             var raw = new Corners(100.0, 40.0, 40.0, 40.0);
             engine.Compute(BrakingSample(peak), raw, Corners.Zero);
@@ -155,7 +155,7 @@ namespace QAdvanceFeedback.Tests
             // preserved exactly as this test intends.
             var engine = new NormalizedWheelLockSlipEngine();
             const double peak = 4.0;
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(peak), Corners.Uniform(90.0), Corners.Zero);
+            TestFrames.WarmLockWithCrossings(engine, peak, 90.0);
 
             var frontBiasedRaw = new Corners(100.0, 80.0, 40.0, 40.0);
             engine.Compute(BrakingSample(peak), frontBiasedRaw, Corners.Zero);

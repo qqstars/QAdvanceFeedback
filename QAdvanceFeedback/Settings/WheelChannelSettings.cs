@@ -256,23 +256,22 @@ namespace QAdvanceFeedback.Settings
         private static WheelChannelSettings CreateDefaults(bool isLockChannel)
         {
             var settings = new WheelChannelSettings();
-            // NORMALIZE PATTERN - THE TWO CHANNELS DELIBERATELY SHIP DIFFERENT PATTERNS (owner's call,
-            // re-confirmed 2026-08-28 after a build that had wrongly shipped single-point on both):
+            // NORMALIZE PATTERN - BOTH CHANNELS SHIP THE THREE-POINT MAPPING (v1.0.8, owner's call after
+            // driving 1.0.7.0): Lock's SMax/S90/S75 and Slip's Perfect/Great/Good.
             //
-            //   Lock -> Mapping, the full SMax/S90/S75 three-point curve it has always shipped. Lock is
-            //     the channel this plugin anchors physically: LockAnchorLearner measures the source value
-            //     at 90% and 75% of the corner's own g-limit, so all three points are real measurements
-            //     and the shipped defaults (85/75/60) place all three.
-            //   Slip -> MaxGripOnly, the "Perfect point" alone, because Slip has NO native 90%/75% grip
-            //     measurement to place the two lower anchors from. Its Great/Good points are DERIVED from
-            //     the Perfect point (see KeyDataPointSettings.DeriveLowerAnchors) when the driver opts in,
-            //     and derived anchors are not a good enough reason to make a fresh install feel curved.
+            // Lock has always shipped it, and measures all three points physically - LockAnchorLearner
+            // reads the source at 90% and 75% of the corner's own g-limit.
             //
-            // The three-point mapping remains available on EITHER channel in EITHER mode - this is only
-            // about what a fresh install feels like before anyone touches the selector.
-            settings.NormalizePattern = isLockChannel
-                ? NormalizePattern.Mapping
-                : NormalizePattern.MaxGripOnly;
+            // SLIP'S TWO LOWER POINTS ARE DERIVED, NOT MEASURED (a fixed percentage of the Perfect point -
+            // see KeyDataPointSettings.DeriveLowerAnchors), because Slip has no native 90%/75% grip
+            // measurement. Earlier builds treated that as a reason to ship Slip single-point; driving it
+            // settled the question the other way. Derived anchors still shape the curve honestly - they
+            // are exactly what the settings page shows in the boxes - and the graded feel through the
+            // range is worth more than the purity of shipping only measured knots.
+            //
+            // Either channel can still be switched to Max-Grip/Perfect-Point-Only by hand; this is only
+            // what a fresh install feels like before anyone touches the selector.
+            settings.NormalizePattern = NormalizePattern.Mapping;
             // Global shipped default is now Manual/Raw (docs\relative-fallback-and-raw-default-report.md
             // - FLIPPED from the previous ShakeIt default; see SourceMode's own remarks for the evidence)
             // - NOT ApplyMotorsExportDefaults (which would force ShakeIt).

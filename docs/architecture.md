@@ -1,4 +1,4 @@
-# Architecture
+﻿# Architecture
 
 **English** · [简体中文](architecture.zh-Hans.md)
 
@@ -29,7 +29,7 @@ subsystem links to its own "how it works and why" section further down this docu
 | [**Wheel Lock Raw / Wheel Slip Raw**](#wheel-lock-raw--wheel-slip-raw-how-it-works-and-why) | Reproduces SimHub's own legacy-iRacing RPM/speed-derived lock and slip formula exactly, dispatched per title across several branch-specific models selected by capability flags, then combined per wheel-group by a Max/Min axle blend plus a front/rear weighted blend. | The faithful, unnormalised reproduction of SimHub's own well-known algorithm — the common reference point everything else in this plugin builds on. |
 | [**Wheel Lock/Slip Normalizer**](#wheel-lockslip-normalizer-how-it-works-and-why) | Rescales Raw's per-wheel shape against a per-(game, car, source) learned physical-grip reference (a deliberately slow-converging EMA), cross-calibrated per source via a scale learner anchored to rare "at the physical limit" moments, blended between live and persisted evidence by a dispersion-weighted cold/warm mechanism. | Makes "80" mean the same thing — "at the measured grip limit" — in every car, instead of a number whose meaning drifts with how grippy that car happens to be. |
 | [**Wheel Lock/Slip Projector**](#wheel-lockslip-projector-how-it-works-and-why) | Pushes the normalized 0–100 value through a driver-editable five-anchor curve, smoothed with monotone cubic interpolation, plus an optional pulse-at-maximum stage. | Turns "how severe is this, numerically" into "exactly how this should feel" — the property tier meant to be bound to a shaker. |
-| [**G-Force**](#g-force-how-it-works-and-why) | A washout-style split between a sustained G level and a rate-driven transient, mapped onto a 3-stage pad chain via partition-of-unity piecewise-linear functions; per-game/per-car maxima learned via a trimmed-pool robust estimator over a real-time rolling window; an optional wheel lock/slip left/right shake superimposed on top. | Gives a seat pad a continuous, directional sense of braking/accelerating/cornering load, independent of and complementary to the wheel channels. |
+| [**G-Force**](#g-force-how-it-works-and-why) | A washout-style split between a sustained G level and a rate-driven transient, mapped onto a 3-stage pad chain via partition-of-unity piecewise-linear functions; per-game/per-car maxima learned via a trimmed-pool robust estimator over a real-time rolling window; an optional wheel lock/slip shake superimposed on top, spread across the pads by one of four selectable modes and shaped by one of three selectable feelings. | Gives a seat pad a continuous, directional sense of braking/accelerating/cornering load, independent of and complementary to the wheel channels. |
 
 ## The layer model
 
@@ -451,6 +451,362 @@ getting there, because a rig cueing acceleration needs both — the current g, a
   grows with how hard the wheel is currently locking/slipping, while its *centre* stays anchored to the
   plain G-force value, so enabling the feature never causes a jump. This is the one deliberate exception
   to "G-Force does not depend on Layers 3–5" — see `GForceEngine.Compute`'s own remarks.
+
+  **Band placement.** `band = level × contribution`, `half = band / 2`, and the wave is centred on the
+  level. A band that would leave 0–100 is **shifted, not squashed**, by the single clamp
+  `effectiveCentre = Clamp(centre, half, 100 − half)` — one expression covering all three cases (fits;
+  top overflows; bottom underflows), so the band's *width* is always preserved. Only a band wider than
+  the whole range (`half > 50`) cannot be placed by any shift; there the centre pins to 50 and the
+  output is clamped instead.
+
+  **One drive, one oscillator — both load-bearing (1.0.8).** The drive is always
+  `Math.Max(lockContribution, slipContribution)`, computed once *before* any mode branching, and there
+  is exactly one `_shakePhaseSeconds` shared by all eight pads and both wheel signals. Lock-driven and
+  slip-driven shaking are therefore in phase **by construction** — when one is at its maximum so is the
+  other — and a handover between them changes only the band's width, never the wave's position. No mode
+  routes lock to one set of pads and slip to another; the apparent routing is emergent, since
+  `band = level × contribution` leaves a channel at level 0 silent. `GForceEngineShakeModeTests` guards
+  both properties, and both guards were mutation-checked (`Max`→`Min`: 12 failures; a 21 ms per-channel
+  phase offset: 2 failures, including the pads-swing-together guard).
+
+  **`ShakeApplyMode` (1.0.8)** selects what each channel's band is computed *from* — never how lock and
+  slip combine:
+
+  | Mode | Band source | Travel | Lateral bias | Default scale / trigger |
+  | --- | --- | --- | --- | --- |
+  | `HigherOfGForceOrLockSlip` (**shipped default**, listed first) | that channel's own level, with the CEILING raised by the wheel | centred on the level | applied | 1.3 / 5 |
+  | `PerChannel` (all pre-1.0.8 behaviour) | that channel's own level | centred on the level | applied | 1.5 / 5 |
+  | `AllChannelsGForce` | the **active chain's terminal** level, applied to all eight | centred on the level | applied | 1.3 / 30 |
+  | `AllChannelsLockSlip` | `100 × contribution` — G-force ignored entirely | **from zero** | **not** applied | 1.0 / 30 |
+
+  **The trigger split** (5 vs 30) follows from what a low wheel value DOES in each mode. On a
+  per-channel band a trace of lock is a trace of extra width on an animation that was already there, so
+  it can be admitted early; on an all-channels band it is a floor under all eight pads at once, which at
+  a low threshold reads as exactly the permanent background buzz the threshold exists to stop.
+
+  `AllChannelsGForce` picks its terminal by **direction** (braking → BottomFront, accelerating →
+  BackTop), not by whichever wheel signal is larger: slip while braking would otherwise select BackTop,
+  whose level is 0 under braking, silencing the shake exactly when it was wanted. The terminal channel's
+  output is consequently identical to `PerChannel`'s. `AllChannelsLockSlip` drops the lateral bias
+  because the mode's whole point is an output depending on nothing but lock/slip.
+
+  **`HigherOfGForceOrLockSlip` is PerChannel with a raised ceiling (REDEFINED 2026-09-07).** It runs
+  the PerChannel path outright — same centre, same band, same "both pads follow the stronger side"
+  lateral rule — and changes exactly one thing:
+
+  ```
+  low  = PerChannel's low, UNCHANGED
+  high = Min(100, Max(PerChannel's high, 100 × contribution))
+  ```
+
+  So the minimum is always identical to PerChannel's and only the ceiling is lifted by the wheel. It
+  previously travelled from a zero floor on one band shared by all eight pads, which discarded the
+  per-channel G-force shape entirely; the point of the redefinition is that a quiet wheel now leaves
+  that animation intact with a little width on top, while a wheel past its own limit pushes every
+  channel's ceiling to 100 and the shake takes over regardless of G-force. `GForceShake.ApplyRange`
+  exists for this: the two ends now come from different places and can no longer be expressed as one
+  centre plus one band.
+
+  **Only `AllChannelsLockSlip` still travels from zero.** Its band *is* the wheel value, so a centred
+  excursion would make a full-lock shake dip only to half strength and read as a loud buzz rather than a
+  shake. The three others keep a centred excursion, because there the band is a modulation *of* an
+  existing level that must not jump when the shake starts. `UsesLockSlipWave` narrowed accordingly.
+
+- **The wave is a sine with holds at both extremes (1.0.8, `GForceShake.SineHoldWave`).** One pad's
+  normalised position over a cycle of length `1/f`, for a hold fraction `h`:
+
+  | Fraction of the cycle | Shape |
+  | --- | --- |
+  | `[0, h/4)` | held at MAX |
+  | `[h/4, h/4 + (1−h)/2)` | half-cosine, MAX → MIN |
+  | `[…, … + h/2)` | held at MIN |
+  | `[…, … + (1−h)/2)` | half-cosine, MIN → MAX |
+  | `[1 − h/4, 1)` | held at MAX |
+
+  Three properties are load-bearing:
+  - **The period is always `1/f`.** The holds are a share *of* the cycle, not an addition to it, so
+    "10 Hz" keeps meaning ten full Max-Min-Max travels per second at every hold setting. Higher hold
+    reads *sharper*, never slower.
+  - **The two MAX holds are half-length each** (`h/4 + h/4`) while the MIN, passed through once, gets
+    `h/2`. Both extremes are therefore held for the same total `h/2` — which is exactly what makes the
+    shape symmetric, and a cycle both start and end at the maximum.
+  - **At `h = 0` this is exactly a cosine**, with no flats at all. `h` is capped at 90%, not 100%, since
+    zero-length ramps would demand an instantaneous square the hardware cannot follow.
+
+  This replaced a trapezoid (linear ramps) plus a separate quadrature copy of it. The trapezoid's
+  sustain-tracking phase offset and the quadrature term are both gone; `SineHoldWave` is the only wave
+  in the plugin, and the two pads differ only in *when* they run it.
+
+- **`ShakeFeeling` — how the pair relates (1.0.8, `GForceShake.FeelingPair`).** One wave, three
+  offsets between the leader and the follower:
+
+  | Feeling | Offset | Hold |
+  | --- | --- | --- |
+  | `OppositePhase` (**shipped default**) | half a period | as configured |
+  | `SamePhase` | none — both pads identical | as configured |
+  | `Blending` | `h/4` of the period (an eighth of the cycle at its fixed hold) | **pinned at 0.5**, setting ignored |
+
+  `Blending`'s offset is the leader's own opening MAX hold, so at phase 0 the follower sits exactly at
+  the top of its descent while the leader is still holding — both start high, one already dropping.
+  Because that character is *defined* in terms of the hold, `Blending` pins its own (`EffectiveHold`)
+  and the UI hides the hold control for it rather than letting a setting silently do nothing.
+
+  **Picking a feeling SETS `ShakeFrequencyHz`** to `DefaultShakeFrequencyFor` — **5 Hz for
+  `OppositePhase`, 10 Hz for the other two** (revised after the owner's seat time; the first cut had the
+  split the other way round). Owner's explicit instruction: *"set the frequency as 10HZ
+  (Even the user override to their own frequency value) … if enabled 'Blending' … set the Shake
+  Frequency as 5HZ instead."* Discarding a hand-tuned value is the requested behaviour, not a side
+  effect. It fires from the dropdown's `SelectionChanged` only, never from the load path, so a fresh
+  install keeps whatever it shipped with until a feeling is actually picked.
+
+  **The shipped default frequency is DERIVED from `DefaultShakeFeeling`**, not written out, so a fresh
+  install and Restore-defaults both land on the frequency the shipped feeling would itself choose
+  (today: OppositePhase → **5 Hz**). It was a literal 5.0 for a while, which meant a fresh install
+  opened showing "Opposite phase" at 5 Hz and jumped to 10 the instant the driver touched the dropdown
+  — the same drift class the two shake scales had.
+
+  **The hold is NOT defaulted per feeling in the same way.** The two phase-locked feelings share the one
+  configured value; `Blending` takes no default at all — it *pins* `BlendingHoldFraction` (0.5) and the
+  UI hides the spinner, so there is no per-feeling hold value to hand the driver.
+
+  **Switching `ShakeApplyMode` does NOT rewrite the two scales** (owner, 2026-09-06). It used to, on the
+  reasoning that a scale meant a different thing in each mode. It does not:
+  `contribution = scale × wheel/100` is computed identically in all four modes, and the Lock and Slip
+  scales are applied to their own channels individually before the engine takes the larger. Only what
+  that contribution *multiplies* differs — the pad's own level in the two G-force modes, the full 0–100
+  range in the two wheel-driven ones — so at 1.5 a wheel-driven mode reaches a full-width band from
+  wheel 67 up. That is a saturation point worth knowing, not a change of meaning, and not grounds for
+  overwriting a hand-tuned value. Both scales ship at **1.5** in every mode.
+
+  **`PadRange` no longer applies a `PeakExcursionFactor`.** The sine+hold wave spans a full 0..1 for
+  every feeling and every hold, so a pad's travel *is* the band. The old factor existed because the
+  quadrature blend genuinely shrank the excursion — which is also why a nominal band of 70 only ever
+  swung 35 wide at the shipped blend.
+
+  A shake starting from real silence still **opens at whichever of its four corners is furthest from
+  the pads' current values**, so it announces itself instead of fading in. `PhaseForCorner` finds the
+  phase that lands there by **searching 720 phases across the cycle** rather than deriving it in closed
+  form: with three feelings, a variable hold, and `reversed`, no single offset expression is correct
+  for all of them, and not every corner is even reachable (`SamePhase` can only sit at `BothLow` or
+  `BothHigh`), so the search returns the closest attainable phase. `ChooseStartCorner` scores the four
+  corners by **total absolute** travel — absolute, not signed, because a pad can sit *outside* the coming
+  range under a cornering bias, where a signed term goes negative and ranks a corner as worse than doing
+  nothing. The corners are scored at their real output values (`CornerOutputs`), and the reference band
+  is mode-dependent: the wheel-driven modes' band comes from the wheel value alone, so using the pads'
+  current level there (0 after a silence with no G-force) would collapse every corner onto one point.
+
+  The traversal direction (`reversed`, which swaps which side leads) alternates between consecutive
+  shakes so a stop-start reads as one rhythm; on the very first shake of a session there is nothing to
+  alternate from, so the side with the *shorter* travel leads.
+
+- **The sweep re-arms mid-brake, on a fast RISE only (2026-09-06).** `AdvanceStageProgress` used to
+  reset progress ONLY when the chain went inactive, so trailing a little brake down a straight let the
+  sweep finish and every later stab found progress already at 1 — the owner's report was "even with a
+  small dec value for a while, a quick dec later will NOT be triggered". Three rules now govern the
+  re-arm:
+  - **Only when nothing is running** (`stageProgress >= 1.0`). A sweep in progress is never cut short;
+    that would read as a stutter rather than a new event.
+  - **Only on a rise.** The re-arm delta is SIGNED, so dec-G falling away fast — lifting off the brake —
+    triggers nothing. The travel *rate* still uses the magnitude, so a release still sweeps out at a
+    matching speed.
+  - **A self-scaling threshold**, `RetriggerRatioRatePerSecond = MaxStageProgressPerSecond ×
+    RetriggerStrictness` — in RATIO per second, not raw g. In absolute terms that is
+    `maxG / sweepDuration × strictness`, which is the owner's own derivation: a low-max-G car (gentler
+    stops, smaller absolute deltas) needs a proportionally smaller delta to earn its animation, while a
+    high-max-G car is not retriggered by every small stab. `RetriggerStrictness` is a **driver-facing
+    setting** (2026-09-07 — the one number here that only seat time can settle), default **1.2**,
+    clamped to 0.1–5.0. At the shipped 0.2 s fastest sweep the default reads as "the pedal moved far
+    enough to cover the car's whole braking range in 167 ms". Higher is stricter; the floor is not 0,
+    because a strictness of zero means a threshold of zero, which re-arms on any rise at all — the
+    runaway the setting exists to prevent. `RetriggerRatioRatePerSecond` is therefore computed, not
+    stored, so a mid-session Apply takes effect on the very next frame.
+
+  A re-armed sweep also **resets the animation peak**, or the new animation would be scaled by the old
+  event's high-water mark and a second, gentler stab would read as loud as the first.
+
+- **The opening pad HOLDS at its peak (`StartHoldFraction` = 0.25).** The owner's reading of the old
+  shape was right: the far pad was at its peak for a single instant at `p = 0` and only ever fell from
+  there, while the MIDDLE pad rises into its peak and then falls away from it — so the middle pad spent
+  roughly twice as long near maximum as the pad that opens the animation. The opening keyframe is now
+  frozen for the first quarter of the sweep and the three-keyframe travel plays out across the
+  remaining three quarters, which both gives the far pad a real plateau and delays the whole travel
+  slightly, as asked.
+
+- **Both pads follow the stronger side while shaking (`ShakePadPair`).** The lateral bias used to
+  multiply each pad *after* the shake. Under a real cornering load that left the two ranges
+  non-overlapping — measured 75.9–100 against 32.5–51.4, so the loud side **never changed**: zero swaps
+  per cycle, no alternation at all, just two unequal wobbles at different heights. Taking
+  `level × Max(leftFactor, rightFactor)` for both pads restores two swaps per cycle. The cornering cue is
+  suppressed for the duration of the shake and returns the instant it stops — an accepted trade, on the
+  grounds that at the limit "you are locking" outranks "you are turning right".
+
+- **Lateral is a FRICTION CIRCLE, not a multiplier (1.0.8).** It used to be `pad × (1 ± gain·bias)`
+  against a hard-coded `LateralReferenceG` of 1.6 g that no setting could reach. Two failures: under hard
+  braking the strong side was already at 100, so there was no headroom to lean into and all the asymmetry
+  had to come from the weak side dropping; and it destroyed the shake's alternation (see the
+  stronger-side rule below). It is now additive headroom:
+
+  ```
+  combined = sqrt(rLong² + rLat²)
+  level_ch = rLong × that channel's own staged shape        (terminal shape = 1.0)
+  boost_ch = (combined − rLong) × that channel's lateral split
+  L / R    = clamp(level_ch ± boost_ch)
+  ```
+
+  `GForceLateralFrictionTests` reproduces the owner's worked examples end-to-end: 72% brake with 70%
+  lateral → combined 100.42%, headroom 28.4 → Bottom Front 86.2/57.8, Bottom Rear 57.3/14.7, Back Low
+  46.4/0.
+
+  Six per-channel splits, **inverted against the longitudinal emphasis on purpose** — braking
+  50/75/100 (front/rear/low), acceleration 100/75/50 (rear/low/top). The loudest pad takes the least
+  cornering, so a trail brake reads as the cue travelling back and to one side rather than everything
+  getting louder in place. A pad the active chain does not drive gets a split of 0. With no longitudinal
+  G at all the **last active chain's** splits apply (owner's decision), so the cue does not jump as
+  longitudinal G fades mid-corner.
+
+  `LateralReferenceG` and `LateralBiasGain` are **gone**, superseded by the new Maximum-cornering-G
+  setting and the six splits. Three output scales (accel/brake/lateral, default 100%) attenuate their own
+  component and never `combined`, so the circle stays an honest physics quantity.
+
+- **The learned maxima, and the floor under them (1.0.8).** All three axes share one
+  `RobustBandEstimator` — 8 g hard reject, 2-minute rolling window, skip the top 5%, pool the next 10% of
+  the remainder (min 10 samples), report `0.75 × pool max + 0.25 × pool mean`. **Not a literal
+  percentile**, though it lands near P95: on a real F1 2025 log, raw p95 was 2.589 g and the estimator
+  gave 2.510 g. Lateral additionally has no direction to gate on — accel and decel are two different
+  maxima sharing one axis, whereas cornering left and right are the same grip question — so it observes
+  `|latG|` on every valid frame and keeps whichever is highest, regardless of what the car was doing
+  longitudinally.
+
+  **`MinLearnedAccelMaxG` / `MinLearnedDecelMaxG` / `MinLearnedLatMaxG` = 0.5 g**, and the floor actually
+  applied is **`Min(that constant, the driver's own Fixed*MaxG)`** (`FloorFor`). Applied to the LEARNED
+  value only — a hand-typed `Fixed*MaxG` is left as typed, and with no evidence the fixed default already
+  governs. So the floor covers exactly one case: real but implausibly low evidence, i.e. a session with
+  almost no cornering (or braking), which otherwise learns ~0.1 g and makes the cue saturate on the
+  slightest input.
+
+  The `Min` matters: a driver who typed something BELOW 0.5 has said explicitly that values that low are
+  wanted on that axis, so the floor steps aside rather than overriding them. Typing 1.5 leaves the floor
+  at 0.5, and a learner converging on 0.3 is held at 0.5; typing 0.2 lowers the floor to 0.2, and the
+  same learner is allowed all the way down to 0.3.
+
+  **AUTO ALWAYS OPENS AT THE TYPED VALUE AND STEPS TOWARD THE MEASURED ONE, IN EITHER DIRECTION.**
+  `MaxRamp` seeds `_lastPublished` from `Fixed*MaxG` on its very first call, then converges on the
+  learner's estimate — comparing `|target − lastPublished|`, so it is direction-agnostic by construction.
+  Typed 1.5 with a real maximum of 1.2 walks down to 1.2; typed 0.8 with a real 2.4 walks up. Changes
+  under 25% apply immediately, larger ones ramp over 2 s, and a ramp already in flight continues on
+  elapsed time alone rather than re-checking the threshold (which would let a converging ramp snap).
+
+  **WHY AN ABSOLUTE FLOOR IS CORRECT, not an overestimate.** The objection was that it misreports
+  genuinely low-grip content: a car on snow pulls ~0.4 g and a truck perhaps 0.2 g, so normalising them
+  against 0.5 makes flat-out effort read below full scale. The owner's answer settles it — **that is the
+  right outcome.** A real truck does not produce a strong G-force transition, and a seat pad should not
+  pretend otherwise; below roughly half a g there is no forceful event to report. This is a deliberate
+  trade against pure per-vehicle normalisation: above the floor the cue means "at THIS car's limit",
+  below it, it means "not much force here". Three separate constants, equal today, because the axes have
+  different physics (braking and cornering are grip-limited; acceleration is power-limited and spans
+  ~0.2 g for a laden truck to ~1.5 g for an F1 launch).
+
+  **A MINIMUM-OBSERVATION THRESHOLD WAS TRIED ON LATERAL AND REMOVED.** The reasoning is worth keeping,
+  because the idea is tempting: without a direction gate, straight-line frames padded the pool and slid
+  the rank-5%–14.5% window down, measurably lowering the estimate (2.500 → 2.689 g, +7.6% with a 0.15 g
+  threshold). But sweeping the threshold from 0 to 0.8 g was **monotonic with no knee** — the estimate
+  climbs all the way (+24% at 0.8 g), because trimming the bottom always slides the pool window up. That
+  makes it a *feel* knob deciding how high in the distribution the reference sits, with no derivable
+  correct value, rather than a noise filter. Its effect on the output was small anyway (~4 points of
+  split across the whole range) and in the direction of caution, since a higher learned max means a
+  smaller `rLat` and a NARROWER split. The floor handles the case that actually mattered and is far more
+  predictable, so the threshold was dropped rather than tuned.
+
+  The longitudinal axes never needed the threshold either: measured on the same log, 0.15 g moved decel
+  by +0.7% and accel by +0.9%, because their direction gate already excludes the idle frames.
+
+- **Why a pure pan could not be felt, and why the blend became a dropdown (1.0.8).** Originally the
+  shake was 100% differential: `L = c + h·w`, `R = c − h·w`, so `L + R = 2c` and the pair's *total*
+  never moved. Two transducers are uncorrelated, so their powers add and felt magnitude goes as
+  `sqrt(L² + R²)` — which a pure pan barely disturbs. Measured on a real session log: the pan swung
+  **62** points peak-to-peak while felt magnitude swung **13**, a modulation depth of **23%**, against a
+  theoretical ceiling of **29%** even at a saturated 100/0 swing. The shake was present, large, and
+  imperceptible.
+
+  The first fix was a **Both-sides blend (%)** spinner routing share `m` of the band through a
+  quadrature copy of the wave. It worked — felt depth rose from ~11% to ~40% at `m = 0.5` — but it was
+  the wrong *control*: only three points on that slider were distinct to feel, the mechanism cost a
+  `PeakExcursionFactor` that halved a pad's travel, and the hold setting had to be cancelled out
+  towards the middle (`EffectiveSustain = configured × 2 × |0.5 − m|`) because the quadrature term
+  supplied a dwell of its own.
+
+  So the slider became `ShakeFeeling`'s three named choices, and the quadrature term, the excursion
+  factor, and the sustain-cancelling all went away with it: two copies of one `SineHoldWave` at
+  different phases reproduce all three feelings, and each spans the full band. The retired mechanism is
+  recorded here because the *measurement* behind it still stands — `OppositePhase` is deliberately the
+  subtlest of the three feelings for exactly the reason above, and a driver who cannot feel it should
+  be pointed at `SamePhase` or `Blending`, not at a bigger scale.
+
+  One detail survived the rewrite: **the final L/R clamp is unconditional**, because arithmetic on the
+  wave can land a few ULPs outside 0–100 (`100.00000000000003`).
+
+  The setting key and engine property outlived the mechanism for a while as **write-only state** —
+  `ApplyTo` kept pushing `ShakeBlendPercent` into `GForceEngine.ShakeBlend` and nothing ever read it
+  back, so a persisted blend silently did nothing. Both are now removed; an old config file simply
+  carries an ignored key.
+
+- **The Test Effect panel (1.0.8, `SettingsControl.GForceTest.cs`).** A drag-a-ball G-force pad and a
+  Lock/Slip bar that push synthesised frames through a **private `GForceEngine` instance** owned by the
+  settings page, so a driver can set ShakeIt levels without provoking a real lock-up on track.
+
+  **It publishes to the real properties.** Driving only its private engine moved the on-screen readout
+  and nothing else: with no game running `DataUpdate` returns before publishing anything, so
+  `QAdvanceFeedback.GForce.*` read null and ShakeIt — the entire reason the panel exists — got nothing.
+  `QAdvanceFeedback.PublishTestEffect` writes through the same `PropertyPublisher.UpdateGForce` the live
+  path uses (its properties are pull-delegates over that array, so a write lands with or without a
+  running game) and sets a flag that makes `DataUpdate` skip its own publish. Passing null clears the
+  override; both the toggle going off and the page unloading must do that, or a closed page would pin
+  the outputs forever.
+
+  **Pad orientation** (owner, 2026-09-06): the ball marks where the load is thrown, so **up is braking,
+  down is accelerating, and dragging left means turning right**. Both pad axes are negated on the way
+  into the telemetry frame.
+
+  Two further properties are the whole point of it, and both are guarded:
+  - **Every G-Force setting on the page applies, live — into a SCRATCH object.** Each simulated frame
+    calls `SaveGForceToSettings` into a throwaway `GForceSettings` and then `ApplyTo(_testEngine)`, so
+    the panel is fed from the page's *current* state (Wheel Lock and Slip scales included) without
+    touching the plugin's live settings. It used to call the whole of `SaveToSettings()`, which writes
+    straight into `_plugin.Settings` — so merely switching the panel on pushed every uncommitted edit
+    on the page into the running plugin: an Apply nobody asked for. Extracting the G-Force half into a
+    method that takes a target is what made a scratch object possible.
+  - **Nothing about it is ever saved** (owner). Its controls are read by neither `SaveToSettings` nor
+    `LoadFromSettings`, and `WireDirtyTracking` skips them by the `GForceTest` name prefix — by prefix,
+    not a list, for the same reason the sweep itself is reflective. `SettingsControlDirtyTrackingTests`
+    guards all three.
+  - **Off means nothing at all.** With the toggle off the controls are collapsed, no labels render, and
+    no simulated frame is produced — the panel must not be able to drive a driver's motors while it is
+    switched off.
+
+  The **preview graph** in the shake section is the same idea at rest: it calls `FeelingPair` directly
+  to draw one second of both pads at the current settings. Neither surface reimplements the wave; both
+  render what the plugin itself would output.
+
+- **The trigger gate and the shake's rhythm (1.0.8, `GForceEngine.AdvanceShake`).** Four rules, all in
+  service of the shake reading as one continuous rhythm rather than a signal that restarts whenever the
+  wheel value wobbles:
+  1. **Threshold** (default 5, on the *unscaled* `Max(lock, slip)` so it means the same number the
+     driver sees on the wheel tabs - raising a scale never makes the shake start earlier). Below it
+     nothing starts, and this acts as a SOFT OFF-SWITCH for the whole integration: every mode then
+     publishes exactly what it would with `IntegrateWheelLockAndSlip` false - plain G-force, no
+     shake - including the two wheel-driven modes, which have nothing left to be louder than.
+  2. **One rhythm.** Once running the phase only advances; a changing wheel value moves the band's width
+     and nothing else.
+  3. **Finish the cycle.** On dropout the shake runs to the end of the cycle it had begun. Computed as an
+     explicit remainder, **not** `Ceiling(elapsed) × period` — the phase accumulates by repeated `+= dt`,
+     so a dropout landing on a cycle boundary reads as `5.9999…` and `Ceiling` returns the boundary the
+     shake is already standing on, ending the release instantly and cutting off exactly the gesture this
+     exists to complete.
+  4. **Re-arming inside that tail keeps the beat.** Only a shake starting from true silence realigns.
+
+  During the tail the *last above-threshold* contribution is held rather than the current sub-threshold
+  one, so the gesture completes at the size it was being felt at instead of collapsing as it finishes.
+
 - **Settings-panel "Auto detected" readout — stale-snapshot fix.** `SettingsControl.RefreshGForceLearnedText`
   used to be invoked only at construction (`LoadFromSettings`) and when the Accel/Decel mode combo's own
   selection actually changed — never on a timer. Traced end-to-end: `GForceSettings.SetCurrentGameAndCar`/
@@ -554,6 +910,7 @@ rather than merely the same formulas.
 | File | Purpose |
 |---|---|
 | `NormalizedWheelLockSlipEngine.cs` / `NormalizedWheelLockSlipResult.cs` | The Layer 4 engine and its published result shape. |
+| `SlipCrossingGate.cs` / `LockCrossingGate.cs` | The crossing gate that decides which at-the-limit moments are allowed to teach SMax (1.0.8). DELIBERATELY TWO CLASSES, not one shared one: the owner asked for the same mechanism on both channels with separate implementations, so either side can be disabled alone. Full specification in `docs\slip-smax-crossing-gate-design.md`. |
 | `GripLearner.cs` / `KeyedGripLearner.cs` / `GripLearnerKeyMigration.cs` | The car-relative learned-peak reference, keyed per game+car+source(+surface), with migration for older persisted key shapes. |
 | `KeyedScaleLearner.cs` | Per-source scale calibration, anchored to a shared physical reference. |
 | `SourceIdentity.cs` | Computes a stable composite key from a channel's four Source/ScriptType fields. |
@@ -575,7 +932,9 @@ rather than merely the same formulas.
 |---|---|
 | `GForceEngine.cs` / `GForceOutput.cs` / `GForcePublishedNames.cs` | The washout-style G-force engine and its published 8-channel output. |
 | `GForceMaxLearner.cs` | Per-game/per-car learned acceleration/braking maxima via `RobustBandEstimator` over a 2-minute real-time window, no minimum-sample gate. |
-| `GForceShake.cs` | The "Integrate Wheel Lock and Slip" shake modulation. |
+| `GForceShake.cs` | The "Integrate Wheel Lock and Slip" shake modulation: band placement (shift-not-squash) and the 1.0.8 `SineHoldWave` - one sine with a hold at each extreme, period always 1/f. |
+| `ShakeFeeling.cs` | How the two pads of a pair relate while shaking (1.0.8) - opposite phase (shipped default), same phase, or blending. Replaces the retired "Both-sides blend (%)" spinner; `Blending` pins its own 50% hold and the UI hides the hold control for it. |
+| `ShakeApplyMode.cs` | How that shake is spread across the eight pads (1.0.8) - per-channel, all-channels-following-G-force, all-channels-lock/slip-only, or **higher-of-G-force-or-lock/slip** (the shipped default): each pad travels from zero up to whichever cue is louder, so neither can mask the other. The two wheel-driven modes use a ZERO FLOOR (the wheel value is the whole travel); the two G-force-centred ones keep shaking around the pad's current level. |
 
 ### `QAdvanceFeedback\Core\Health\` (resilience model support)
 
@@ -626,7 +985,8 @@ Version bump.
 | `DefaultWheelSources.cs` | Builds the shipped default source text for Plugin Internal mode (a plain reference to Layer 3's own Raw property). |
 | `KeyDataPointSettings.cs` | Manual SMax/S90/S75 (Perfect/Great/Good for Slip), stored per slot = (mode, game, source); shipped per-source-type defaults; validation. |
 | `ApplyDirtyState.cs` | Tracks whether the settings UI has unsaved edits, for the Apply button's enabled state. |
-| `SettingsControl.xaml` / `SettingsControl.xaml.cs` | The one WPF settings control (four tabs). |
+| `SettingsControl.xaml` / `SettingsControl.xaml.cs` | The one WPF settings control (four tabs). Its dirty tracking is a REFLECTIVE sweep over the generated `x:Name` fields, not an enumerated list - the enumerated list had fallen 52 controls behind the XAML, leaving Apply greyed out after editing any of them. |
+| `SettingsControl.GForceTest.cs` | The shake preview graph and the Test Effect panel (1.0.8): a drag-a-ball G-force pad and Lock/Slip bar feeding a private `GForceEngine`, re-fed from the page's live state each frame so every G-Force setting (the Lock/Slip scales included) applies. Produces nothing at all while its toggle is off. |
 
 ## Settings screenshot capture rule (standing rule)
 

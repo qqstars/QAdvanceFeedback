@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows.Controls;
 using System.Windows.Media;
 using GameReaderCommon;
@@ -304,6 +304,54 @@ namespace QAdvanceFeedback
         /// from every frame - matching the sibling project's own convention.</summary>
         public QAdvanceFeedbackSettings Settings => _settings;
 
+        /// <summary>
+        /// Set while the settings page's Test Effect panel is driving the eight G-Force channels by
+        /// hand. Volatile because it is written from the WPF dispatcher thread and read from SimHub's
+        /// own data thread.
+        /// </summary>
+        private volatile bool _testEffectActive;
+
+        /// <summary>
+        /// Publishes one hand-driven G-Force frame to <c>QAdvanceFeedback.GForce.*</c>, so a driver can
+        /// set their ShakeIt levels against the real properties with no game running.
+        /// <para/>
+        /// WHY THIS EXISTS AT ALL: the panel drives a private <see cref="GForceEngine"/> inside the
+        /// settings control, which moved the on-screen readout but published nothing - and with no game
+        /// running <see cref="DataUpdate"/> returns before publishing anything either, so ShakeIt saw
+        /// null on every channel. It writes through the SAME <see cref="PropertyPublisher.UpdateGForce"/>
+        /// the live path uses; the publisher's properties are pull-delegates over that backing array, so
+        /// a value written here is what SimHub reads next, with or without a running game.
+        /// <para/>
+        /// Null CLEARS the override and hands the channels back to the live pipeline. Both the toggle
+        /// going off and the settings page unloading must call it that way, or a closed page would pin
+        /// the outputs forever.
+        /// </summary>
+        public void PublishTestEffect(GForceOutput output)
+        {
+            try
+            {
+                if (_publisher == null) return;
+
+                if (output != null)
+                {
+                    _testEffectActive = true;
+                    _publisher.UpdateGForce(output);
+                }
+                else
+                {
+                    // Order matters: stop claiming the channels BEFORE zeroing them, so a live frame
+                    // arriving in between overwrites the zeroes rather than being suppressed by them.
+                    _testEffectActive = false;
+                    _publisher.UpdateGForce(GForceOutput.Empty);
+                }
+            }
+            catch (Exception e)
+            {
+                _testEffectActive = false;
+                SimHub.Logging.Current.Error("QAdvanceFeedback: PublishTestEffect failed - " + e);
+            }
+        }
+
         public void Init(PluginManager pluginManager)
         {
             try
@@ -430,8 +478,8 @@ namespace QAdvanceFeedback
             _runtimeStore.LoadLockAnchors(out var lockAnchorsData);
             _normalizedEngine.LockAnchors.ImportAll(lockAnchorsData);
 
-            _runtimeStore.LoadGForceLearners(out var accelMaxima, out var decelMaxima);
-            _settings.GForce.ImportLearnedMaxima(accelMaxima, decelMaxima);
+            _runtimeStore.LoadGForceLearners(out var accelMaxima, out var decelMaxima, out var latMaxima);
+            _settings.GForce.ImportLearnedMaxima(accelMaxima, decelMaxima, latMaxima);
 
             RebuildProjectedEngine();
             _settings.GForce.ApplyTo(_gforceEngine);
@@ -625,6 +673,7 @@ namespace QAdvanceFeedback
 
                 double accelMaxG = _settings.GForce.EffectiveAccelMaxG(gameId, carId, sample.FrameTime);
                 double decelMaxG = _settings.GForce.EffectiveDecelMaxG(gameId, carId, sample.FrameTime);
+                double latMaxG = _settings.GForce.EffectiveLatMaxG(gameId, carId, sample.FrameTime);
                 // MODE-DEPENDENT TRANSITION SCALING (docs\robust-auto-gforce-report.md) - blended by the
                 // SAME continuous ramp weight EffectiveAccelMaxG/EffectiveDecelMaxG themselves just used,
                 // so neither the max nor the scale ever steps relative to the other.
@@ -642,8 +691,13 @@ namespace QAdvanceFeedback
                 // see ProjectedWheelLockSlipResult's own remarks.
                 GForceOutput gforce = _gforceEngine.Compute(
                     sample, accelMaxG, decelMaxG, projected.LockAllWithoutPulse, projected.SlipAllWithoutPulse,
-                    accelTransitionScale, decelTransitionScale);
-                _publisher.UpdateGForce(gforce);
+                    accelTransitionScale, decelTransitionScale, latMaxG);
+
+                // THE TEST EFFECT PANEL WINS while it is running (see PublishTestEffect). Everything
+                // else this frame still happens - the learners must not be starved just because the
+                // settings page is open - only the eight published channels are handed over, so the two
+                // cannot fight over them frame by frame.
+                if (!_testEffectActive) _publisher.UpdateGForce(gforce);
 
                 // DIRECTION FIX (docs\gforce-direction-fix-report.md): feed the AUTO-mode learners the
                 // SAME direction-correct attribution _gforceEngine.Compute (just above) used
@@ -671,6 +725,13 @@ namespace QAdvanceFeedback
                         else if (gforceDirection == LongitudinalMotionState.Slowing)
                             _settings.GForce.ObserveDecelG(gameId, carId, magnitude, sample.FrameTime);
                     }
+
+                    // LATERAL (v1.0.8) - fed its own learner, gated by the same learning-validity check.
+                    // UNLIKE the longitudinal pair there is no direction to resolve: cornering left and
+                    // right are the same grip question, so the absolute magnitude is what is observed.
+                    double? latG = sample.New?.LateralG;
+                    if (latG.HasValue && ClampMath.IsFinite(latG.Value))
+                        _settings.GForce.ObserveLatG(gameId, carId, Math.Abs(latG.Value), sample.FrameTime);
                 }
 
                 // ---- Runtime persistence: in-memory cache only every frame (see RuntimeStore's own
@@ -698,8 +759,8 @@ namespace QAdvanceFeedback
                 _runtimeStore.SaveSlipScaleCrossCarSeed(_normalizedEngine.SlipScaleLearner.ExportCrossCarSeeds());
                 // FEATURE C (RuntimeDocument Version 8) - WheelLock's own learned S75/S90 anchors.
                 _runtimeStore.SaveLockAnchors(_normalizedEngine.LockAnchors.ExportAll());
-                _settings.GForce.ExportLearnedMaxima(out var accelSnapshot, out var decelSnapshot);
-                _runtimeStore.SaveGForceLearners(accelSnapshot, decelSnapshot);
+                _settings.GForce.ExportLearnedMaxima(out var accelSnapshot, out var decelSnapshot, out var latSnapshot);
+                _runtimeStore.SaveGForceLearners(accelSnapshot, decelSnapshot, latSnapshot);
 
                 // ---- Diagnostics (always computed; SimHub only sees them if EnableDiagnostics was on
                 // at Init - see PropertyPublisher.Register).
