@@ -372,7 +372,26 @@ namespace QAdvanceFeedback.Core.Normalized
         public KeyedScaleLearner(bool? isLockChannel = null)
         {
             _isLockChannel = isLockChannel;
+            // Slip shipped this guard first; Lock's is switched on by the engine when ITS crossing gate
+            // is enabled. Defaulting from the channel keeps every direct-construction caller (and every
+            // existing test) on exactly the behaviour it had before the flag existed.
+            SecondaryHandoverRequiresPrimaryEvidence = isLockChannel == false;
         }
+
+        /// <summary>
+        /// Whether the Tier-1 hand-over from the shipped reference to this key's own GENERAL-distribution
+        /// percentile must wait until the channel has seen its own physical limit - see
+        /// <see cref="Tier1ColdCeiling"/> for the failure this prevents (a standing start or a sustained
+        /// lock-up makes full scale genuinely the commonest reading, so the percentile IS 100, and
+        /// adopting it as SMax is what was wrong).
+        /// <para/>
+        /// SETTABLE PER CHANNEL, and set by the engine from each channel's own crossing-gate switch, so
+        /// that turning one channel's gate off really does return THAT channel to its previous behaviour
+        /// without touching the other. This is the second half of each gate: the crossing rule alone
+        /// cannot fix the defect, because the at-limit distribution is not the path the ceiling reaches
+        /// 100 through.
+        /// </summary>
+        public bool SecondaryHandoverRequiresPrimaryEvidence { get; set; }
 
         /// <summary>
         /// This key's Tier-1 (nothing to borrow) cold ceiling: the shipped per-source reference, ramped
@@ -399,6 +418,33 @@ namespace QAdvanceFeedback.Core.Normalized
 
             if (!secondaryCeiling.HasValue) return hasShipped ? shippedSMax : (double?)null;
 
+            // ---- SLIP: THE SECONDARY MAY NOT BE ADOPTED WITHOUT PRIMARY EVIDENCE ----
+            //
+            // (docs\slip-smax-crossing-gate-design.md - the second half of the standing-start fix, found
+            // by a test while implementing the first half.) The crossing gate stops a launch teaching
+            // the PRIMARY at-limit distribution, but the secondary is the GENERAL distribution: every
+            // engaged frame, unconditionally. Ten seconds of full wheelspin makes 100 genuinely the
+            // commonest reading, so this key's own percentile IS 100 - the statistic is correct, and
+            // adopting it as the cold SMax is what is wrong. Measured on a synthetic launch before this
+            // guard existed, the published Slip ceiling reached 100 with the gate fully active, and
+            // switching the gate off changed nothing at all: the primary path was not even the
+            // mechanism, so the crossing gate alone could never have fixed the reported defect.
+            //
+            // Consistent with this class's own settled position - see LearnedCeilingForKey's "THE FIRST
+            // FIX (SUPERSEDED)" note, where the general percentile was rejected AS a definition of SMax
+            // because it measures how RARE a reading is rather than what the car was doing. It survives
+            // only as the Tier-1 cold ramp, and a launch is precisely the moment that ramp lies. So the
+            // hand-over now waits for evidence that this channel has actually seen its own traction
+            // limit; until then Slip's Tier-1 value stays the shipped reference, which the cross-channel
+            // fallback above then adjusts using Lock's real, same-session evidence.
+            //
+            // LOCK IS DELIBERATELY UNAFFECTED - this scales by 1.0 for the Lock channel and for a
+            // learner constructed without the flag. Lock has the corner-local at-limit detector, does
+            // not suffer the launch failure, and keeps its existing hand-over exactly.
+            double primaryEvidence = SecondaryHandoverRequiresPrimaryEvidence
+                ? PhysicalAnchorReadinessWeight(key)
+                : 1.0;
+
             if (!hasShipped)
             {
                 // NO SHIPPED REFERENCE for this source, so the cold state is plain identity - which is
@@ -406,10 +452,10 @@ namespace QAdvanceFeedback.Core.Normalized
                 // measured percentile keeps that hand-off continuous; returning the percentile outright
                 // was a 10-point step the frame it became available.
                 return CanonicalAtLimitAnchor
-                       + (secondaryCeiling.Value - CanonicalAtLimitAnchor) * ReadinessWeight(key);
+                       + (secondaryCeiling.Value - CanonicalAtLimitAnchor) * ReadinessWeight(key) * primaryEvidence;
             }
 
-            double weight = ShippedHandoverWeight(secondary.PositiveSampleCount);
+            double weight = ShippedHandoverWeight(secondary.PositiveSampleCount) * primaryEvidence;
             return shippedSMax + (secondaryCeiling.Value - shippedSMax) * weight;
         }
 
@@ -440,6 +486,160 @@ namespace QAdvanceFeedback.Core.Normalized
         /// (the common case - see docs\anchor-rescale-report.md's own worked numbers), preserving
         /// headroom for "past the limit" above this anchor.</summary>
         public const double CanonicalAtLimitAnchor = 80.0;
+
+        // ---- CROSS-CHANNEL CEILING FALLBACK (docs\slip-smax-crossing-gate-design.md, section 7) ----
+        //
+        // WHY THIS EXISTS. Once Slip's SMax is taught only on traction crossings
+        // (<see cref="SlipCrossingGate"/>), Slip can go a long time - occasionally a whole session -
+        // with little or no evidence of its own. Replayed across the 17-log corpus, 5 of 25 sessions
+        // produced under 100 qualifying frames and ONE produced NONE, so a Slip channel that only ever
+        // publishes its own evidence would sit on a shipped constant indefinitely. Meanwhile the Lock
+        // channel, driven by the same car on the same lap, HAS matured.
+        //
+        // WHAT IT DOES. It splits the existing cold-start ANCHOR (a borrowed tier reference, or the
+        // shipped constant at Tier 1) into two parts: Lock's own at-limit evidence, and that same
+        // anchor. Nothing else about the ceiling changes - the outer
+        // `ColdWarmBlend.Blend(anchor, learned, c)` is untouched, so this is algebraically the owner's
+        // own three-way specification:
+        //
+        //     wSlip   = c
+        //     wLock   = tau * (cL / 2) * (1 - c)
+        //     wAnchor = (1 - tau * cL / 2) * (1 - c)
+        //
+        // with the Lock/anchor split folded into the anchor term (identical result, one insertion
+        // point instead of a parallel blend). The weights sum to 1 by construction, and at cL == 0 -
+        // or tau == 0 - this collapses EXACTLY to the previous two-way formula, so behaviour is
+        // provably unchanged wherever Lock has nothing to contribute.
+
+        /// <summary>
+        /// Lock's SMax divided by this before it may contribute to Slip's anchor. NOT OPTIONAL, and
+        /// the single most important number in this feature.
+        /// <para/>
+        /// The two channels measure different physical events and sit on genuinely different scales:
+        /// a locked wheel drives |slipRatio| to 1.0 while a spinning rear reaches ~0.39, so Lock's
+        /// ceiling is legitimately the larger. Replayed across the whole corpus the median Lock/Slip
+        /// ratio is 1.52. Injecting Lock's RAW number instead of a corrected one was measured and is
+        /// actively harmful - on the 17 cold sessions it took the median error from 25% (shipped
+        /// constant alone) to 50%, beating the old behaviour in only 4 of 17. With the divisor the
+        /// same test reads 22% median / 31% mean, better in 13 of 17.
+        /// <para/>
+        /// 1.6 is the middle of a flat 1.5-1.75 optimum and is consistent with the independently
+        /// measured 1.52. A per-(game, car, source) LEARNED ratio - recorded whenever both channels
+        /// hold a confident SMax at once, persisted and borrowable like every other tier reference -
+        /// is the natural successor and is deliberately NOT built yet: it needs both channels
+        /// confident simultaneously, which is exactly the condition this fallback exists to cover.
+        /// </summary>
+        public const double LockToSlipRatio = 1.6;
+
+        /// <summary>
+        /// The most of the non-Slip share Lock may ever take, at full Lock confidence and Tier 1.
+        /// <para/>
+        /// This is the owner's own "/2" - even a completely confident Lock is still describing a
+        /// different event, so half the anchor share is reserved for the value that is at least
+        /// nominally about Slip. It also bounds the damage from the failure mode this cannot detect:
+        /// <see cref="CeilingHandoverConfidence"/> reports confidence, not correctness, and the corpus
+        /// contains sessions where LOCK is the broken channel (settled ceilings of 28.5 and 23.1
+        /// against neighbours in the 70-90 band). Nothing here notices that; the cap and
+        /// <see cref="TierTrust"/> merely limit how far it can pull Slip.
+        /// </summary>
+        public const double CrossChannelLockShareCap = 0.5;
+
+        /// <summary>
+        /// How much Lock's evidence is trusted relative to what it would displace, by the tier of
+        /// Slip's own anchor.
+        /// <para/>
+        /// MEASURED, not assumed. Where Slip has a REAL borrowed ceiling from a previous session
+        /// (Tier 3/4), Lock adds noise rather than information: across the 7 multi-session cases in
+        /// the corpus, borrowed-alone scored 16% median error and adding Lock scored 17-31%. Where
+        /// Slip has only the shipped constant (Tier 1), Lock is genuine same-session, same-car
+        /// evidence and clearly wins (43% -&gt; 31% mean error). So Lock's share tracks how good the
+        /// thing it is displacing is, which the tier system already knows.
+        /// </summary>
+        private static double TierTrust(ColdStartTier tier)
+        {
+            switch (tier)
+            {
+                case ColdStartTier.Tier4: return 0.2;   // same game AND car - only the surface differs
+                case ColdStartTier.Tier3: return 0.4;   // same game, different car
+                case ColdStartTier.Tier2: return 0.7;   // a different game entirely
+                default: return 1.0;                    // Tier 1 - nothing to borrow at all
+            }
+        }
+
+        /// <summary>
+        /// Lock's learner, when THIS instance is the Slip channel - see the cross-channel fallback
+        /// remarks above. Null on the Lock learner itself (Lock never borrows from Slip: Lock has the
+        /// corner-local at-limit detector and does not suffer the starvation this fixes) and null
+        /// wherever a test or a caller has not wired one, in which case every path below is a no-op.
+        /// </summary>
+        private KeyedScaleLearner _crossChannelLockLearner;
+
+        /// <summary>
+        /// The source identity LOCK is keyed by - which is NOT the one Slip is keyed by.
+        /// <para/>
+        /// Each channel's identity is <see cref="SourceIdentity.Compute"/> over that channel's OWN four
+        /// configured wheel properties, so the default configuration alone produces
+        /// <c>Plain:WheelLock.Raw.FrontLeft~...</c> for Lock and <c>Plain:WheelSlip.Raw.FrontLeft~...</c>
+        /// for Slip - different strings for the same physical source choice. Querying Lock's learner
+        /// with Slip's identity therefore finds nothing at all, and the whole fallback would be a
+        /// permanent, silent no-op in the shipped plugin while still passing any test that happened to
+        /// pass one identity to both channels. Set per frame by the engine; falls back to Slip's own
+        /// identity when never set, which is the correct behaviour for a caller that genuinely uses one
+        /// identity for both.
+        /// </summary>
+        private string _crossChannelLockIdentity;
+
+        /// <summary>Tells this (Slip) learner which identity to look Lock up under - see
+        /// <see cref="_crossChannelLockIdentity"/>. Cheap and idempotent; called every frame.</summary>
+        public void SetCrossChannelLockSourceIdentity(string lockSourceIdentity)
+        {
+            if (!string.IsNullOrEmpty(lockSourceIdentity)) _crossChannelLockIdentity = lockSourceIdentity;
+        }
+
+        /// <summary>
+        /// Wires Lock's learner in as this (Slip) learner's cross-channel fallback source. Idempotent.
+        /// <para/>
+        /// Refuses to attach to a Lock learner, and refuses to attach a learner to itself: both would
+        /// be a wiring mistake whose symptom (a ceiling quietly folded into its own anchor) is close to
+        /// impossible to spot in a log.
+        /// </summary>
+        public void AttachCrossChannelLockReference(KeyedScaleLearner lockLearner)
+        {
+            if (lockLearner == null || ReferenceEquals(lockLearner, this)) return;
+            if (_isLockChannel == true) return;
+            _crossChannelLockLearner = lockLearner;
+        }
+
+        /// <summary>
+        /// Folds Lock's scale-corrected at-limit evidence into Slip's cold-start anchor. Returns
+        /// <paramref name="anchor"/> unchanged whenever there is no attached Lock learner, no Lock
+        /// evidence for this key, or zero Lock confidence - so the no-op case really is a no-op.
+        /// <para/>
+        /// KEYING. Lock is queried under LOCK'S OWN identity (see
+        /// <see cref="_crossChannelLockIdentity"/>), never Slip's - the two are different strings even
+        /// for the same configured source, and using Slip's would silently find nothing.
+        /// </summary>
+        private double ApplyCrossChannelFallback(
+            string gameId, string carId, string sourceIdentity, double anchor, ColdStartTier tier)
+        {
+            if (_crossChannelLockLearner == null) return anchor;
+
+            string lockIdentity = _crossChannelLockIdentity ?? sourceIdentity;
+            double? lockLevel = _crossChannelLockLearner.PhysicalAnchorLevel(
+                gameId, carId, lockIdentity, PhysicalAnchorCeilingPercentile);
+            // IsFinite as well as > 0: `NaN <= 0.0` is FALSE, so a bare `<= 0.0` test lets a NaN through
+            // and the blend below would then publish a NaN ceiling straight into Rescale. Not reachable
+            // today (the value is a histogram key, always finite) but the guard is free and the failure
+            // would be silent and total.
+            if (!lockLevel.HasValue || !ClampMath.IsFinite(lockLevel.Value) || lockLevel.Value <= 0.0) return anchor;
+
+            double lockConfidence = _crossChannelLockLearner.CeilingHandoverConfidence(gameId, carId, lockIdentity);
+            double share = ClampMath.To01(TierTrust(tier) * lockConfidence * CrossChannelLockShareCap);
+            if (share <= 0.0) return anchor;
+
+            double lockContribution = lockLevel.Value / LockToSlipRatio;
+            return anchor + share * (lockContribution - anchor);
+        }
 
         /// <summary>
         /// A discrete "is this worth labelling isPrimaryTier for persistence" cutoff - see
@@ -731,6 +931,34 @@ namespace QAdvanceFeedback.Core.Normalized
         /// <see cref="ResolveReference"/> has genuine Tier-4 (same game+car, different surface) candidates
         /// to find - this is a purely ADDITIVE side effect that never disturbs the default key's own
         /// already-tuned calibration.</param>
+        /// <summary>
+        /// Records that an at-limit CANDIDATE frame was seen and carried no usable evidence - the
+        /// non-crossing half of the Slip traction gate (docs\slip-smax-crossing-gate-design.md).
+        /// <para/>
+        /// Advances the distribution's own <see cref="OnlineDistributionLearner.Count"/> and its decay
+        /// clocks, so <see cref="CeilingHandoverConfidence"/> and the forgetting window keep running at
+        /// the rate they ran at before the gate existed, while contributing NOTHING to the value.
+        /// <para/>
+        /// DELIBERATELY NOT <c>ObserveAtPhysicalLimit(..., 0.0)</c>, which is a no-op: that method
+        /// rejects a non-positive weight outright, and the rejection is correct there (a zero weight
+        /// through the value path is a caller bug). This is the explicit opposite intent.
+        /// <para/>
+        /// DISPERSION IS DELIBERATELY NOT UPDATED. <see cref="_hotDispersion"/> measures the spread of
+        /// the evidence the ceiling is actually drawn from, and feeds the confidence ramp. Folding
+        /// launch readings into it would report scatter in data that is not being used, and would drag
+        /// the ramp down for evidence quality that has nothing to do with the frames being trusted.
+        /// <para/>
+        /// Not called for Lock, whose corner-local detector reports a CONTINUOUS confidence rather than
+        /// a qualify/disqualify decision, and which therefore has no "candidate that counts for
+        /// nothing" case to record.
+        /// </summary>
+        public void ObserveNonQualifyingAtPhysicalLimit(
+            string gameId, string carId, string sourceIdentity, string surfaceBucket = "")
+        {
+            GetOrCreate(_physicalAnchor, gameId, carId, sourceIdentity, surfaceBucket)
+                .AddNonQualifyingObservation();
+        }
+
         public void ObserveAtPhysicalLimit(string gameId, string carId, string sourceIdentity, double rawValue, double observationWeight = 1.0, string surfaceBucket = "")
         {
             if (!ClampMath.IsFinite(rawValue) || rawValue <= 0.0) return;
@@ -851,8 +1079,18 @@ namespace QAdvanceFeedback.Core.Normalized
 
                 if (!persisted.HasValue) continue;
 
+                // POSITIVE samples, not Count. isPrimaryTier claims "this persisted ceiling came from
+                // physically-anchored evidence", and the ceiling is only primary-derived when
+                // GetPercentile actually returned a value - which requires MinPhysicalAnchorSamples
+                // POSITIVE (weight-bearing) samples, not merely that many CALLS. The distinction was
+                // always real for Lock, whose corner-local detector reports a continuous confidence, so
+                // Count could clear the bar while the weighted evidence behind it did not. It became
+                // load-bearing with the Slip crossing gate: ObserveNonQualifyingAtPhysicalLimit advances
+                // Count with no evidence at all, so a starved key would otherwise be persisted as a
+                // primary-tier reference for the NEXT session to borrow - exactly the wrong thing to
+                // hand a cold channel.
                 bool isPrimaryTier = Find(_physicalAnchor, key) is OnlineDistributionLearner primaryLearner
-                    && primaryLearner.Count >= MinPhysicalAnchorSamples;
+                    && primaryLearner.PositiveSampleCount >= MinPhysicalAnchorSamples;
                 export[key] = new ScaleLearnerState { ColdCeiling = persisted.Value, ColdIsPrimaryTier = isPrimaryTier };
             }
             return export;
@@ -1030,6 +1268,13 @@ namespace QAdvanceFeedback.Core.Normalized
                     anchor = Tier1ColdCeiling(key, sourceIdentity) ?? CanonicalAtLimitAnchor;
                 }
 
+                // CROSS-CHANNEL CEILING FALLBACK (see this class's own remarks above LockToSlipRatio).
+                // Applied to the ANCHOR only, never to `learned` - this changes what the ceiling falls
+                // back TO while this key's own evidence is thin, and contributes exactly nothing once
+                // that evidence is complete (the blend weight below drives the anchor's whole share to
+                // zero). No-op on the Lock learner and whenever Lock has no evidence for this key.
+                anchor = ApplyCrossChannelFallback(gameId, carId, sourceIdentity, anchor, tier);
+
                 // ---- WHAT THE CEILING IS LEARNED FROM (root-caused from the owner's own 4-session
                 // c_1_7_1_e_d capture; see this class's own remarks for the full derivation).
                 //
@@ -1120,7 +1365,16 @@ namespace QAdvanceFeedback.Core.Normalized
             if (zeroEvidenceTier != ColdStartTier.Tier1)
             {
                 isPrimaryTier = false; // borrowed, not this key's own primary evidence.
-                return zeroEvidenceTier == ColdStartTier.Tier2 ? Math.Max(zeroEvidenceCeiling, CanonicalAtLimitAnchor) : zeroEvidenceCeiling;
+                double borrowed = zeroEvidenceTier == ColdStartTier.Tier2
+                    ? Math.Max(zeroEvidenceCeiling, CanonicalAtLimitAnchor)
+                    : zeroEvidenceCeiling;
+                // CROSS-CHANNEL CEILING FALLBACK - the zero-local-evidence twin of the call in the
+                // primary branch above. This is the case the fallback was actually built for: Slip has
+                // nothing of its own at all, which under the crossing gate can persist for a whole
+                // session. The returned value IS the anchor here (there is no learned half to blend
+                // toward), so the same call applies to the whole published number rather than to a
+                // share of it - which is exactly the intent, and still bounded by TierTrust.
+                return ApplyCrossChannelFallback(gameId, carId, sourceIdentity, borrowed, zeroEvidenceTier);
             }
 
             // GENUINE TIER 1 - nothing to borrow. Tier1ColdCeiling returns this key's own secondary
@@ -1133,7 +1387,14 @@ namespace QAdvanceFeedback.Core.Normalized
             // (plain identity - the pre-existing "cold state must be identity" contract) when the
             // secondary is not ready either. Rescale's own null-check applies identity on null.
             isPrimaryTier = false;
-            return Tier1ColdCeiling(key, sourceIdentity);
+            double? tier1 = Tier1ColdCeiling(key, sourceIdentity);
+            // NULL IS PRESERVED DELIBERATELY. A null here is the project's "cold state must be plain
+            // identity" contract (Rescale applies identity on null) - not a number this fallback may
+            // fill in. Lock's evidence adjusts a ceiling that exists; it does not manufacture one where
+            // the channel has decided it has nothing to say.
+            return tier1.HasValue
+                ? ApplyCrossChannelFallback(gameId, carId, sourceIdentity, tier1.Value, ColdStartTier.Tier1)
+                : tier1;
         }
 
         /// <summary>

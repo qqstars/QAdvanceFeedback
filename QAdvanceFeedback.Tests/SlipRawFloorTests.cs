@@ -39,14 +39,47 @@ namespace QAdvanceFeedback.Tests
         private const double HighRaw = 100.0;
         private const double ProbeRaw = 50.0;
 
+        /// <summary>
+        /// Drives Slip's learned SMax toward <paramref name="atLimitRaw"/> using TRACTION CROSSINGS -
+        /// the source climbing while achieved G falls away from the car's peak.
+        /// <para/>
+        /// These tests used to warm the ceiling by holding a CONSTANT source at a constant G for 400
+        /// frames. That stopped working, correctly, when <see cref="SlipCrossingGate"/> arrived
+        /// (docs\slip-smax-crossing-gate-design.md): a constant source at constant G is precisely the
+        /// signature of a standing start, and Slip no longer accepts it as evidence of a traction
+        /// limit. Nothing about what these tests ASSERT has changed - only how the precondition they
+        /// each need is arranged, since "Slip has learned a ceiling" now means something narrower than
+        /// it used to.
+        /// <para/>
+        /// The G fall is deliberately shallow (0.015/frame, so 0.075 over the gate's own 5-frame trend
+        /// against its -0.05 bar) - enough to qualify as a crossing while staying above the 85%-of-peak
+        /// ratio that makes the frame an at-limit CANDIDATE in the first place.
+        /// </summary>
+        private static void WarmSlipWithCrossings(NormalizedWheelLockSlipEngine engine, double peak, double atLimitRaw, int cycles = 40)
+        {
+            // Establish this car's own peak G first, so the at-limit ratio has something to measure against.
+            for (int i = 0; i < 30; i++)
+                engine.Compute(AcceleratingSample(peak), Corners.Zero, Corners.Uniform(atLimitRaw));
+
+            for (int c = 0; c < cycles; c++)
+            {
+                // Past the peak of the slip curve: more slip buying less grip.
+                for (int i = 0; i < 10; i++)
+                    engine.Compute(AcceleratingSample(peak - i * 0.015), Corners.Zero,
+                                   Corners.Uniform(Math.Max(1.0, atLimitRaw - 9.0 + i)));
+                // Back to the top of the band - grip recovering, no crossing on the way.
+                for (int i = 0; i < 10; i++)
+                    engine.Compute(AcceleratingSample(peak - (9 - i) * 0.015), Corners.Zero, Corners.Uniform(atLimitRaw));
+            }
+        }
+
         [Fact]
         public void SlipSeverityNeverReadsBelowTheSourcesOwnBasis()
         {
             var engine = new NormalizedWheelLockSlipEngine();
             const double peak = 1.2;
 
-            for (int i = 0; i < 400; i++)
-                engine.Compute(AcceleratingSample(peak), Corners.Zero, Corners.Uniform(HighRaw));
+            WarmSlipWithCrossings(engine, peak, HighRaw);
 
             engine.Compute(AcceleratingSample(peak), Corners.Zero, Corners.Uniform(ProbeRaw));
             engine.Compute(AcceleratingSample(peak), Corners.Zero, Corners.Uniform(ProbeRaw));
@@ -95,8 +128,7 @@ namespace QAdvanceFeedback.Tests
             const double peak = 1.2;
             const double lowRaw = 20.0;
 
-            for (int i = 0; i < 400; i++)
-                engine.Compute(AcceleratingSample(peak), Corners.Zero, Corners.Uniform(lowRaw));
+            WarmSlipWithCrossings(engine, peak, lowRaw);
 
             engine.Compute(AcceleratingSample(peak), Corners.Zero, Corners.Uniform(lowRaw));
             engine.Compute(AcceleratingSample(peak), Corners.Zero, Corners.Uniform(lowRaw));
@@ -118,8 +150,7 @@ namespace QAdvanceFeedback.Tests
             var engine = new NormalizedWheelLockSlipEngine();
             const double peak = 1.2;
 
-            for (int i = 0; i < 400; i++)
-                engine.Compute(AcceleratingSample(peak), Corners.Zero, Corners.Uniform(HighRaw));
+            WarmSlipWithCrossings(engine, peak, HighRaw);
             double? afterHighEvidence = engine.SlipScaleCeiling;
 
             Assert.True(afterHighEvidence.HasValue, "Slip must have learned a ceiling at all");

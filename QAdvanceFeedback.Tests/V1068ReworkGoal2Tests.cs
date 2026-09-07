@@ -64,13 +64,30 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void Lock_severity_reaches_near_the_max_grip_anchor_within_one_realistic_session_under_continuously_varying_G()
         {
+            // The point of this test is that Lock matures under CONTINUOUSLY VARYING, never-quiet
+            // driving rather than only under a repeating fixture. It used to vary G while holding the
+            // source at a constant 50, which the Lock crossing gate correctly refuses to learn from
+            // (a constant source is not a wheel going past its friction peak). The variation now lives
+            // in the source too - the same never-settling character, arranged so it can be learned.
             var engine = new NormalizedWheelLockSlipEngine();
             double g = 2.0;
             double lastAll = 0.0;
-            for (int i = 0; i < 260; i++)
+            for (int cycle = 0; cycle < 12; cycle++)
             {
-                g += 0.01; // continuously, slightly rising - never settles, never repeats exactly
-                lastAll = engine.Compute(TestFrames.BrakingSampleFor(g), TestFrames.Corners50, TestFrames.Corners0).LockAll;
+                for (int i = 0; i < 6; i++)
+                {
+                    g += 0.01;   // still rising overall, never repeating exactly
+                    lastAll = engine.Compute(
+                        TestFrames.BrakingSampleFor(g - i * 0.02),
+                        QAdvanceFeedback.Core.Corners.Uniform(45.0 + i),
+                        TestFrames.Corners0).LockAll;
+                }
+                for (int i = 0; i < 66; i++)
+                {
+                    g += 0.01;
+                    lastAll = engine.Compute(
+                        TestFrames.BrakingSampleFor(g), TestFrames.Corners50, TestFrames.Corners0).LockAll;
+                }
             }
 
             Assert.True(lastAll >= 60.0,
@@ -172,6 +189,59 @@ namespace QAdvanceFeedback.Tests
             var newFrame = new QAdvanceFeedback.Core.TelemetryFrame(
                 groundSpeedKmh: 100.0, longitudinalG: -gMagnitude, brakePercent: brakePercent);
             return new QAdvanceFeedback.Core.TelemetrySample(newFrame, oldFrame, System.DateTime.UtcNow, System.TimeSpan.FromMilliseconds(16));
+        }
+
+        /// <summary>
+        /// Drives a Lock channel's learned SMax toward <paramref name="atLimitRaw"/> through BRAKING
+        /// TRACTION CROSSINGS - the lock source climbing while achieved G falls away from this car's own
+        /// peak, which is the only evidence <c>LockCrossingGate</c> accepts.
+        /// <para/>
+        /// SHARED BY EVERY TEST THAT USED TO WARM LOCK WITH A CONSTANT TRACE. Holding a constant source
+        /// at a constant G for 300 frames stopped teaching anything when the Lock crossing gate was
+        /// enabled (2026-09-05), and correctly so: a wheel at an unchanging lock level under unchanging
+        /// deceleration is not a wheel going past its friction peak. Nothing those tests ASSERT has
+        /// changed - only the way they arrange the precondition, since "Lock has learned a ceiling" now
+        /// means something narrower. Kept in one place so the shape stays consistent across the five
+        /// files that need it.
+        /// <para/>
+        /// The G fall is shallow (0.5% of peak per frame, so 2.5% over the gate's 5-frame trend against
+        /// its -0.05 g bar) - enough to qualify while staying inside the corner-local detector's own
+        /// notion of "at the limit", which is what arms Lock's gate.
+        /// </summary>
+        public static void WarmLockWithCrossings(
+            QAdvanceFeedback.Core.Normalized.NormalizedWheelLockSlipEngine engine,
+            double peak, double atLimitRaw, int cycles = 40,
+            string gameId = "", string carId = "", string lockSourceIdentity = "")
+        {
+            const int rise = 6;        // TrendFrames + 1: the crossing fires on the last of these
+            const int recover = 66;    // longer than the 1 s hold, so the next cycle can arm again
+            double step = peak * 0.005;
+
+            // Establish this car's own peak G first, so the at-limit detector has a reference.
+            for (int i = 0; i < 30; i++)
+                engine.Compute(BrakingSampleFor(peak), QAdvanceFeedback.Core.Corners.Uniform(atLimitRaw),
+                    QAdvanceFeedback.Core.Corners.Zero, gameId, carId, lockSourceIdentity: lockSourceIdentity);
+
+            for (int c = 0; c < cycles; c++)
+            {
+                // Past the friction peak: more lock buying less braking. The ramp is arranged to LAND
+                // EXACTLY ON atLimitRaw at the detection frame, so the onset snapshot - and therefore the
+                // learned ceiling - is atLimitRaw itself. That is what lets the tests that used to warm
+                // with a constant source at atLimitRaw keep their original expected numbers.
+                for (int i = 0; i < rise; i++)
+                    engine.Compute(BrakingSampleFor(peak - i * step),
+                        QAdvanceFeedback.Core.Corners.Uniform(System.Math.Max(1.0, atLimitRaw - (rise - 1) + i)),
+                        QAdvanceFeedback.Core.Corners.Zero, gameId, carId, lockSourceIdentity: lockSourceIdentity);
+
+                // Grip recovered, source held AT atLimitRaw. Holding it at the top rather than at the
+                // bottom of the ramp matters: the only dip in the series is then the ramp itself, so the
+                // trend can only turn positive once the source is back at atLimitRaw - which pins every
+                // crossing, and therefore every taught value, to exactly that number.
+                for (int i = 0; i < recover; i++)
+                    engine.Compute(BrakingSampleFor(peak),
+                        QAdvanceFeedback.Core.Corners.Uniform(atLimitRaw),
+                        QAdvanceFeedback.Core.Corners.Zero, gameId, carId, lockSourceIdentity: lockSourceIdentity);
+            }
         }
     }
 }

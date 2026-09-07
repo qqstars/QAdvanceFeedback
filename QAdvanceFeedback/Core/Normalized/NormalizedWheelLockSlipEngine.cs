@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using QAdvanceFeedback.Core.Projection;
 
 namespace QAdvanceFeedback.Core.Normalized
@@ -468,6 +468,22 @@ namespace QAdvanceFeedback.Core.Normalized
         private readonly KeyedScaleLearner _lockScaleLearner = new KeyedScaleLearner(isLockChannel: true);
         private readonly KeyedScaleLearner _slipScaleLearner = new KeyedScaleLearner(isLockChannel: false);
 
+        /// <summary>
+        /// SLIP ONLY (docs\slip-smax-crossing-gate-design.md). Decides which of Slip's at-limit
+        /// candidate frames may actually teach SMax. There is deliberately no Lock counterpart: Lock
+        /// already has the corner-local at-limit detector (<c>ComputeCornerAtLimitConfidence</c>), which
+        /// solves the same "which frames are really at the limit" problem for a channel whose physics
+        /// and whose failure mode are both different.
+        /// </summary>
+        private readonly SlipCrossingGate _slipCrossingGate = new SlipCrossingGate();
+
+        /// <summary>
+        /// LOCK ONLY - the deliberately separate twin of <see cref="_slipCrossingGate"/>. See
+        /// <see cref="LockCrossingGate"/> for why the two are different classes rather than one
+        /// parameterised one: either channel's gate must be switchable off without touching the other.
+        /// </summary>
+        private readonly LockCrossingGate _lockCrossingGate = new LockCrossingGate();
+
         /// <summary>MANUAL KEY DATA POINTS (v1.0.7.2) - decides WHEN a configured value may replace the
         /// learned one; see <see cref="ManualOverrideGate"/> for the rule. Shared by both channels, keyed
         /// per (game, car, source) so each context earns its own readiness.</summary>
@@ -684,13 +700,18 @@ namespace QAdvanceFeedback.Core.Normalized
         public NormalizePattern LockNormalizePattern { get; set; } = NormalizePattern.Mapping;
 
         /// <summary>
-        /// Slip's own pattern selector (v1.0.7.2). Ships <see cref="NormalizePattern.MaxGripOnly"/> - its
-        /// "Best Point Only" - because Slip has no native 90%/75% grip measurement to place two lower
-        /// anchors from. When the driver opts into the Perfect/Great/Good mapping, those two anchors are
-        /// DERIVED from the Perfect point rather than learned, which is why this only has an effect while
-        /// manual anchors are active: there is nothing measured for it to map otherwise.
+        /// Slip's own pattern selector. Ships <see cref="NormalizePattern.Mapping"/> - its
+        /// Perfect/Great/Good - as of v1.0.8, matching Lock (see
+        /// <c>WheelChannelSettings.CreateDefaults</c> for the reasoning).
+        /// <para/>
+        /// Slip's two lower anchors are DERIVED from the Perfect point rather than measured, since Slip
+        /// has no native 90%/75% grip reading. That does NOT restrict this to manual anchors: under Auto,
+        /// <see cref="ComputeChannel"/>'s derived-curve branch builds the same three-knot curve from the
+        /// LEARNED ceiling (see <see cref="TryBuildDerivedRangeCurve"/>), using the same fixed percentages
+        /// the settings page displays. An earlier version of this comment claimed manual-only; that
+        /// predated the derived-curve branch and was wrong.
         /// </summary>
-        public NormalizePattern SlipNormalizePattern { get; set; } = NormalizePattern.MaxGripOnly;
+        public NormalizePattern SlipNormalizePattern { get; set; } = NormalizePattern.Mapping;
 
         /// <summary>The Slip channel's equivalent of <see cref="LockUsesAggregatedAllScale"/> - see that
         /// constant's own remarks for why these may differ. MEASURED FALSE
@@ -800,7 +821,93 @@ namespace QAdvanceFeedback.Core.Normalized
             _slipPhysicalReference = new KeyedGripLearner(SlipLearnMaxPlausibleG);
             _direction = directionResolver ?? new LongitudinalDirectionResolver();
             _learningGate = learningGate ?? new TelemetryLearningGate();
+            // CROSS-CHANNEL CEILING FALLBACK (docs\slip-smax-crossing-gate-design.md, section 7) - one
+            // direction only: Slip may lean on Lock, never the reverse. Wired here rather than at the
+            // call site so every construction path (including every test's own bare `new`) gets it.
+            _slipScaleLearner.AttachCrossChannelLockReference(_lockScaleLearner);
         }
+
+        /// <summary>
+        /// Weight given to a Slip at-limit frame that is NOT part of a traction crossing - 0.0 by
+        /// default, i.e. a launch teaches nothing. See <see cref="SlipCrossingGate.NonCrossingWeight"/>
+        /// for why this is a weight rather than a skip, and why anything above zero re-admits the
+        /// standing-start contamination this feature removes.
+        /// </summary>
+        public double SlipNonCrossingTeachingWeight
+        {
+            get { return _slipCrossingGate.NonCrossingWeight; }
+            set { _slipCrossingGate.NonCrossingWeight = value; }
+        }
+
+        /// <summary>
+        /// Multiplier applied to the corner-local detector's confidence on a Lock frame that is NOT part
+        /// of a crossing - 0.0 by default. A MULTIPLIER rather than an absolute weight because Lock's
+        /// teaching weight is already that detector's continuous confidence; see
+        /// <see cref="LockCrossingGate.DefaultNonCrossingWeightFactor"/>.
+        /// </summary>
+        public double LockNonCrossingTeachingWeightFactor
+        {
+            get { return _lockCrossingGate.NonCrossingWeightFactor; }
+            set { _lockCrossingGate.NonCrossingWeightFactor = value; }
+        }
+
+        /// <summary>
+        /// THE SLIP KILL SWITCH. When false, Slip's SMax teaching returns exactly to its pre-gate
+        /// behaviour: every at-limit frame teaches its own live reading at full weight, and the Tier-1
+        /// hand-over to the general percentile is no longer held back. Independent of
+        /// <see cref="LockCrossingGateEnabled"/> by construction - the two channels own separate gate
+        /// objects and separate learner flags, so neither switch can reach the other.
+        /// </summary>
+        public bool SlipCrossingGateEnabled { get; set; } = true;
+
+        /// <summary>
+        /// The Lock twin of <see cref="SlipCrossingGateEnabled"/> - but SHIPPED OFF, unlike Slip's.
+        /// <para/>
+        /// WHY OFF BY DEFAULT, measured rather than assumed. Replayed across the whole 17-log corpus the
+        /// Lock gate does fix the one session that reads SMax 100 (1.0.6.8 ShakeIt: 100.0 -> 51.3) and
+        /// keeps a healthy yield (median 442 qualified frames per session, minimum 145, none starved -
+        /// far better than Slip's, because Lock arms on the corner-local detector rather than on a G
+        /// threshold). But it also undoes a result this project earned and validated in 1.0.6.9: the
+        /// four 1.7.1 sessions move from 72.8-77.4 at a 1.06x cross-session spread - the band that work
+        /// established as correct across two cars and two sources - to 53.4-77.7 at 1.46x. A lower
+        /// ceiling means Rescale multiplies harder, which is the over-shake this project has chased
+        /// since 1.0.6.
+        /// <para/>
+        /// The asymmetry has a cause: Lock ALREADY has a purpose-built event detector. The corner-local
+        /// at-limit confidence was built for exactly the question the crossing rule asks, and layering a
+        /// second, cruder detector on top of it replaces its frame selection with an earlier, lower
+        /// reading. Slip had no such detector, which is why the same rule is a clear win there.
+        /// <para/>
+        /// Also note that Lock's <see cref="KeyedScaleLearner.SecondaryHandoverRequiresPrimaryEvidence"/>
+        /// half - the fix that mattered most for Slip - changes NOTHING for Lock: all 25 sessions are
+        /// bit-identical with it on. Lock's ceiling does not reach 100 through the general-percentile
+        /// path at all.
+        /// <para/>
+        /// ENABLED BY THE OWNER'S DECISION (2026-09-05) after that trade-off was put to them, on the
+        /// strength of the EA WRC field report the corpus cannot reproduce. The measurements above stand
+        /// and are the first thing to re-read if Lock starts over-shaking on a sealed-surface title:
+        /// setting this to false restores 1.0.6.9's validated behaviour exactly, and reaches nothing on
+        /// the Slip channel.
+        /// </summary>
+        public bool LockCrossingGateEnabled { get; set; } = true;
+
+        /// <summary>Lock at-limit candidate frames for this key that were part of a crossing.</summary>
+        public long LockCrossingValidFrames(string gameId, string carId, string sourceIdentity)
+            => _lockCrossingGate.ValidFrames(KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty));
+
+        /// <summary>Every Lock at-limit candidate frame for this key. Recorded, not consumed.</summary>
+        public long LockCrossingTotalFrames(string gameId, string carId, string sourceIdentity)
+            => _lockCrossingGate.TotalFrames(KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty));
+
+        /// <summary>Slip at-limit candidate frames for this key that were part of a crossing, i.e. the
+        /// frames that actually taught SMax.</summary>
+        public long SlipCrossingValidFrames(string gameId, string carId, string sourceIdentity)
+            => _slipCrossingGate.ValidFrames(KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty));
+
+        /// <summary>Every Slip at-limit candidate frame for this key, crossing or not. RECORDED BUT NOT
+        /// CONSUMED - see <see cref="SlipCrossingGate.RecordCandidate"/>.</summary>
+        public long SlipCrossingTotalFrames(string gameId, string carId, string sourceIdentity)
+            => _slipCrossingGate.TotalFrames(KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty));
 
         /// <summary>The full per-(game,car) keyed Lock learner store - exposed so the plugin
         /// composition root can Import/Export it through <c>RuntimeStore</c> at Init/every frame,
@@ -1160,6 +1267,24 @@ namespace QAdvanceFeedback.Core.Normalized
                 frame?.WheelOnLooseSurfaceRearLeft, frame?.WheelOnLooseSurfaceRearRight);
             _surfaceSupport.Observe(gameId, surfaceFieldReachable ? (bool?)(instantLooseFraction > 0.0) : null);
 
+            // CROSS-CHANNEL CEILING FALLBACK (docs\slip-smax-crossing-gate-design.md, section 7) - Slip's
+            // learner has to look Lock up under LOCK's own identity, which is a different string from
+            // Slip's even for the same configured source (each is SourceIdentity.Compute over that
+            // channel's own four wheel properties). Set here, before Lock's own ComputeChannel runs, so
+            // the very first Slip query of the session already resolves.
+            _slipScaleLearner.SetCrossChannelLockSourceIdentity(lockSourceIdentity);
+
+            // THE SECOND HALF OF EACH GATE, kept in step with its own switch. The crossing rule governs
+            // the at-limit distribution; this governs whether the GENERAL percentile may be adopted as
+            // the Tier-1 cold ceiling before the channel has seen its own limit. Both halves are needed
+            // (the general path is how the ceiling actually reaches 100), and each channel's pair of
+            // halves is driven by that channel's switch alone.
+            // LOCK'S half is deliberately tied to the same switch even though it was measured to be a
+            // no-op for Lock on every session in the corpus - so that IF the gate is ever turned on,
+            // both halves move together exactly as they do for Slip.
+            _lockScaleLearner.SecondaryHandoverRequiresPrimaryEvidence = LockCrossingGateEnabled;
+            _slipScaleLearner.SecondaryHandoverRequiresPrimaryEvidence = SlipCrossingGateEnabled;
+
             Corners lockWheels = ComputeChannel(sample.New, rawLockWheels, motion, _lockLearners, _lockPhysicalReference, _lockScaleLearner,
                 gameId, carId, lockSourceIdentity, instantLooseFraction,
                 direction == LongitudinalMotionState.Slowing, lockTriggered, lockObserveAllowed, dtSeconds,
@@ -1171,7 +1296,9 @@ namespace QAdvanceFeedback.Core.Normalized
                 useFourRangeForSeverity: LockNormalizePattern == NormalizePattern.Mapping,
                 manualAnchors: LockManualAnchors,
                 reportManualApplied: applied => _lockManualAnchorsApplied = applied,
-                manualGate: _manualGate);
+                manualGate: _manualGate,
+                // LOCK ONLY - see the field's own remarks for why this is a different class from Slip's.
+                lockCrossingGate: LockCrossingGateEnabled ? _lockCrossingGate : null);
             Corners slipWheels = ComputeChannel(sample.New, rawSlipWheels, motion, _slipLearners, _slipPhysicalReference, _slipScaleLearner,
                 gameId, carId, slipSourceIdentity, instantLooseFraction,
                 direction == LongitudinalMotionState.SpeedingUp, slipTriggered, slipObserveAllowed, dtSeconds,
@@ -1186,7 +1313,9 @@ namespace QAdvanceFeedback.Core.Normalized
                 useFourRangeForSeverity: SlipNormalizePattern == NormalizePattern.Mapping,
                 manualAnchors: SlipManualAnchors,
                 reportManualApplied: applied => _slipManualAnchorsApplied = applied,
-                manualGate: _manualGate);
+                manualGate: _manualGate,
+                // SLIP ONLY - see the field's own remarks for why Lock has no counterpart.
+                slipCrossingGate: SlipCrossingGateEnabled ? _slipCrossingGate : null);
 
             // TIERED COLD-START REFERENCE SYSTEM (v1.0.7, docs\v107-tiered-coldstart-report.md) -
             // diagnostic-only readout of which tier THIS key most recently resolved to (the actual
@@ -1303,7 +1432,8 @@ namespace QAdvanceFeedback.Core.Normalized
             ref double? atLimitLastG, ref double? atLimitLastBasis, out WheelAggregate nativeAggregate,
             bool useFourRangeForSeverity = true, bool floorSeverityAtRawBasis = false,
             ManualAnchors manualAnchors = default(ManualAnchors), Action<bool> reportManualApplied = null,
-            ManualOverrideGate manualGate = null)
+            ManualOverrideGate manualGate = null, SlipCrossingGate slipCrossingGate = null,
+            LockCrossingGate lockCrossingGate = null)
         {
             // MID-CHAIN CLAMP FIX (docs\clamp-chain-fix-report.md) - default, no-op value for every early
             // return below that this fix does not target (not triggered/not engaged/no G signal at all):
@@ -1411,6 +1541,13 @@ namespace QAdvanceFeedback.Core.Normalized
                 // CORNER-LOCAL AT-LIMIT GATE state reset - same reasoning, same gap.
                 atLimitLastG = null;
                 atLimitLastBasis = null;
+                // CROSSING GATE state reset - the trend must never span a gap in engagement, for
+                // the same reason atLimitLastG is nulled just above: the frames either side are not
+                // a continuous series, and a difference measured across the gap compares two
+                // unrelated moments. Clears the hold window too, so a crossing cannot survive a
+                // disengagement.
+                slipCrossingGate?.Reset();
+                lockCrossingGate?.Reset();
                 // FEATURE C - the anchor learner's own run-bracket tracking breaks for the same reason.
                 lockAnchorLearner?.ResetRun(gameId, carId, sourceIdentity);
                 return Corners.Zero;
@@ -1430,6 +1567,13 @@ namespace QAdvanceFeedback.Core.Normalized
                 lastG = null;
                 atLimitLastG = null;
                 atLimitLastBasis = null;
+                // CROSSING GATE state reset - the trend must never span a gap in engagement, for
+                // the same reason atLimitLastG is nulled just above: the frames either side are not
+                // a continuous series, and a difference measured across the gap compares two
+                // unrelated moments. Clears the hold window too, so a crossing cannot survive a
+                // disengagement.
+                slipCrossingGate?.Reset();
+                lockCrossingGate?.Reset();
                 lockAnchorLearner?.ResetRun(gameId, carId, sourceIdentity);
                 // OUT OF SCOPE for the mid-chain clamp fix (this is KeyedScaleLearner.Rescale's own
                 // independent per-wheel calibration, not the severity-driven allScale/mean-relative-scale
@@ -1457,6 +1601,13 @@ namespace QAdvanceFeedback.Core.Normalized
                 lastG = null;
                 atLimitLastG = null;
                 atLimitLastBasis = null;
+                // CROSSING GATE state reset - the trend must never span a gap in engagement, for
+                // the same reason atLimitLastG is nulled just above: the frames either side are not
+                // a continuous series, and a difference measured across the gap compares two
+                // unrelated moments. Clears the hold window too, so a crossing cannot survive a
+                // disengagement.
+                slipCrossingGate?.Reset();
+                lockCrossingGate?.Reset();
                 lockAnchorLearner?.ResetRun(gameId, carId, sourceIdentity);
                 return Corners.Zero;
             }
@@ -1598,12 +1749,104 @@ namespace QAdvanceFeedback.Core.Normalized
             bool isLockChannel = lockAnchorLearner != null;
             double smaxTeachingWeight = isLockChannel ? atLimitWeight : (physicallyAtLimit ? 1.0 : 0.0);
 
+            // ---- SLIP TRACTION-CROSSING GATE (docs\slip-smax-crossing-gate-design.md) ----
+            //
+            // `physicallyAtLimit` above stays exactly what it was, but for Slip it is now only the
+            // CANDIDATE filter - it decides which frames are considered, not which frames count.
+            // SlipCrossingGate then answers the question the boolean cannot: is this actually the tyre
+            // going past the peak of its slip curve (slip rising while acceleration-G falls), or is it
+            // merely a moment of high G - a launch, a hard low-speed pull-away, or a braking zone -
+            // where a slip source reads high for reasons that have nothing to do with the traction
+            // limit? Measured on the owner's own capture, the old boolean spent 52.6% of its Slip
+            // teaching frames under BRAKING.
+            //
+            // ZERO-WEIGHT FOLD-IN, NOT A SKIP. A non-crossing candidate is still handed to the learner,
+            // at SlipNonCrossingTeachingWeight (0.0 by default), so that OnlineDistributionLearner's
+            // weight-independent Count - which drives CeilingHandoverConfidence and the forgetting
+            // clock - keeps advancing at exactly today's rate while the weighted histogram (and
+            // therefore SMax itself) learns nothing from it. Skipping the call instead would stretch
+            // the forgetting half-life in proportion to the frames dropped, which is strictly worse:
+            // the decay is per fold-in, not per second.
+            //
+            // The gate is observed on EVERY engaged frame, not only candidate frames, because the trend
+            // needs a continuous series to difference against - sampling it only at candidates would
+            // measure the gaps between them instead.
+            // WHAT A QUALIFIED FRAME TEACHES is the reading captured AT THE CROSSING, not this frame's
+            // own - see SlipCrossingGate.TeachingBasis for the measurement that forced this. These two
+            // locals default to the live bases, so the LOCK call (slipCrossingGate == null) passes
+            // exactly the values it always did, byte for byte.
+            double smaxTeachingBasis = calibrationBasisConfigured;
+            double smaxTeachingFallbackBasis = calibrationBasisFallback;
+
+            // ---- LOCK TRACTION-CROSSING GATE (docs\slip-smax-crossing-gate-design.md, section 9) ----
+            //
+            // The owner reported the same SMax = 100 failure on WheelLock in EA WRC that WheelSlip
+            // showed in F1, so Lock gets the same rule - through its OWN gate object, its OWN switch and
+            // its OWN branch here. Deliberately not merged with Slip's block below: the owner's
+            // requirement is that either channel can be turned off without touching the other, and a
+            // shared branch would make that a conditional rather than a switch.
+            //
+            // WHAT DIFFERS FROM SLIP. Lock's teaching weight is already the corner-local detector's
+            // CONTINUOUS confidence rather than a boolean, so the gate scales that confidence instead of
+            // replacing it, and it arms on "the detector has any confidence in this frame" instead of on
+            // a G threshold. A candidate is therefore any frame Lock would have taught from before.
+            bool lockZeroWeightFold = false;
+            if (isLockChannel && lockCrossingGate != null)
+            {
+                bool qualified = lockCrossingGate.Observe(
+                    calibrationBasisConfigured, calibrationBasisFallback, motion.MagnitudeG,
+                    atLimitWeight > 0.0, dtSeconds);
+
+                if (atLimitWeight > 0.0)
+                {
+                    smaxTeachingWeight = lockCrossingGate.TeachingWeight(atLimitWeight);
+                    smaxTeachingBasis = lockCrossingGate.TeachingBasis(calibrationBasisConfigured);
+                    smaxTeachingFallbackBasis = lockCrossingGate.TeachingFallbackBasis(calibrationBasisFallback);
+                    lockZeroWeightFold = smaxTeachingWeight <= 0.0;
+                    lockCrossingGate.RecordCandidate(
+                        KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty), qualified);
+                }
+            }
+
+            bool slipZeroWeightFold = false;
+            if (!isLockChannel && slipCrossingGate != null)
+            {
+                bool qualified = slipCrossingGate.Observe(
+                    calibrationBasisConfigured, calibrationBasisFallback, motion.MagnitudeG,
+                    physicallyAtLimit, dtSeconds);
+                if (physicallyAtLimit)
+                {
+                    smaxTeachingWeight = slipCrossingGate.TeachingWeight;
+                    smaxTeachingBasis = slipCrossingGate.TeachingBasis(calibrationBasisConfigured);
+                    smaxTeachingFallbackBasis = slipCrossingGate.TeachingFallbackBasis(calibrationBasisFallback);
+                    slipZeroWeightFold = smaxTeachingWeight <= 0.0;
+                    slipCrossingGate.RecordCandidate(
+                        KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty), qualified);
+                }
+            }
+
             if (calibrationBasisConfigured >= MinRawForCalibrationObservation)
             {
-                if (smaxTeachingWeight > 0.0)
+                if (slipZeroWeightFold || lockZeroWeightFold)
+                {
+                    // A candidate that was not part of a crossing: record the FACT of the frame so
+                    // the confidence ramp and the forgetting clock keep running at today's rate, and
+                    // nothing else. Mirrors the two-call (default key + surface bucket) shape of the
+                    // teaching path just below, so the two keys stay in step on sample count.
+                    scaleLearner.ObserveNonQualifyingAtPhysicalLimit(gameId, carId, sourceIdentity);
+                    if (observeBucket != null)
+                        scaleLearner.ObserveNonQualifyingAtPhysicalLimit(gameId, carId, sourceIdentity, observeBucket);
+                }
+                // THE THRESHOLD MUST TEST THE VALUE BEING TAUGHT. The enclosing `if` tests the LIVE
+                // basis, which is right for ObserveGeneral below (that genuinely observes this frame),
+                // but SMax now teaches the crossing SNAPSHOT - a different number. Without this second
+                // test a snapshot under MinRawForCalibrationObservation would be calibrated from anyway,
+                // which is exactly the noise that threshold exists to keep out. Byte-identical for Lock,
+                // where smaxTeachingBasis IS calibrationBasisConfigured.
+                else if (smaxTeachingWeight > 0.0 && smaxTeachingBasis >= MinRawForCalibrationObservation)
                 {
                     // The DEFAULT (unsurfaced) key - still the one and only key the live severity reads.
-                    scaleLearner.ObserveAtPhysicalLimit(gameId, carId, sourceIdentity, calibrationBasisConfigured, smaxTeachingWeight);
+                    scaleLearner.ObserveAtPhysicalLimit(gameId, carId, sourceIdentity, smaxTeachingBasis, smaxTeachingWeight);
                     // TIERED COLD-START REFERENCE SYSTEM (v1.0.7) - ADDITIVE surface-specific teaching
                     // (see KeyedScaleLearner.ObserveAtPhysicalLimit's own remarks): only when the surface
                     // is confidently classified (observeBucket != null), mirroring the SAME "ambiguous ->
@@ -1611,7 +1854,7 @@ namespace QAdvanceFeedback.Core.Normalized
                     // split just above. Purely gives ResolveReference genuine Tier-4 candidates to find;
                     // never read by the live Rescale/LearnedCeiling calls for the default key.
                     if (observeBucket != null)
-                        scaleLearner.ObserveAtPhysicalLimit(gameId, carId, sourceIdentity, calibrationBasisConfigured, smaxTeachingWeight, observeBucket);
+                        scaleLearner.ObserveAtPhysicalLimit(gameId, carId, sourceIdentity, smaxTeachingBasis, smaxTeachingWeight, observeBucket);
                 }
                 scaleLearner.ObserveGeneral(gameId, carId, sourceIdentity, calibrationBasisConfigured);
             }
@@ -1627,8 +1870,11 @@ namespace QAdvanceFeedback.Core.Normalized
                 // reading, so it must be taught at the same moments and with the same confidence, or the
                 // two keys would learn ceilings on different definitions and the divergence test between
                 // them (further down) would compare quantities that are not comparable.
-                if (smaxTeachingWeight > 0.0)
-                    scaleLearner.ObserveAtPhysicalLimit(gameId, carId, RawFallbackSourceIdentity, calibrationBasisFallback, smaxTeachingWeight);
+                if (slipZeroWeightFold || lockZeroWeightFold)
+                    scaleLearner.ObserveNonQualifyingAtPhysicalLimit(gameId, carId, RawFallbackSourceIdentity);
+                // Same snapshot-vs-live threshold split as the configured key above.
+                else if (smaxTeachingWeight > 0.0 && smaxTeachingFallbackBasis >= MinRawForCalibrationObservation)
+                    scaleLearner.ObserveAtPhysicalLimit(gameId, carId, RawFallbackSourceIdentity, smaxTeachingFallbackBasis, smaxTeachingWeight);
                 scaleLearner.ObserveGeneral(gameId, carId, RawFallbackSourceIdentity, calibrationBasisFallback);
             }
 

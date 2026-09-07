@@ -225,6 +225,142 @@ namespace QAdvanceFeedback.Tests
             Assert.True(state.Presets.ContainsKey("F12025"));
         }
 
+        [Fact]
+        public void RealWorldMultiCodeEntriesSplitAndResolveForEveryTitleInThem()
+        {
+            // The two shapes the owner found in a real GameData.json, whitespace and all - a five-way
+            // F1 entry and a two-way Trackmania entry. Every title listed must resolve to that entry's
+            // data, and the bounds must come across for each of them too.
+            WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], @"{
+                ""Games"": [
+                    { ""GameCodes"": ""F12017;F12016;F12014;F12013;F12012"",
+                      ""WheelSpeedDeltaHighbound"": 0.42,
+                      ""PrecalibrationData"": { ""Slip"": { ""MeasuredMaximum"": 2.5, ""CorrectionFactor"": 1.1 } } },
+                    { ""GameCodes"": ""TrackmaniaTurbo; Trackmania"",
+                      ""PrecalibrationData"": { ""Slip"": { ""MeasuredMaximum"": 3.5 } } }
+                ]
+            }");
+
+            var state = new ShakeItImportState();
+            Import(state);
+
+            foreach (string code in new[] { "F12017", "F12016", "F12014", "F12013", "F12012" })
+            {
+                Assert.True(state.Presets.ContainsKey(code), $"missing preset for {code}");
+                Assert.Equal(2.5, ShakeItPrecalibrationConverter.ResolveForGame(state.Presets, code)["Slip"].MeasuredMaximum, 9);
+                Assert.Equal(0.42, ShakeItPrecalibrationConverter.ResolveBoundsForGame(state.Bounds, code).WheelSpeedDeltaHighbound, 9);
+            }
+
+            // " Trackmania" - the leading space after the separator must be trimmed, or the key would
+            // never match the running title.
+            Assert.True(state.Presets.ContainsKey("Trackmania"));
+            Assert.Equal(3.5, ShakeItPrecalibrationConverter.ResolveForGame(state.Presets, "Trackmania")["Slip"].MeasuredMaximum, 9);
+            Assert.Equal(3.5, ShakeItPrecalibrationConverter.ResolveForGame(state.Presets, "TrackmaniaTurbo")["Slip"].MeasuredMaximum, 9);
+        }
+
+        [Fact]
+        public void EmptyAndWhitespaceOnlyGameCodeSegmentsAreSkipped()
+        {
+            WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], @"{
+                ""Games"": [ { ""GameCodes"": "";;F12025;  ;"",
+                    ""PrecalibrationData"": { ""Slip"": { ""MeasuredMaximum"": 1.0 } } } ]
+            }");
+
+            var state = new ShakeItImportState();
+            Import(state);
+
+            Assert.Single(state.Presets);
+            Assert.True(state.Presets.ContainsKey("F12025"));
+        }
+
+        // ------------------------------------------------------------------------------------
+        // METRIC FILTERING. SimHub's PrecalibrationData carries RollDelta and Suspension alongside
+        // Slip; those drive ShakeIt's chassis-roll and suspension MOTION effects, and the legacy
+        // iRacing wheel-lock/slip algorithm never reads them.
+        // ------------------------------------------------------------------------------------
+
+        [Fact]
+        public void UnusedMetricsAreIgnoredRatherThanStoredUnread()
+        {
+            WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], @"{
+                ""Games"": [ { ""GameCodes"": ""F12025"", ""PrecalibrationData"": {
+                    ""Slip"": { ""MeasuredMaximum"": 2.5 },
+                    ""RollDelta"": { ""MeasuredMaximum"": 9.9 },
+                    ""Suspension"": { ""MeasuredMaximum"": 8.8 }
+                } } ]
+            }");
+
+            var state = new ShakeItImportState();
+            ShakeItConversionOutcome outcome = Import(state);
+
+            Assert.Equal(new[] { "Slip" }, state.Presets["F12025"].Keys);
+            Assert.Equal(1, outcome.MetricsImported);
+            Assert.Equal(2, outcome.MetricsIgnoredAsUnused);
+            Assert.Contains("RollDelta", outcome.Message);
+        }
+
+        [Fact]
+        public void RpsToSpeedMetricsAreConsumedAndKept()
+        {
+            WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], @"{
+                ""Games"": [ { ""GameCodes"": ""F12025"", ""PrecalibrationData"": {
+                    ""RPSToSpeedFront"": { ""MeasuredMaximum"": 1.5 },
+                    ""RPSToSpeedRear"": { ""MeasuredMaximum"": 1.6 }
+                } } ]
+            }");
+
+            var state = new ShakeItImportState();
+            Import(state);
+
+            Assert.Equal(1.5, state.Presets["F12025"]["RPSToSpeedFront"].MeasuredMaximum, 9);
+            Assert.Equal(1.6, state.Presets["F12025"]["RPSToSpeedRear"].MeasuredMaximum, 9);
+        }
+
+        [Fact]
+        public void MetricNamesAreCanonicalisedSoTheOrdinalLookupCanFindThem()
+        {
+            // CalibrationDataProvider reads PrecalibrationData with StringComparer.Ordinal, so a file
+            // spelling the key "slip" would import happily and then never be found at runtime.
+            WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], @"{
+                ""Games"": [ { ""GameCodes"": ""F12025"", ""PrecalibrationData"": {
+                    ""slip"": { ""MeasuredMaximum"": 2.5 }
+                } } ]
+            }");
+
+            var state = new ShakeItImportState();
+            Import(state);
+
+            Assert.True(state.Presets["F12025"].ContainsKey("Slip"));
+        }
+
+        [Fact]
+        public void AGameWithNoConsumedMetricsLeavesNoEntryBehind()
+        {
+            WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], @"{
+                ""Games"": [ { ""GameCodes"": ""SomeGame"", ""PrecalibrationData"": {
+                    ""RollDelta"": { ""MeasuredMaximum"": 9.9 }
+                } } ]
+            }");
+
+            var state = new ShakeItImportState();
+            ShakeItConversionOutcome outcome = Import(state);
+
+            Assert.False(state.Presets.ContainsKey("SomeGame"));
+            Assert.Equal(0, outcome.GamesImported);
+            Assert.Equal(0, outcome.MetricsImported);
+        }
+
+        [Fact]
+        public void CanonicalMetricNameRejectsWhatNothingConsumes()
+        {
+            Assert.Equal("Slip", ShakeItPrecalibrationConverter.CanonicalMetricName("  SLIP  "));
+            Assert.Equal("RPSToSpeedRear", ShakeItPrecalibrationConverter.CanonicalMetricName("rpstospeedrear"));
+            Assert.Null(ShakeItPrecalibrationConverter.CanonicalMetricName("RollDelta"));
+            Assert.Null(ShakeItPrecalibrationConverter.CanonicalMetricName("Suspension"));
+            Assert.Null(ShakeItPrecalibrationConverter.CanonicalMetricName(null));
+            Assert.Null(ShakeItPrecalibrationConverter.CanonicalMetricName("   "));
+        }
+
         // ------------------------------------------------------------------------------------
         // Game-code matching - SimHub matches a VB `Like` pattern, not string equality.
         // ------------------------------------------------------------------------------------

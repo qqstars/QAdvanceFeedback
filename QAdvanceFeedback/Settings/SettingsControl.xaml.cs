@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -167,6 +167,8 @@ namespace QAdvanceFeedback.Settings
             GForceAccelAutoToggle.Unchecked += (s, e) => { MarkDirty(); RefreshGForceModeControls(); };
             GForceDecelAutoToggle.Checked += (s, e) => { MarkDirty(); RefreshGForceModeControls(); };
             GForceDecelAutoToggle.Unchecked += (s, e) => { MarkDirty(); RefreshGForceModeControls(); };
+            GForceLatAutoToggle.Checked += (s, e) => { MarkDirty(); RefreshGForceModeControls(); };
+            GForceLatAutoToggle.Unchecked += (s, e) => { MarkDirty(); RefreshGForceModeControls(); };
             GForceLateralDirectionCombo.SelectionChanged += (s, e) => MarkDirty();
             // 1.0.6.0 (docs\release-1060-report.md, Part 2's UI half) - Lock only; see
             // RefreshLockAnchorLabelsForPattern's own remarks.
@@ -196,6 +198,22 @@ namespace QAdvanceFeedback.Settings
             // wiring report's own remarks on the three UI bugs it fixed).
             GForceShakeEnabled.Checked += (s, e) => { MarkDirty(); RefreshGForceShakeControls(); };
             GForceShakeEnabled.Unchecked += (s, e) => { MarkDirty(); RefreshGForceShakeControls(); };
+            GForceShakeModeCombo.SelectionChanged += (s, e) =>
+            {
+                if (_dirty.IsLoading) return;   // a programmatic load must not rewrite the saved scales
+                MarkDirty();
+                OnShakeApplyModeChanged();
+            };
+            GForceShakeFeelingCombo.SelectionChanged += (s, e) =>
+            {
+                if (_dirty.IsLoading) return;
+                MarkDirty();
+                OnShakeFeelingChanged();
+            };
+            GForceShakeFrequency.ValueChanged += (s, e) => RefreshShakePreview();
+            GForceShakeSustain.ValueChanged += (s, e) => RefreshShakePreview();
+
+            WireGForceTest();
             RefreshGForceShakeControls();
 
             // Belt-and-suspenders: every load path above already runs inside a BeginLoading scope
@@ -261,7 +279,7 @@ namespace QAdvanceFeedback.Settings
             var switches = new[]
             {
                 LockPulseEnabled, SlipPulseEnabled, EnableDiagnosticsCheckBox, ExportCsvCheckBox,
-                ShakeItImportOverrideCheckBox, GForceAccelAutoToggle, GForceDecelAutoToggle,
+                ShakeItImportOverrideCheckBox, GForceAccelAutoToggle, GForceDecelAutoToggle, GForceLatAutoToggle,
                 LockKeyDataAutoToggle, LockKeyDataPerGameToggle,
                 SlipKeyDataAutoToggle, SlipKeyDataPerGameToggle,
             };
@@ -344,8 +362,8 @@ namespace QAdvanceFeedback.Settings
             // either channel now: S90/S75 are derived from the learned SMax by a fixed percentage
             // (KeyDataPointSettings.DerivedS90Fraction/DerivedS75Fraction), so the two lower anchors
             // exist even for a channel that cannot measure them. The selector stays enabled in both
-            // modes; only SLIP's shipped DEFAULT remains single-point (Lock ships the full three-point
-            // mapping - see WheelChannelSettings.CreateDefaults for why the two channels differ).
+            // modes, and as of v1.0.8 BOTH channels ship the three-point mapping - see
+            // WheelChannelSettings.CreateDefaults.
             SlipNormalizePatternCombo.IsEnabled = true;
         }
 
@@ -363,7 +381,7 @@ namespace QAdvanceFeedback.Settings
         {
             bool maxGripOnly = GetSelectedTag(
                 isLock ? LockNormalizePatternCombo : SlipNormalizePatternCombo,
-                isLock ? "Mapping" : "MaxGripOnly") == "MaxGripOnly";
+                "Mapping") == "MaxGripOnly";
             if (maxGripOnly) return;
 
             MahApps.Metro.Controls.NumericUpDown sMaxBox = isLock ? LockKeyDataSMax : SlipKeyDataSMax;
@@ -694,7 +712,7 @@ namespace QAdvanceFeedback.Settings
                         GetSelectedTag(LockNormalizePatternCombo, "Mapping") == "MaxGripOnly");
             SaveChannel(s.Slip.KeyDataPoints, SlipKeyDataAutoToggle, SlipKeyDataPerGameToggle,
                         _currentSlipSource, SlipKeyDataSMax, SlipKeyDataS90, SlipKeyDataS75,
-                        GetSelectedTag(SlipNormalizePatternCombo, "MaxGripOnly") == "MaxGripOnly");
+                        GetSelectedTag(SlipNormalizePatternCombo, "Mapping") == "MaxGripOnly");
         }
 
         private void SaveChannel(KeyDataPointSettings k,
@@ -875,7 +893,7 @@ namespace QAdvanceFeedback.Settings
             wrote |= PersistChannelIfManual(_plugin.Settings.Slip.KeyDataPoints, SlipKeyDataAutoToggle,
                 SlipKeyDataPerGameToggle, _currentSlipSource,
                 SlipKeyDataSMax, SlipKeyDataS90, SlipKeyDataS75,
-                GetSelectedTag(SlipNormalizePatternCombo, "MaxGripOnly") == "MaxGripOnly");
+                GetSelectedTag(SlipNormalizePatternCombo, "Mapping") == "MaxGripOnly");
 
             if (wrote) _plugin.ApplySettings();
         }
@@ -1045,7 +1063,7 @@ namespace QAdvanceFeedback.Settings
                 SlipKeyDataS90Label, SlipKeyDataS75Label, SlipKeyDataS90Desc, SlipKeyDataS75Desc,
                 SlipKeyDataStatus,
                 _slipLearnedSMax, _slipLearnedS90, _slipLearnedS75, _slipManualLive,
-                GetSelectedTag(SlipNormalizePatternCombo, "MaxGripOnly") == "MaxGripOnly",
+                GetSelectedTag(SlipNormalizePatternCombo, "Mapping") == "MaxGripOnly",
                 KeyDataPointSettings.IsExactShippedSource(_currentSlipSource, isLockChannel: false),
                 ConfiguredDefaults,
                 Strings.Get("KeyData.Invalid.Slip"));
@@ -1260,43 +1278,79 @@ namespace QAdvanceFeedback.Settings
         /// </summary>
         private void WireDirtyTracking()
         {
-            // ---- mah:NumericUpDown spinners NOT already covered by the curve anchor editor. ----
-            MahApps.Metro.Controls.NumericUpDown[] spinners =
+            // EXHAUSTIVE BY CONSTRUCTION, over every named input control on this page.
+            //
+            // WHY REFLECTION AND NOT A LIST. This method used to enumerate controls by hand, and its own
+            // remarks warned that "a control silently left out here would let a driver believe an edit
+            // was saved when Apply never actually enabled". That is precisely what happened: an audit of
+            // the 105 named inputs against the wiring found FIFTY-TWO with no dirty path at all -
+            // including every one of the three output scales, the lateral maximum, all six lateral
+            // splits, the shake trigger/blend/sustain, every key-data spinner and toggle, the flatten
+            // ranges, and the ShakeIt import override. Each of those was a silent "your edit was
+            // ignored". A list cannot be kept correct by discipline alone, because nothing fails when it
+            // is wrong - so the list is gone.
+            //
+            // Every x:Name'd control is a generated field on this class, so sweeping the fields reaches
+            // all of them and reaches any control added later without anyone remembering to come back
+            // here. Controls that ALSO have their own business-logic handler elsewhere simply get a
+            // second, idempotent MarkDirty - see ApplyDirtyState.MarkDirty, which is a no-op while
+            // loading and a plain flag set otherwise.
+            //
+            // SettingsControlDirtyTrackingTests guards the one assumption this makes: that every named
+            // input on the page is one of the four types handled below.
+            //
+            // ONE DELIBERATE EXCLUSION: the Test Effect panel (owner's explicit instruction - "ANY
+            // OPTIONS RELATED TO THE TEST EFFECT WILL NOT BE SAVED"). Its toggle and rate spinner are a
+            // diagnostic harness, not preferences: they are never read by SaveToSettings and never
+            // written by LoadFromSettings, so marking the page dirty from them would light up Apply with
+            // nothing to apply - and worse, would invite the driver to "save" a test session.
+            foreach (System.Reflection.FieldInfo field in GetType().GetFields(
+                         System.Reflection.BindingFlags.Instance
+                         | System.Reflection.BindingFlags.NonPublic
+                         | System.Reflection.BindingFlags.Public))
             {
-                LockBrakeThreshold, LockSensibility, LockWMax, LockWMin, LockWFront, LockWRear,
-                LockPulseGapMs, LockPulseMinValue,
-                SlipBrakeThreshold, SlipThrottleThreshold, SlipWMax, SlipWMin, SlipWFront, SlipWRear,
-                SlipFloorFactor, SlipPulseGapMs, SlipPulseMinValue,
-                GForceFixedAccelMax, GForceFixedDecelMax,
-                GForceBrakeBottomRearSustain, GForceBrakeBackLowSustain,
-                GForceAccelBottomRearSustain, GForceAccelBackLowSustain,
-                GForceSustainTau, GForceTransientTau, GForceTransientGain,
-                GForceAutoTransitionScale, GForceFixedTransitionScale,
-                GForceShakeFrequency, GForceShakeLockScale, GForceShakeSlipScale
-            };
-            foreach (MahApps.Metro.Controls.NumericUpDown spinner in spinners)
-                spinner.ValueChanged += (s, e) => MarkDirty();
+                if (IsTestEffectControl(field.Name)) continue;
 
-            // ---- Source text boxes. ----
+                switch (field.GetValue(this))
+                {
+                    case MahApps.Metro.Controls.NumericUpDown spinner:
+                        spinner.ValueChanged += (s, e) => MarkDirty();
+                        break;
+                    case MahApps.Metro.Controls.ToggleSwitch toggle:
+                        toggle.Checked += (s, e) => MarkDirty();
+                        toggle.Unchecked += (s, e) => MarkDirty();
+                        break;
+                    case ComboBox combo:
+                        combo.SelectionChanged += (s, e) => MarkDirty();
+                        break;
+                    case TextBox box:
+                        box.TextChanged += (s, e) => MarkDirty();
+                        break;
+                }
+            }
+
+            // ---- Source text boxes ALSO carry business logic beyond dirty tracking: the resolved
+            //      source identity has to be recomputed whenever one changes. MarkDirty for these is
+            //      already covered by the sweep above; this hook is only the extra work. ----
             TextBox[] sourceBoxes =
             {
                 LockSourceFl, LockSourceFr, LockSourceRl, LockSourceRr,
                 SlipSourceFl, SlipSourceFr, SlipSourceRl, SlipSourceRr
             };
             foreach (TextBox box in sourceBoxes)
-                box.TextChanged += (s, e) => { MarkDirty(); OnSourceConfigurationChanged(); };
-
-            // ---- Toggles (were CheckBoxes before v1.0.7.2). Every switch in this UI is now the SAME
-            //      MahApps ToggleSwitch the "Integrate Wheel Lock and Slip" feature switch already used,
-            //      so a toggle reads identically wherever it appears. ----
-            MahApps.Metro.Controls.ToggleSwitch[] checkBoxes =
-                { LockPulseEnabled, SlipPulseEnabled, EnableDiagnosticsCheckBox, ExportCsvCheckBox };
-            foreach (MahApps.Metro.Controls.ToggleSwitch box in checkBoxes)
-            {
-                box.Checked += (s, e) => MarkDirty();
-                box.Unchecked += (s, e) => MarkDirty();
-            }
+                box.TextChanged += (s, e) => OnSourceConfigurationChanged();
         }
+
+        /// <summary>
+        /// Is this generated <c>x:Name</c> field part of the Test Effect harness rather than a setting?
+        /// <para/>
+        /// BY PREFIX, not by an enumerated list, and for the same reason <see cref="WireDirtyTracking"/>
+        /// itself is reflective: a list of exclusions would fall behind the XAML exactly as the old list
+        /// of inclusions did. Every control in that panel is named <c>GForceTest*</c>, which
+        /// <c>SettingsControlDirtyTrackingTests</c> pins.
+        /// </summary>
+        private static bool IsTestEffectControl(string fieldName)
+            => fieldName != null && fieldName.StartsWith("GForceTest", StringComparison.Ordinal);
 
         private void RefreshGForceShakeControls()
         {
@@ -1306,10 +1360,69 @@ namespace QAdvanceFeedback.Settings
             using (_dirty.BeginLoading())
             {
                 bool enabled = GForceShakeEnabled.IsChecked == true;
+                GForceShakeModeCombo.IsEnabled = enabled;
+                GForceShakeTrigger.IsEnabled = enabled;
+                GForceShakeFeelingCombo.IsEnabled = enabled;
                 GForceShakeFrequency.IsEnabled = enabled;
+                GForceShakeSustain.IsEnabled = enabled;
                 GForceShakeLockScale.IsEnabled = enabled;
                 GForceShakeSlipScale.IsEnabled = enabled;
+
+                RefreshGForceShakeModeDescription();
+                RefreshShakeFeelingControls();
             }
+        }
+
+        /// <summary>The mode dropdown's own description line - each mode does something different enough
+        /// that one shared sentence could not describe all three, so the text swaps with the
+        /// selection.</summary>
+        private void RefreshGForceShakeModeDescription()
+        {
+            switch (SelectedShakeApplyMode())
+            {
+                case ShakeApplyMode.AllChannelsGForce:
+                    GForceShakeModeDesc.Text = Strings.Get("GForce.Shake.Mode.AllGForce.Desc");
+                    break;
+                case ShakeApplyMode.AllChannelsLockSlip:
+                    GForceShakeModeDesc.Text = Strings.Get("GForce.Shake.Mode.AllLockSlip.Desc");
+                    break;
+                case ShakeApplyMode.HigherOfGForceOrLockSlip:
+                    GForceShakeModeDesc.Text = Strings.Get("GForce.Shake.Mode.HigherOfBoth.Desc");
+                    break;
+                default:
+                    GForceShakeModeDesc.Text = Strings.Get("GForce.Shake.Mode.PerChannel.Desc");
+                    break;
+            }
+        }
+
+        private ShakeApplyMode SelectedShakeApplyMode()
+            => ParseEnum(GetSelectedTag(GForceShakeModeCombo, ShakeApplyMode.PerChannel.ToString()),
+                         ShakeApplyMode.PerChannel);
+
+        /// <summary>
+        /// A MODE CHANGE RESTORES THAT MODE'S OWN SCALE AND TRIGGER (owner, 2026-09-07) - see
+        /// <see cref="GForceSettings.DefaultShakeScaleFor"/> and
+        /// <see cref="GForceSettings.DefaultShakeTriggerFor"/> for the tables and the owner's numbers.
+        /// <para/>
+        /// THIS REVERSES 2026-09-06, KNOWINGLY. The reset had been removed a day earlier, on the
+        /// reasoning that <c>contribution = scale x wheel/100</c> is computed identically in every mode
+        /// so overwriting a hand-tuned value was wrong. Seat time then produced a genuinely different
+        /// scale AND a different threshold per mode, and a table of per-mode values is only reachable if
+        /// switching the mode applies it. So a hand-tuned value IS overwritten again, deliberately.
+        /// <para/>
+        /// Called ONLY from the dropdown's SelectionChanged - never from the load path, which must show
+        /// the driver's own persisted values rather than resetting them every time the page opens.
+        /// </summary>
+        private void OnShakeApplyModeChanged()
+        {
+            ShakeApplyMode mode = SelectedShakeApplyMode();
+
+            double scale = GForceSettings.DefaultShakeScaleFor(mode);
+            GForceShakeLockScale.Value = scale;
+            GForceShakeSlipScale.Value = scale;
+            GForceShakeTrigger.Value = GForceSettings.DefaultShakeTriggerFor(mode);
+
+            RefreshGForceShakeModeDescription();
         }
 
         /// <summary>
@@ -1492,7 +1605,22 @@ namespace QAdvanceFeedback.Settings
             GForceMaximaNote.Text = Strings.Get("GForce.Maxima.Note");
             GForceLblAccelMax.Text = Strings.Get("GForce.AccelMax.Label");
             GForceLblDecelMax.Text = Strings.Get("GForce.DecelMax.Label");
-            GForceAccelAutoLabel.Text = GForceDecelAutoLabel.Text = Strings.Get("GForce.Mode.Auto.Short");
+            GForceLblLatMax.Text = Strings.Get("GForce.LatMax.Label");
+            GForceAccelAutoLabel.Text = GForceDecelAutoLabel.Text = GForceLatAutoLabel.Text = Strings.Get("GForce.Mode.Auto.Short");
+
+            GForceScaleNote.Text = Strings.Get("GForce.ScaleNote");
+            GForceLblAccelScale.Text = Strings.Get("GForce.AccelScale.Label");
+            GForceLblBrakeScale.Text = Strings.Get("GForce.BrakeScale.Label");
+            GForceLblLateralScale.Text = Strings.Get("GForce.LateralScale.Label");
+
+            GForceLatSplitGroup.Header = Strings.Get("Group.GForceLatSplit");
+            GForceLatSplitNote.Text = Strings.Get("GForce.LatSplit.Note");
+            GForceLblBrakeBottomFrontLatSplit.Text = Strings.Get("GForce.LatSplit.BrakeBottomFront");
+            GForceLblBrakeBottomRearLatSplit.Text = Strings.Get("GForce.LatSplit.BrakeBottomRear");
+            GForceLblBrakeBackLowLatSplit.Text = Strings.Get("GForce.LatSplit.BrakeBackLow");
+            GForceLblAccelBottomRearLatSplit.Text = Strings.Get("GForce.LatSplit.AccelBottomRear");
+            GForceLblAccelBackLowLatSplit.Text = Strings.Get("GForce.LatSplit.AccelBackLow");
+            GForceLblAccelBackTopLatSplit.Text = Strings.Get("GForce.LatSplit.AccelBackTop");
             ApplyOnOffLabelsToEverySwitch();
 
             GForceSustainGroup.Header = Strings.Get("Group.GForceSustain");
@@ -1504,6 +1632,13 @@ namespace QAdvanceFeedback.Settings
 
             GForceMotionGroup.Header = Strings.Get("Group.GForceMotion");
             GForceMotionNote.Text = Strings.Get("GForce.Motion.Note");
+            GForceSustainTauHint.Text = Strings.Get("GForce.Motion.SustainTau.Hint");
+            GForceTransientTauHint.Text = Strings.Get("GForce.Motion.TransientTau.Hint");
+            GForceTransientGainHint.Text = Strings.Get("GForce.Motion.TransientGain.Hint");
+            GForceLblRetriggerStrictness.Text = Strings.Get("GForce.Motion.RetriggerStrictness.Label");
+            GForceRetriggerStrictnessHint.Text = Strings.Get("GForce.Motion.RetriggerStrictness.Hint");
+            GForceAutoTransitionScaleHint.Text = Strings.Get("GForce.Motion.AutoTransitionScale.Hint");
+            GForceFixedTransitionScaleHint.Text = Strings.Get("GForce.Motion.FixedTransitionScale.Hint");
             GForceLblSustainTau.Text = Strings.Get("GForce.SustainTau.Label");
             GForceLblTransientTau.Text = Strings.Get("GForce.TransientTau.Label");
             GForceLblTransientGain.Text = Strings.Get("GForce.TransientGain.Label");
@@ -1525,9 +1660,46 @@ namespace QAdvanceFeedback.Settings
             GForceShakeEnabled.OnLabel = Strings.Get("GForce.Shake.On");
             GForceShakeEnabled.OffLabel = Strings.Get("GForce.Shake.Off");
             GForceShakeNote.Text = Strings.Get("GForce.Shake.Note");
+            GForceLblShakeMode.Text = Strings.Get("GForce.Shake.Mode.Label");
+            GForceShakeModePerChannel.Content = Strings.Get("GForce.Shake.Mode.PerChannel");
+            GForceShakeModeAllGForce.Content = Strings.Get("GForce.Shake.Mode.AllGForce");
+            GForceShakeModeAllLockSlip.Content = Strings.Get("GForce.Shake.Mode.AllLockSlip");
+            GForceShakeModeHigherOfBoth.Content = Strings.Get("GForce.Shake.Mode.HigherOfBoth");
+            GForceLblShakeTrigger.Text = Strings.Get("GForce.Shake.Trigger.Label");
+            GForceShakeTriggerHint.Text = Strings.Get("GForce.Shake.Trigger.Hint");
+            GForceLblShakeFeeling.Text = Strings.Get("GForce.Shake.Feeling.Label");
+            GForceShakeFeelingOpposite.Content = Strings.Get("GForce.Shake.Feeling.Opposite");
+            GForceShakeFeelingSame.Content = Strings.Get("GForce.Shake.Feeling.Same");
+            GForceShakeFeelingBlending.Content = Strings.Get("GForce.Shake.Feeling.Blending");
+            GForceShakePreviewCaption.Text = Strings.Get("GForce.Shake.Preview.Caption");
+            GForceShakePreviewLegend.Text = Strings.Get("GForce.Shake.Preview.Legend");
+            GForceTestHeader.Text = Strings.Get("GForce.Test.Header");
+            GForceTestGroup.Header = Strings.Get("Group.GForceTest");
+            GForceTestEnabled.OnLabel = Strings.Get("GForce.Shake.On");
+            GForceTestEnabled.OffLabel = Strings.Get("GForce.Shake.Off");
+            GForceTestNote.Text = Strings.Get("GForce.Test.Note");
+            GForceLblTestRate.Text = Strings.Get("GForce.Test.Rate.Label");
+            GForceTestRateHint.Text = Strings.Get("GForce.Test.Rate.Hint");
+            GForceTestPadCaption.Text = Strings.Get("GForce.Test.Pad.Caption");
+            GForceTestBarCaption.Text = Strings.Get("GForce.Test.Bar.Caption");
+            GForceTestLblLat.Text = Strings.Get("GForce.Test.Readout.Lat");
+            GForceTestLblWheel.Text = Strings.Get("GForce.Test.Readout.Wheel");
+            GForceTestLblChannels.Text = Strings.Get("GForce.Test.Readout.Channels");
+            GForceTestLblFront.Text = Strings.Get("GForce.Test.Readout.Front");
+            GForceTestLblRear.Text = Strings.Get("GForce.Test.Readout.Rear");
+            GForceTestLblLow.Text = Strings.Get("GForce.Test.Readout.Low");
+            GForceTestLblTop.Text = Strings.Get("GForce.Test.Readout.Top");
             GForceLblShakeFrequency.Text = Strings.Get("GForce.Shake.Frequency.Label");
+            GForceShakeFrequencyHint.Text = Strings.Get("GForce.Shake.Frequency.Hint");
+            GForceLblShakeSustain.Text = Strings.Get("GForce.Shake.Sustain.Label");
+            GForceShakeSustainHint.Text = Strings.Get("GForce.Shake.Sustain.Hint");
             GForceLblShakeLockScale.Text = Strings.Get("GForce.Shake.LockScale.Label");
+            GForceShakeLockScaleHint.Text = Strings.Get("GForce.Shake.Scale.Hint");
             GForceLblShakeSlipScale.Text = Strings.Get("GForce.Shake.SlipScale.Label");
+            GForceShakeSlipScaleHint.Text = Strings.Get("GForce.Shake.Scale.Hint");
+            // The per-mode description depends on the CURRENT selection, so it is set here too - a
+            // culture switch must re-render it in the new language, not leave the old one behind.
+            RefreshGForceShakeModeDescription();
 
             GeneralGroup.Header = Strings.Get("Group.General");
             EnableDiagnosticsHeader.Text = Strings.Get("General.EnableDiagnostics");
@@ -2120,7 +2292,7 @@ namespace QAdvanceFeedback.Settings
             double w = canvas.Width, h = canvas.Height;
             bool maxGripOnly = GetSelectedTag(
                 isLock ? LockNormalizePatternCombo : SlipNormalizePatternCombo,
-                isLock ? "Mapping" : "MaxGripOnly") == "MaxGripOnly";
+                "Mapping") == "MaxGripOnly";
 
             // Canonical normalized positions of the three anchors - see
             // NormalizedWheelLockSlipEngine.TryBuildLockRangeCurve's own knot table.
@@ -2182,7 +2354,7 @@ namespace QAdvanceFeedback.Settings
             double w = canvas.Width, h = canvas.Height;
             bool maxGripOnly = GetSelectedTag(
                 isLock ? LockNormalizePatternCombo : SlipNormalizePatternCombo,
-                isLock ? "Mapping" : "MaxGripOnly") == "MaxGripOnly";
+                "Mapping") == "MaxGripOnly";
 
             double sMax = (isLock ? LockKeyDataSMax : SlipKeyDataSMax).Value
                 ?? (isLock ? KeyDataPointSettings.LockDefaultSMax : KeyDataPointSettings.SlipDefaultSMax);
@@ -2397,6 +2569,19 @@ namespace QAdvanceFeedback.Settings
 
                 GForceAccelAutoToggle.IsChecked = s.GForce.AccelMaxMode == GMaxMode.Auto;
                 GForceDecelAutoToggle.IsChecked = s.GForce.DecelMaxMode == GMaxMode.Auto;
+                GForceLatAutoToggle.IsChecked = s.GForce.LatMaxMode == GMaxMode.Auto;
+                GForceFixedLatMax.Value = s.GForce.FixedLatMaxG;
+
+                GForceAccelScale.Value = s.GForce.AccelOutputScalePercent;
+                GForceBrakeScale.Value = s.GForce.BrakeOutputScalePercent;
+                GForceLateralScale.Value = s.GForce.LateralOutputScalePercent;
+
+                GForceBrakeBottomFrontLatSplit.Value = s.GForce.BrakeBottomFrontLatSplitPercent;
+                GForceBrakeBottomRearLatSplit.Value = s.GForce.BrakeBottomRearLatSplitPercent;
+                GForceBrakeBackLowLatSplit.Value = s.GForce.BrakeBackLowLatSplitPercent;
+                GForceAccelBottomRearLatSplit.Value = s.GForce.AccelBottomRearLatSplitPercent;
+                GForceAccelBackLowLatSplit.Value = s.GForce.AccelBackLowLatSplitPercent;
+                GForceAccelBackTopLatSplit.Value = s.GForce.AccelBackTopLatSplitPercent;
                 GForceFixedAccelMax.Value = s.GForce.FixedAccelMaxG;
                 GForceFixedDecelMax.Value = s.GForce.FixedDecelMaxG;
                 RefreshGForceLearnedText();
@@ -2410,13 +2595,21 @@ namespace QAdvanceFeedback.Settings
                 GForceSustainTau.Value = s.GForce.SustainTimeConstantSeconds;
                 GForceTransientTau.Value = s.GForce.TransientTimeConstantSeconds;
                 GForceTransientGain.Value = s.GForce.TransientGain;
+                GForceRetriggerStrictness.Value = s.GForce.RetriggerStrictness;
                 GForceAutoTransitionScale.Value = s.GForce.AutoTransitionAnimationScale;
                 GForceFixedTransitionScale.Value = s.GForce.FixedTransitionAnimationScale;
 
                 SelectComboItemByTag(GForceLateralDirectionCombo, s.GForce.LateralDirection.ToString());
 
                 GForceShakeEnabled.IsChecked = s.GForce.IntegrateWheelLockAndSlip;
+                // The mode is selected INSIDE the load scope, so its SelectionChanged handler sees
+                // _dirty.IsLoading and skips the scale reset - a page open must show the driver's own
+                // saved scales, not this mode's defaults.
+                SelectComboItemByTag(GForceShakeModeCombo, s.GForce.ShakeApplyMode.ToString());
+                GForceShakeTrigger.Value = s.GForce.ShakeTriggerThresholdPercent;
+                SelectComboItemByTag(GForceShakeFeelingCombo, s.GForce.ShakeFeeling.ToString());
                 GForceShakeFrequency.Value = s.GForce.ShakeFrequencyHz;
+                GForceShakeSustain.Value = s.GForce.ShakeSustainPercent;
                 GForceShakeLockScale.Value = s.GForce.WheelLockShakeScale;
                 GForceShakeSlipScale.Value = s.GForce.WheelSlipShakeScale;
 
@@ -2446,6 +2639,9 @@ namespace QAdvanceFeedback.Settings
 
             GForceAccelLearnedText.Text = BuildGForceReadoutText(accelAuto, s.GForce.FixedAccelMaxG, s.GForce.TryGetCurrentAccelAutoDetected(out double accelDetected), accelDetected);
             GForceDecelLearnedText.Text = BuildGForceReadoutText(decelAuto, s.GForce.FixedDecelMaxG, s.GForce.TryGetCurrentDecelAutoDetected(out double decelDetected), decelDetected);
+
+            bool latAuto = GForceLatAutoToggle.IsChecked == true;
+            GForceLatLearnedText.Text = BuildGForceReadoutText(latAuto, s.GForce.FixedLatMaxG, s.GForce.TryGetCurrentLatAutoDetected(out double latDetected), latDetected);
         }
 
         private static string BuildGForceReadoutText(bool autoMode, double fixedValue, bool hasDetected, double detectedValue)
@@ -2500,28 +2696,7 @@ namespace QAdvanceFeedback.Settings
             s.Slip.SlipFloorFactor = SlipFloorFactor.Value ?? s.Slip.SlipFloorFactor;
             CopyProjector(_workingSlipProjector, s.Slip.Projector);
 
-            s.GForce.AccelMaxMode = GForceAccelAutoToggle.IsChecked == true ? GMaxMode.Auto : GMaxMode.Fixed;
-            s.GForce.DecelMaxMode = GForceDecelAutoToggle.IsChecked == true ? GMaxMode.Auto : GMaxMode.Fixed;
-            s.GForce.FixedAccelMaxG = GForceFixedAccelMax.Value ?? s.GForce.FixedAccelMaxG;
-            s.GForce.FixedDecelMaxG = GForceFixedDecelMax.Value ?? s.GForce.FixedDecelMaxG;
-
-            s.GForce.BrakeBottomRearSustainPercent = GForceBrakeBottomRearSustain.Value ?? s.GForce.BrakeBottomRearSustainPercent;
-            s.GForce.BrakeBackLowSustainPercent = GForceBrakeBackLowSustain.Value ?? s.GForce.BrakeBackLowSustainPercent;
-            s.GForce.AccelBottomRearSustainPercent = GForceAccelBottomRearSustain.Value ?? s.GForce.AccelBottomRearSustainPercent;
-            s.GForce.AccelBackLowSustainPercent = GForceAccelBackLowSustain.Value ?? s.GForce.AccelBackLowSustainPercent;
-
-            s.GForce.SustainTimeConstantSeconds = GForceSustainTau.Value ?? s.GForce.SustainTimeConstantSeconds;
-            s.GForce.TransientTimeConstantSeconds = GForceTransientTau.Value ?? s.GForce.TransientTimeConstantSeconds;
-            s.GForce.TransientGain = GForceTransientGain.Value ?? s.GForce.TransientGain;
-            s.GForce.AutoTransitionAnimationScale = GForceAutoTransitionScale.Value ?? s.GForce.AutoTransitionAnimationScale;
-            s.GForce.FixedTransitionAnimationScale = GForceFixedTransitionScale.Value ?? s.GForce.FixedTransitionAnimationScale;
-
-            s.GForce.LateralDirection = ParseEnum(GetSelectedTag(GForceLateralDirectionCombo, s.GForce.LateralDirection.ToString()), s.GForce.LateralDirection);
-
-            s.GForce.IntegrateWheelLockAndSlip = GForceShakeEnabled.IsChecked == true;
-            s.GForce.ShakeFrequencyHz = GForceShakeFrequency.Value ?? s.GForce.ShakeFrequencyHz;
-            s.GForce.WheelLockShakeScale = GForceShakeLockScale.Value ?? s.GForce.WheelLockShakeScale;
-            s.GForce.WheelSlipShakeScale = GForceShakeSlipScale.Value ?? s.GForce.WheelSlipShakeScale;
+            SaveGForceToSettings(s.GForce);
 
             s.General.EnableDiagnostics = EnableDiagnosticsCheckBox.IsChecked == true;
             s.General.ExportCsv = ExportCsvCheckBox.IsChecked == true;
@@ -2531,6 +2706,60 @@ namespace QAdvanceFeedback.Settings
             RefreshGForceModeControls();
             RefreshGForceShakeControls();
             MarkClean();
+        }
+
+        /// <summary>
+        /// Reads every G-Force control on the page into <paramref name="g"/>.
+        /// <para/>
+        /// TAKES A TARGET so the Test Effect panel can drive its private engine from a THROWAWAY
+        /// <see cref="GForceSettings"/> instead of the plugin's live one. It used to call the whole of
+        /// <see cref="SaveToSettings"/>, which writes straight into <c>_plugin.Settings</c> - so merely
+        /// switching the test panel on pushed every uncommitted edit on the page into the running
+        /// plugin, and turned a diagnostic into an un-asked-for Apply. The owner's rule is that nothing
+        /// about the Test Effect is ever saved.
+        /// </summary>
+        private void SaveGForceToSettings(GForceSettings g)
+        {
+            g.AccelMaxMode = GForceAccelAutoToggle.IsChecked == true ? GMaxMode.Auto : GMaxMode.Fixed;
+            g.DecelMaxMode = GForceDecelAutoToggle.IsChecked == true ? GMaxMode.Auto : GMaxMode.Fixed;
+            g.FixedAccelMaxG = GForceFixedAccelMax.Value ?? g.FixedAccelMaxG;
+            g.FixedDecelMaxG = GForceFixedDecelMax.Value ?? g.FixedDecelMaxG;
+            g.LatMaxMode = GForceLatAutoToggle.IsChecked == true ? GMaxMode.Auto : GMaxMode.Fixed;
+            g.FixedLatMaxG = GForceFixedLatMax.Value ?? g.FixedLatMaxG;
+
+            g.AccelOutputScalePercent = GForceAccelScale.Value ?? g.AccelOutputScalePercent;
+            g.BrakeOutputScalePercent = GForceBrakeScale.Value ?? g.BrakeOutputScalePercent;
+            g.LateralOutputScalePercent = GForceLateralScale.Value ?? g.LateralOutputScalePercent;
+
+            g.BrakeBottomFrontLatSplitPercent = GForceBrakeBottomFrontLatSplit.Value ?? g.BrakeBottomFrontLatSplitPercent;
+            g.BrakeBottomRearLatSplitPercent = GForceBrakeBottomRearLatSplit.Value ?? g.BrakeBottomRearLatSplitPercent;
+            g.BrakeBackLowLatSplitPercent = GForceBrakeBackLowLatSplit.Value ?? g.BrakeBackLowLatSplitPercent;
+            g.AccelBottomRearLatSplitPercent = GForceAccelBottomRearLatSplit.Value ?? g.AccelBottomRearLatSplitPercent;
+            g.AccelBackLowLatSplitPercent = GForceAccelBackLowLatSplit.Value ?? g.AccelBackLowLatSplitPercent;
+            g.AccelBackTopLatSplitPercent = GForceAccelBackTopLatSplit.Value ?? g.AccelBackTopLatSplitPercent;
+
+            g.BrakeBottomRearSustainPercent = GForceBrakeBottomRearSustain.Value ?? g.BrakeBottomRearSustainPercent;
+            g.BrakeBackLowSustainPercent = GForceBrakeBackLowSustain.Value ?? g.BrakeBackLowSustainPercent;
+            g.AccelBottomRearSustainPercent = GForceAccelBottomRearSustain.Value ?? g.AccelBottomRearSustainPercent;
+            g.AccelBackLowSustainPercent = GForceAccelBackLowSustain.Value ?? g.AccelBackLowSustainPercent;
+
+            g.SustainTimeConstantSeconds = GForceSustainTau.Value ?? g.SustainTimeConstantSeconds;
+            g.TransientTimeConstantSeconds = GForceTransientTau.Value ?? g.TransientTimeConstantSeconds;
+            g.TransientGain = GForceTransientGain.Value ?? g.TransientGain;
+            g.RetriggerStrictness = GForceRetriggerStrictness.Value ?? g.RetriggerStrictness;
+            g.AutoTransitionAnimationScale = GForceAutoTransitionScale.Value ?? g.AutoTransitionAnimationScale;
+            g.FixedTransitionAnimationScale = GForceFixedTransitionScale.Value ?? g.FixedTransitionAnimationScale;
+
+            g.LateralDirection = ParseEnum(GetSelectedTag(GForceLateralDirectionCombo, g.LateralDirection.ToString()), g.LateralDirection);
+
+            g.IntegrateWheelLockAndSlip = GForceShakeEnabled.IsChecked == true;
+            g.ShakeApplyMode = ParseEnum(GetSelectedTag(GForceShakeModeCombo, g.ShakeApplyMode.ToString()), g.ShakeApplyMode);
+            g.ShakeTriggerThresholdPercent = GForceShakeTrigger.Value ?? g.ShakeTriggerThresholdPercent;
+            g.ShakeFeeling = ParseEnum(GetSelectedTag(GForceShakeFeelingCombo, g.ShakeFeeling.ToString()), g.ShakeFeeling);
+            g.ShakeFrequencyHz = GForceShakeFrequency.Value ?? g.ShakeFrequencyHz;
+            g.ShakeSustainPercent = GForceShakeSustain.Value ?? g.ShakeSustainPercent;
+            g.WheelLockShakeScale = GForceShakeLockScale.Value ?? g.WheelLockShakeScale;
+            g.WheelSlipShakeScale = GForceShakeSlipScale.Value ?? g.WheelSlipShakeScale;
         }
 
         private void SaveChannel(

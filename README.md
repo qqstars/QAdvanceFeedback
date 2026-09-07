@@ -1,4 +1,4 @@
-# QAdvanceFeedback
+﻿# QAdvanceFeedback
 
 **English** · [简体中文](README.zh-Hans.md)
 
@@ -227,13 +227,171 @@ sampled every 5 across the range and the points joined.
   open, so it will show real numbers partway through your first lap rather than only the very next time
   you reopen the panel.
 - To change how a *held* G-force feels once the animation settles, **adjust the sustain percentages**.
+- Every setting in **Motion Feel** now carries a one-line note beside it saying which way to turn it.
+  The shipped **Sweep speed is 1.0**; lower makes the travel across the pads longer and smoother,
+  higher makes it snap through the three stages sooner.
+- **Re-trigger strictness** (default 1.2) decides how hard a pedal stab has to be to restart the
+  travel mid-corner once an earlier one has finished. Raise it if the animation feels busy under
+  continuous braking; lower it if a genuine re-application goes unnoticed. It scales with the car’s own
+  maximum G, so a gentler car needs a proportionally gentler stab.
 - Want the traveling sensation to feel slower and more deliberate, or snappier? **Lower the sweep
   speed** for a slower animation, or **raise it** for a faster one.
 - By default, a right-hand turn vibrates more strongly on the **left** side (the side you're being
   pushed toward). If that reads backwards on your rig, the **lateral feedback direction** setting
   reverses it.
+
+#### Cornering, and the friction circle
+
+Cornering grip and braking/accelerating grip cannot both be at maximum at the same time — that's the
+friction circle every driver already feels. This plugin models it directly: the combined load is the
+hypotenuse of the two, `sqrt(longitudinal² + lateral²)`, and whatever a corner adds *beyond* the
+longitudinal effort becomes a left/right split rather than making both sides louder.
+
+**Maximum cornering G** sits with the acceleration and braking maxima and works the same way — Auto by
+default, learned per game and per car, with a fixed fallback of 1.5 g. Before this existed, cornering
+normalised against a hidden 1.6 g that no setting could reach, so a 1 g car never produced a full split
+and a 3 g car saturated early.
+
+**Cornering split** decides how much of that extra load each pad turns into a left/right difference.
+The defaults deliberately give the **quietest** pad the most:
+
+| | Bottom Front | Bottom Rear | Back Low | Back Top |
+| --- | --- | --- | --- | --- |
+| Braking | 50% | 75% | 100% | — |
+| Acceleration | — | 100% | 75% | 50% |
+
+Under braking, Bottom Front is already the loudest pad, so giving it the least cornering keeps it from
+simply saturating; Back Low is quiet, so cornering shows up there most clearly. The result is that a
+trail brake feels like the vibration travelling **back and to one side** as the corner loads up, rather
+than everything getting louder in place. Acceleration mirrors it around its own strongest pad.
+
+Worked example — 72% braking with 70% cornering gives a combined 100.4%, so 28.4 points of extra load
+to share out:
+
+| Pad | own level | cornering share | left | right |
+| --- | --- | --- | --- | --- |
+| Bottom Front | 72.0 | 50% → 14.2 | **86.2** | 57.8 |
+| Bottom Rear | 36.0 | 75% → 21.3 | **57.3** | 14.7 |
+| Back Low | 18.0 | 100% → 28.4 | **46.4** | 0.0 |
+
+**Output scale (%)** — one per axis, default 100. Turn an axis down to make the G-force feel quieter
+without touching the wheel lock/slip shake. Set all three low and the plugin becomes purely a lock/slip
+warning rather than a motion simulation.
 - The wheel lock/slip shake laid on top of the G-force feel can be **disabled entirely**, or tuned
-  independently via its **shake frequency** and the **lock/slip scales**.
+  independently — see below.
+
+#### The wheel lock/slip shake
+
+**Shake applies to** picks how the shake is spread across the eight channels:
+
+| Mode | What it does | Use it when |
+| --- | --- | --- |
+| **Higher of G-Force or lock/slip** (default, listed first) | Each channel keeps its own G-Force animation exactly as the per-channel mode would — same minimum, same shape — and the wheel only **raises its ceiling**. A light lock adds a little width on top; a wheel at its limit pushes every channel to full and the shake takes over regardless of G-force. | You want both cues at once, with the G-force animation intact underneath rather than replaced. |
+| **Each channel's own G-Force level** | Every running channel shakes around its own current level. Channels the G-force isn't driving stay still — under braking that's the top-back pad, under power the bottom-front one. | You want the shake to stay part of the G-force animation, strongest where the load already is. |
+| **All channels (follow G-Force strength)** | The strongest channel sets one shake strength, applied to all eight equally — so the otherwise-idle pads shake too. Still grows and eases with the G-force. | The default feels too localized and you want the whole seat involved, without losing the sense of how hard you're braking. |
+| **All channels (lock/slip strength only)** | All eight shake equally, travelling from silence up to the lock/slip value. G-force is ignored entirely. | You want lock/slip to read as its own distinct warning, identical whether you're braking hard or barely at all. |
+
+**Switching mode restores that mode's own scale and "start shaking above"** — 1.3 / 5 for the default
+mode, 1.5 / 5 for per-channel, 1.3 / 30 and 1.0 / 30 for the two all-channels modes. The threshold is
+higher for the all-channels modes because there a trace of lock is a floor under all eight pads at once,
+which at a low threshold is just a permanent background buzz. A hand-tuned value is overwritten on the
+switch, deliberately.
+
+The remaining settings apply to every mode:
+
+- **Shake feeling** — how the two pads of a pair relate to each other while shaking. Every pad runs the
+  same shape: hold at the top, ease down, hold at the bottom, ease back up. This picks *when* each side
+  runs it.
+
+  | Feeling | What it does | Use it when |
+  | --- | --- | --- |
+  | **Opposite phase (side to side)** (default) | Half a cycle apart — one pad at its peak while the other is at its lowest. Reads as the vibration travelling side to side. | You want the shake to tell you *which* wheel. It is the subtlest of the three to feel, because the pair's total barely changes. |
+  | **Same phase (both together)** | Both pads do the same thing at the same moment. | You want the strongest possible sensation. The whole pair swells and drops together, at the cost of carrying no left/right information at all. |
+  | **Blending (one leads the other)** | A quarter turn between the two: both start high, one begins dropping while the other is still holding. | You want both at once — some side-to-side movement *and* a swelling total, which is the combination that reads as a real shake. |
+
+  This replaces the old **Both-sides blend (%)** spinner. Only three points on that slider were actually
+  distinct to feel, and the hold setting silently cancelled itself out towards the middle of it — so the
+  three points became three named choices, and the cancelling went away.
+
+  Picking a feeling **sets the frequency** to that feeling's own value — **5 Hz for Opposite phase,
+  10 Hz for the other two**. This overwrites a frequency you had tuned by hand, deliberately, and it is
+  where the shipped default comes from too: a fresh install ships Opposite phase at that feeling's own
+  5 Hz. Switching *mode*, by
+  contrast, leaves your Lock and Slip scales exactly as you set them.
+- **Hold at min/max (%)** — how long each swing pauses at its extremes before travelling to the other.
+  Default 30. Higher feels *sharper*, not faster: the frequency alone sets the speed, and this only
+  changes the shape within each cycle. At 0 the pad traces a plain cosine with no flats at all. **The
+  period is always 1/f** — the holds are a share *of* the cycle, not an addition to it, so raising this
+  never slows the shake down.
+
+  **Blending pins its own hold at 50% and ignores this setting**, which is why the control disappears
+  when you choose it — the quarter-turn offset that gives Blending its character is defined in terms of
+  that hold.
+- **Shake frequency** — how fast it oscillates. Higher is faster. Default 5 Hz, from the shipped
+  feeling. One hertz means one full max-min-max travel of a single pad per second — not one
+  left-right-left pan.
+- **Start shaking above (0–100)** — the lock/slip value a wheel has to reach before anything shakes.
+  Default 5. Small amounts of lock and slip are present constantly during ordinary driving, and letting
+  those through produced a permanent background buzz that masked the events you actually want to feel.
+
+  It works as a **soft off-switch for the whole integration**: below it the wheel signal is treated as
+  absent, so *every* mode falls back to exactly what it would publish with "Integrate wheel lock and
+  slip" unticked — plain G-force, no shake. The **scales are not applied** to this test, so turning a
+  scale up makes the shake stronger without making it start any earlier.
+- **Wheel Lock scale** / **Wheel Slip scale** — how strong the shake gets for a given amount of
+  locking/slipping. Higher is stronger. Switching mode resets both to that mode's own default (1.5 for
+  the two G-force modes, 1.0 for the two whose band *is* the wheel value), because the same number means
+  something different in each.
+
+The **live preview graph** beside these settings draws one second of what the two pads will actually do
+at your current settings — green for the left pad, red for the right — and redraws as you change them.
+It is the wave itself, not an illustration: the same code the plugin runs on track produces it.
+
+Once a shake starts it keeps one steady rhythm. A changing lock/slip value moves how *wide* the swing
+is and nothing else, so the beat stays where you have locked onto it. When the value falls back below
+the trigger the shake finishes the cycle it had already begun rather than cutting off mid-swing, and if
+the wheel starts locking again during that tail it rejoins the beat already running. Only a shake that
+starts from real silence begins afresh — and when it does, it opens at whichever position moves the pads
+*furthest* from where they currently sit, so the first frame is the biggest jolt available rather than a
+fade-in. Consecutive shakes also lead with opposite sides, so a shake that stops and restarts quickly
+reads as one continuing rhythm instead of two separate events.
+
+Under cornering there is one more rule. The left/right lean normally scales each pad separately, but
+while a shake is running **both pads follow the stronger side**. Without that, a real cornering load
+pushes the two pads' ranges apart far enough that they stop overlapping — the same side stays louder at
+every instant, and the shake stops alternating at all. The trade is deliberate: the cornering lean is
+suppressed for as long as the wheel is locking, and returns the moment it stops.
+
+Lock and slip drive one shared oscillation — whichever is currently stronger sets its width, and the
+two are always in step, so a wheel that starts slipping mid-lock changes how *wide* the shake is, never
+where it is in its swing.
+
+#### Test Effect
+
+The **Test Effect** panel at the bottom of the G-Force tab drives the outputs by hand — the quickest
+way to set your ShakeIt levels without needing to provoke a real lock-up on track.
+
+Switch it on and two controls appear. Drag the ball around the **G-Force pad** to place the car
+anywhere in the braking/acceleration/cornering square, and drag the ball along the **Lock/Slip bar** to
+dial in how hard a wheel is locking or slipping. The readout underneath shows the simulated G-forces and
+wheel value that produces, and the level each of the four channel groups is currently publishing.
+
+The pad is laid out the way the load lands on you: **up is braking, down is accelerating**, and dragging
+**left means turning right** (a right-hand corner throws you to your left). The labels say so.
+
+While it is on, the panel drives the real **`QAdvanceFeedback.GForce.*` properties** — the same ones
+your ShakeIt effects are bound to, rather than a separate preview. Switching the toggle off, or closing
+the settings page, hands those channels straight back to the live pipeline.
+
+**Every G-Force setting on this page is applied**, including the Wheel Lock and Wheel Slip scales — the
+panel runs the same engine the plugin runs on track, re-fed from the current state of the page rather
+than from what was last saved. So what you feel here is what you will feel driving, and editing any
+setting above changes it immediately.
+
+The panel produces nothing at all while the toggle is off: no controls, no labels, and no simulated
+frames reaching your motors. **Nothing about it is ever saved** — neither the toggle nor the simulation
+rate is written to your config, using it never enables the Apply button, and it never pushes the page's
+uncommitted edits into the running plugin.
 
 ### General
 

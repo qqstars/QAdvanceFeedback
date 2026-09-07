@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.GForce;
@@ -247,7 +247,9 @@ namespace QAdvanceFeedback.Tests
             var settings = new GForceSettings();
             Assert.Equal(0.15, settings.SustainTimeConstantSeconds, 6);
             Assert.Equal(0.08, settings.TransientTimeConstantSeconds, 6);
-            Assert.Equal(1.2, settings.TransientGain, 6);
+            // Sweep speed 1.5 -> 1.2 -> **1.0** (owner, 2026-09-06, after seat time: a slower, smoother
+            // transition reads better). A legitimate default change, not a weakened assertion.
+            Assert.Equal(1.0, settings.TransientGain, 6);
         }
 
         [Fact]
@@ -277,13 +279,20 @@ namespace QAdvanceFeedback.Tests
         // ---------------------------------------------------------------------------------------
 
         [Fact]
-        public void Shake_settings_now_default_to_on_10Hz_and_scale_1_5()
+        public void Shake_settings_default_to_on_the_combined_mode_and_the_shipped_feelings_frequency()
         {
             // Floor 5->1 Hz, default 5->3 Hz (docs\shake-tuning-report.md), then 3->10 Hz
             // (docs\shake-frequency-default-report.md - the owner tried 3 Hz on real hardware and
-            // reports 10 Hz feels much better; the 1-20 Hz bounds themselves are unchanged), and both
-            // scale defaults 1.0->1.5 (docs\shake-tuning-report.md) are legitimate default/floor
-            // CHANGES per driver feedback, not weakened assertions. IntegrateWheelLockAndSlip itself
+            // reports 10 Hz feels much better; the 1-20 Hz bounds themselves are unchanged), then
+            // then 10->5 in v1.0.8 for the zero-floor travel, and finally back to 10 once the Shake
+            // feeling dropdown made DefaultShakeFrequencyFor the single source of the number - the
+            // shipped default is now DERIVED from the shipped feeling rather than written out.
+            // The DEFAULT MODE also moved, PerChannel -> HigherOfGForceOrLockSlip, so a fresh install
+            // feels both cues rather than only whichever the active chain happens to carry. Both scale
+            // defaults 1.0->1.5 (docs\shake-tuning-report.md) are legitimate default CHANGES per driver
+            // feedback, not weakened assertions - and they are 1.5 in EVERY mode, since a mode switch no
+            // longer rewrites them (see Switching_mode_never_rewrites_the_scales below).
+            // IntegrateWheelLockAndSlip itself
             // later flipped OFF->ON (docs\integrate-default-report.md) - also a legitimate, deliberate
             // default change: the owner wants a fresh install to feel this without hunting for the
             // toggle. It stays behaviourally inert with no lock/slip signal wired up (amplitude is
@@ -292,9 +301,23 @@ namespace QAdvanceFeedback.Tests
             var settings = new GForceSettings();
 
             Assert.True(settings.IntegrateWheelLockAndSlip);
-            Assert.Equal(10.0, settings.ShakeFrequencyHz, 6);
-            Assert.Equal(1.5, settings.WheelLockShakeScale, 6);
-            Assert.Equal(1.5, settings.WheelSlipShakeScale, 6);
+            // DERIVED from the shipped feeling (5 Hz for OppositePhase, after the owner's 2026-09-06
+            // seat time) rather than written out, so a fresh install cannot open on a frequency its own
+            // feeling would immediately replace.
+            Assert.Equal(5.0, settings.ShakeFrequencyHz, 6);
+            Assert.Equal(GForceSettings.DefaultShakeFrequencyFor(GForceSettings.DefaultShakeFeeling),
+                         settings.ShakeFrequencyHz, 6);
+            Assert.Equal(ShakeApplyMode.HigherOfGForceOrLockSlip, settings.ShakeApplyMode);
+            // DERIVED from the shipped mode's own row (2026-09-07): HigherOfGForceOrLockSlip takes a
+            // 1.3 scale and a 5 trigger. Written as the derivation rather than the literals so a future
+            // change of default mode cannot leave these behind, which has happened once already.
+            double modeScale = GForceSettings.DefaultShakeScaleFor(GForceSettings.DefaultShakeApplyMode);
+            Assert.Equal(1.3, modeScale, 6);
+            Assert.Equal(modeScale, settings.WheelLockShakeScale, 6);
+            Assert.Equal(modeScale, settings.WheelSlipShakeScale, 6);
+            Assert.Equal(5.0, settings.ShakeTriggerThresholdPercent, 6);
+            Assert.Equal(GForceSettings.DefaultShakeTriggerFor(GForceSettings.DefaultShakeApplyMode),
+                         settings.ShakeTriggerThresholdPercent, 6);
         }
 
         [Fact]

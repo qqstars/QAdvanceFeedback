@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.Normalized;
 using QAdvanceFeedback.Core.Projection;
@@ -38,6 +38,30 @@ namespace QAdvanceFeedback.Tests
             return new TelemetrySample(newFrame, oldFrame, DateTime.UtcNow, TimeSpan.FromMilliseconds(16));
         }
 
+        /// <summary>
+        /// Drives Slip's learned ceiling to <paramref name="atLimitRaw"/> through TRACTION CROSSINGS -
+        /// the source climbing while achieved G falls away from this car's own peak, which is the only
+        /// evidence <see cref="SlipCrossingGate"/> accepts. The G fall is shallow enough (0.5% of peak
+        /// per frame) to stay above the 85%-of-peak bar that makes a frame an at-limit candidate at all.
+        /// </summary>
+        private static void WarmSlipCeilingWithCrossings(
+            NormalizedWheelLockSlipEngine engine, double peak, double atLimitRaw, string gameId, string carId)
+        {
+            double step = peak * 0.005;
+            for (int i = 0; i < 30; i++)
+                engine.Compute(ThrottleSample(peak), Corners.Zero, Corners.Uniform(atLimitRaw), gameId, carId);
+
+            for (int c = 0; c < 40; c++)
+            {
+                for (int i = 0; i < 10; i++)
+                    engine.Compute(ThrottleSample(peak - i * step), Corners.Zero,
+                                   Corners.Uniform(Math.Max(1.0, atLimitRaw - 9.0 + i)), gameId, carId);
+                for (int i = 0; i < 10; i++)
+                    engine.Compute(ThrottleSample(peak - (9 - i) * step), Corners.Zero,
+                                   Corners.Uniform(atLimitRaw), gameId, carId);
+            }
+        }
+
 
         // ------------------------------------------------------------------------------------
         // The acceptance test the brief calls for by name: an arcade-magnitude trace (4g routine)
@@ -68,8 +92,15 @@ namespace QAdvanceFeedback.Tests
         public void Slip_severity_now_tracks_the_calibrated_source_not_the_G_ratio_matching_1063()
         {
             var arcadeEngine = new NormalizedWheelLockSlipEngine();
-            // Warm-up: G held at the arcade car's own 4g peak, Raw held at a constant 50 (its own ceiling).
-            for (int i = 0; i < 300; i++) arcadeEngine.Compute(ThrottleSample(4.0), Corners.Zero, Corners.Uniform(50.0), "GameArcade", "Car1");
+            // Warm-up: drive Slip's own ceiling to 50 at the arcade car's own 4g peak.
+            //
+            // This used to hold Raw at a CONSTANT 50 for 300 frames at constant G. That stopped teaching
+            // anything when SlipCrossingGate arrived (docs\slip-smax-crossing-gate-design.md): a constant
+            // source at constant G is the signature of a standing start, and Slip now requires positive
+            // evidence of a traction limit - the source rising while achieved G falls. What this test
+            // ASSERTS is unchanged (severity is source-driven, so light-G and hard-G frames with the same
+            // Raw must read the same); only the way its precondition is established had to move.
+            WarmSlipCeilingWithCrossings(arcadeEngine, peak: 4.0, atLimitRaw: 50.0, gameId: "GameArcade", carId: "Car1");
             double arcadeLight = arcadeEngine.Compute(ThrottleSample(1.0), Corners.Zero, Corners.Uniform(50.0), "GameArcade", "Car1").SlipAll;
             double arcadeHard = arcadeEngine.Compute(ThrottleSample(4.0), Corners.Zero, Corners.Uniform(50.0), "GameArcade", "Car1").SlipAll;
 
@@ -387,8 +418,7 @@ namespace QAdvanceFeedback.Tests
             var engine = new NormalizedWheelLockSlipEngine();
 
             // Mature the learner first so the ratio is not cold-start-ceilinged.
-            for (int i = 0; i < 300; i++)
-                engine.Compute(BrakingSample(2.0), Corners.Uniform(50.0), Corners.Zero);
+            TestFrames.WarmLockWithCrossings(engine, 2.0, 50.0);
 
             // FrontLeft reports double the other three wheels' Raw value. Magnitude kept BELOW the
             // learned peak (1.0 vs. the ~2.0 the learner just matured around) so GripUtilization
@@ -420,8 +450,7 @@ namespace QAdvanceFeedback.Tests
             // shares for a uniform input), not the dedicated mean<=epsilon fallback branch.
             var engine = new NormalizedWheelLockSlipEngine();
             var raw = Corners.Uniform(10.0);
-            for (int i = 0; i < 300; i++)
-                engine.Compute(BrakingSample(2.0), raw, Corners.Zero);
+            TestFrames.WarmLockWithCrossings(engine, 2.0, 50.0);
 
             NormalizedWheelLockSlipResult result = engine.Compute(BrakingSample(2.0), raw, Corners.Zero);
 
@@ -460,7 +489,7 @@ namespace QAdvanceFeedback.Tests
             // (3.0g, Raw=30 - so Smax converges near 30). A LOW instantaneous G query (0.5g) with Raw
             // still claiming a fully locked wheel (100, i.e. well ABOVE the learned ceiling) must now read
             // HIGH severity - Raw/source is what decides the level again, exactly like 1.0.6.3.
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(3.0), Corners.Uniform(30.0), Corners.Zero);
+            TestFrames.WarmLockWithCrossings(engine, 3.0, 30.0);
 
             NormalizedWheelLockSlipResult result = engine.Compute(BrakingSample(0.5), Corners.Uniform(100.0), Corners.Zero);
 
@@ -504,7 +533,7 @@ namespace QAdvanceFeedback.Tests
         {
             var engine = new NormalizedWheelLockSlipEngine();
             // Warm-up at the car's own genuine peak (2.0g, Raw=50 - Smax converges near 50).
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(2.0), Corners.Uniform(50.0), Corners.Zero);
+            TestFrames.WarmLockWithCrossings(engine, 2.0, 50.0);
             double beforeDrop = engine.Compute(BrakingSample(2.0), Corners.Uniform(50.0), Corners.Zero).LockAll;
             Assert.True(beforeDrop >= 79.9, $"precondition: should read the max-grip anchor before G drops, was {beforeDrop}");
 
@@ -530,7 +559,7 @@ namespace QAdvanceFeedback.Tests
             // still (trivially) satisfies "no lag", just for a more direct reason than before.
             var engine = new NormalizedWheelLockSlipEngine();
             var raw = Corners.Uniform(1.0);
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(4.0), raw, Corners.Zero);
+            TestFrames.WarmLockWithCrossings(engine, 4.0, 50.0);
 
             double immediate = engine.Compute(BrakingSample(1.0), raw, Corners.Zero).LockAll;
 
@@ -571,7 +600,7 @@ namespace QAdvanceFeedback.Tests
             var engine = new NormalizedWheelLockSlipEngine();
             var raw = new Corners(80.0, 20.0, 20.0, 20.0);
 
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(2.0), Corners.Uniform(50.0), Corners.Zero);
+            TestFrames.WarmLockWithCrossings(engine, 2.0, 50.0);
             NormalizedWheelLockSlipResult result = engine.Compute(BrakingSample(2.0), raw, Corners.Zero);
 
             // layer3RawWheels is Corners.Zero on every call above, so the Raw-fallback blend never
@@ -609,7 +638,7 @@ namespace QAdvanceFeedback.Tests
             // toward 100 - the exact "one wheel fully locked" physical scenario - and asserts the FIX:
             // All must exceed 90, not cap at 67.5.
             var engine = new NormalizedWheelLockSlipEngine();
-            for (int i = 0; i < 300; i++) engine.Compute(BrakingSample(3.0), Corners.Uniform(50.0), Corners.Zero);
+            TestFrames.WarmLockWithCrossings(engine, 3.0, 50.0);
 
             // A genuine ΔG collapse near the limit - the "spike, then crash back near the peak" signature
             // real noisy G telemetry produces during an actual lock event (a momentary overshoot as the
@@ -1035,7 +1064,11 @@ namespace QAdvanceFeedback.Tests
             // Confidence reaches ~0.5 (100/200), still meaningfully cold, u's own ceiling only partially
             // lifted (~0.875).
             NormalizedWheelLockSlipResult normalized = null;
-            for (int i = 0; i < 100; i++) normalized = engine.Compute(BrakingSample(4.3), Corners.Uniform(50.0), Corners.Zero);
+            // ONE crossing cycle rather than 100 identical frames: the channel must end up PARTIALLY
+            // cold (the Assert.InRange below is the real premise), and a constant source teaches the
+            // Lock crossing gate nothing at all, so the old fixture left it fully cold instead.
+            TestFrames.WarmLockWithCrossings(engine, 4.3, 50.0, cycles: 1);
+            normalized = engine.Compute(BrakingSample(4.3), Corners.Uniform(50.0), Corners.Zero);
             Assert.InRange(engine.LockColdStartConfidence, 0.30, 0.70);
 
             // Phase 2: a genuine, sudden PARTIAL collapse (still well above zero - a locked/skidding tyre

@@ -270,20 +270,30 @@ namespace QAdvanceFeedback.Core.Runtime
 
 
         public void LoadGForceLearners(out Dictionary<string, double> accel, out Dictionary<string, double> decel)
+            => LoadGForceLearners(out accel, out decel, out _);
+
+        public void LoadGForceLearners(out Dictionary<string, double> accel, out Dictionary<string, double> decel,
+            out Dictionary<string, double> lateral)
         {
             lock (_gate)
             {
                 accel = new Dictionary<string, double>(_document.GForceAccelLearnedMaxima, StringComparer.Ordinal);
                 decel = new Dictionary<string, double>(_document.GForceDecelLearnedMaxima, StringComparer.Ordinal);
+                lateral = new Dictionary<string, double>(_document.GForceLatLearnedMaxima ?? EmptyMap, StringComparer.Ordinal);
             }
         }
 
         public void SaveGForceLearners(Dictionary<string, double> accel, Dictionary<string, double> decel)
+            => SaveGForceLearners(accel, decel, null);
+
+        public void SaveGForceLearners(Dictionary<string, double> accel, Dictionary<string, double> decel,
+            Dictionary<string, double> lateral)
         {
             lock (_gate)
             {
                 _document.GForceAccelLearnedMaxima = new Dictionary<string, double>(accel ?? EmptyMap, StringComparer.Ordinal);
                 _document.GForceDecelLearnedMaxima = new Dictionary<string, double>(decel ?? EmptyMap, StringComparer.Ordinal);
+                _document.GForceLatLearnedMaxima = new Dictionary<string, double>(lateral ?? EmptyMap, StringComparer.Ordinal);
                 _dirty = true;
             }
         }
