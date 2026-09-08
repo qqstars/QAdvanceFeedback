@@ -439,13 +439,14 @@ namespace QAdvanceFeedback.Core.GForce
         /// car's whole range in 40 ms, which is effectively "never re-arm".</summary>
         public const double MaxRetriggerStrictness = 5.0;
 
-        private double _retriggerStrictness = 1.2;
+        private double _retriggerStrictness = 0.5;
 
         /// <summary>
         /// HOW STRICT THE MID-BRAKE RE-TRIGGER IS, as a multiple of "fast enough to cross the whole
         /// range inside one sweep" (owner's own derivation, 2026-09-06). **Driver-configurable since
         /// 2026-09-07** - it is the one number here that only seat time can settle, so it is a setting
-        /// rather than a constant. Default **1.2**, the bottom of the owner's own suggested 1.2-1.5.
+        /// rather than a constant. Default **0.5** (v1.0.9; it shipped at 1.2, the bottom of the owner's own
+        /// suggested 1.2-1.5, and seat time asked for a readier re-arm).
         /// <para/>
         /// The threshold itself is <see cref="MaxStageProgressPerSecond"/> x this, in RATIO per second -
         /// ratio, not raw g, which is what makes it self-scaling exactly as the owner wanted: the
@@ -464,7 +465,7 @@ namespace QAdvanceFeedback.Core.GForce
             get => _retriggerStrictness;
             set => _retriggerStrictness = ClampMath.IsFinite(value)
                 ? ClampMath.Clamp(value, MinRetriggerStrictness, MaxRetriggerStrictness)
-                : 1.2;
+                : 0.5;
         }
 
         /// <summary>Rising ratio-per-second that re-arms a COMPLETED sweep - see

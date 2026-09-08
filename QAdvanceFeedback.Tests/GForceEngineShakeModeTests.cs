@@ -707,16 +707,19 @@ namespace QAdvanceFeedback.Tests
             // per-mode reset was removed on the grounds that a scale means the same thing in every mode -
             // seat time produced a different number per mode, and a table is only reachable if switching
             // applies it. The dropdown handler (OnShakeApplyModeChanged) is what writes these through.
-            Assert.Equal(1.3, Settings.GForceSettings.DefaultShakeScaleFor(ShakeApplyMode.HigherOfGForceOrLockSlip), 9);
+            // v1.0.9 revised the combined mode's scale 1.3 -> 1.2; the other three are unchanged.
+            Assert.Equal(1.2, Settings.GForceSettings.DefaultShakeScaleFor(ShakeApplyMode.HigherOfGForceOrLockSlip), 9);
             Assert.Equal(1.5, Settings.GForceSettings.DefaultShakeScaleFor(ShakeApplyMode.PerChannel), 9);
             Assert.Equal(1.3, Settings.GForceSettings.DefaultShakeScaleFor(ShakeApplyMode.AllChannelsGForce), 9);
             Assert.Equal(1.0, Settings.GForceSettings.DefaultShakeScaleFor(ShakeApplyMode.AllChannelsLockSlip), 9);
 
-            // 5 for the two modes anchored to a channel's own level; 30 for the two that drive all eight
-            // pads from one shared band, where a low threshold reads as a permanent background buzz.
-            Assert.Equal(5.0, Settings.GForceSettings.DefaultShakeTriggerFor(ShakeApplyMode.HigherOfGForceOrLockSlip), 9);
+            // v1.0.9, after seat time. The combined mode went 5 -> 60 and AllChannelsGForce 30 -> 60: the
+            // combined mode raises each channel's CEILING by the wheel value, so a low threshold there
+            // lets ordinary background lock/slip lift every ceiling continuously - the same permanent-buzz
+            // failure the threshold exists to stop, arriving by a different route.
+            Assert.Equal(60.0, Settings.GForceSettings.DefaultShakeTriggerFor(ShakeApplyMode.HigherOfGForceOrLockSlip), 9);
             Assert.Equal(5.0, Settings.GForceSettings.DefaultShakeTriggerFor(ShakeApplyMode.PerChannel), 9);
-            Assert.Equal(30.0, Settings.GForceSettings.DefaultShakeTriggerFor(ShakeApplyMode.AllChannelsGForce), 9);
+            Assert.Equal(60.0, Settings.GForceSettings.DefaultShakeTriggerFor(ShakeApplyMode.AllChannelsGForce), 9);
             Assert.Equal(30.0, Settings.GForceSettings.DefaultShakeTriggerFor(ShakeApplyMode.AllChannelsLockSlip), 9);
         }
 

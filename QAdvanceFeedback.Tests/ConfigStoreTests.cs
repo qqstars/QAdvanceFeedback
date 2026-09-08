@@ -185,8 +185,8 @@ namespace QAdvanceFeedback.Tests
             Assert.True(loaded.GForce.IntegrateWheelLockAndSlip);
             // Derived from the shipped Shake feeling - see GForceSettings.ShakeFrequencyHz.
             Assert.Equal(5.0, loaded.GForce.ShakeFrequencyHz, 6);
-            Assert.Equal(1.3, loaded.GForce.WheelLockShakeScale, 6);
-            Assert.Equal(1.3, loaded.GForce.WheelSlipShakeScale, 6);
+            Assert.Equal(1.2, loaded.GForce.WheelLockShakeScale, 6);
+            Assert.Equal(1.2, loaded.GForce.WheelSlipShakeScale, 6);
         }
 
         [Fact]

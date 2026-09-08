@@ -312,10 +312,10 @@ namespace QAdvanceFeedback.Tests
             // 1.3 scale and a 5 trigger. Written as the derivation rather than the literals so a future
             // change of default mode cannot leave these behind, which has happened once already.
             double modeScale = GForceSettings.DefaultShakeScaleFor(GForceSettings.DefaultShakeApplyMode);
-            Assert.Equal(1.3, modeScale, 6);
+            Assert.Equal(1.2, modeScale, 6);
             Assert.Equal(modeScale, settings.WheelLockShakeScale, 6);
             Assert.Equal(modeScale, settings.WheelSlipShakeScale, 6);
-            Assert.Equal(5.0, settings.ShakeTriggerThresholdPercent, 6);
+            Assert.Equal(60.0, settings.ShakeTriggerThresholdPercent, 6);
             Assert.Equal(GForceSettings.DefaultShakeTriggerFor(GForceSettings.DefaultShakeApplyMode),
                          settings.ShakeTriggerThresholdPercent, 6);
         }

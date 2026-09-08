@@ -474,15 +474,17 @@ getting there, because a rig cueing acceleration needs both — the current g, a
 
   | Mode | Band source | Travel | Lateral bias | Default scale / trigger |
   | --- | --- | --- | --- | --- |
-  | `HigherOfGForceOrLockSlip` (**shipped default**, listed first) | that channel's own level, with the CEILING raised by the wheel | centred on the level | applied | 1.3 / 5 |
+  | `HigherOfGForceOrLockSlip` (**shipped default**, listed first) | that channel's own level, with the CEILING raised by the wheel | centred on the level | applied | 1.2 / 60 |
   | `PerChannel` (all pre-1.0.8 behaviour) | that channel's own level | centred on the level | applied | 1.5 / 5 |
-  | `AllChannelsGForce` | the **active chain's terminal** level, applied to all eight | centred on the level | applied | 1.3 / 30 |
+  | `AllChannelsGForce` | the **active chain's terminal** level, applied to all eight | centred on the level | applied | 1.3 / 60 |
   | `AllChannelsLockSlip` | `100 × contribution` — G-force ignored entirely | **from zero** | **not** applied | 1.0 / 30 |
 
-  **The trigger split** (5 vs 30) follows from what a low wheel value DOES in each mode. On a
-  per-channel band a trace of lock is a trace of extra width on an animation that was already there, so
-  it can be admitted early; on an all-channels band it is a floor under all eight pads at once, which at
-  a low threshold reads as exactly the permanent background buzz the threshold exists to stop.
+  **The trigger split** (5 vs 60 vs 30, revised in v1.0.9) follows from what a low wheel value DOES in
+  each mode. On a per-channel band a trace of lock is a trace of extra width on an animation that was
+  already there, so it can be admitted early. On an all-channels band it is a floor under all eight pads
+  at once. And in the combined mode it lifts every channel's CEILING — a different route to the same
+  permanent background buzz the threshold exists to stop, which is why seat time moved that mode from 5
+  to 60 rather than leaving it with per-channel's value.
 
   `AllChannelsGForce` picks its terminal by **direction** (braking → BottomFront, accelerating →
   BackTop), not by whichever wheel signal is larger: slip while braking would otherwise select BackTop,
@@ -615,7 +617,8 @@ getting there, because a rig cueing acceleration needs both — the current g, a
     stops, smaller absolute deltas) needs a proportionally smaller delta to earn its animation, while a
     high-max-G car is not retriggered by every small stab. `RetriggerStrictness` is a **driver-facing
     setting** (2026-09-07 — the one number here that only seat time can settle), default **1.2**,
-    clamped to 0.1–5.0. At the shipped 0.2 s fastest sweep the default reads as "the pedal moved far
+    clamped to 0.1–5.0, **0.5 since v1.0.9** (it shipped at 1.2; seat time asked for a readier re-arm).
+    At the shipped 0.2 s fastest sweep 1.2 reads as "the pedal moved far
     enough to cover the car's whole braking range in 167 ms". Higher is stricter; the floor is not 0,
     because a strictness of zero means a threshold of zero, which re-arms on any rise at all — the
     runaway the setting exists to prevent. `RetriggerRatioRatePerSecond` is therefore computed, not
