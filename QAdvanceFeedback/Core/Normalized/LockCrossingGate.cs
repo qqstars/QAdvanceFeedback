@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using QAdvanceFeedback.Core;
 
@@ -43,6 +43,70 @@ namespace QAdvanceFeedback.Core.Normalized
         /// rather than fractional for the same reason Slip's is: the question is whether the source
         /// moved meaningfully, and a fractional test would equate a wobble near zero with a real
         /// lock-up.</summary>
+        /// <summary>
+        /// THE SOURCE CEILING (owner's rule 2, 2026-09-07). Every basis entering this gate is clamped to
+        /// it, so a reading of 100.0000000001 - which telemetry and our own arithmetic both produce -
+        /// cannot read as "still rising" against a previous 100.
+        /// </summary>
+        public const double SourceCeiling = 100.0;
+
+        /// <summary>Smallest frame-over-frame rise that counts as GENUINELY INCREASING (owner's rule 1).
+        /// A hair above zero rather than zero, so floating noise on a held signal is not a rise.</summary>
+        public const double MinFrameRise = 1e-6;
+
+        /// <summary>
+        /// THE G-COLLAPSE LIMIT (owner, 2026-09-07). Rejects a "crossing" whose acceleration-G fell far
+        /// too fast to be a tyre passing its peak - an upshift, a lift, a kerb strike, wheels off the
+        /// ground. Measured as a FRACTION OF THE CAR'S OWN CURRENT G, PER SECOND.
+        /// <para/>
+        /// WHY A FRACTION AND NOT AN ABSOLUTE g/s (the owner's explicit requirement that a different
+        /// car, surface or weather must not be limited). An absolute threshold cannot work: an F1 car
+        /// shedding 1.0 g is routine, while a road car on ice never moves 1.0 g at all, so any fixed
+        /// number either filters nothing on the fast car or everything on the slow one. A fraction is
+        /// dimensionless - it asks "how much of what this car currently HAS did it just lose?" - so it
+        /// adapts to grip level automatically, with no per-car, per-surface or per-weather tuning and no
+        /// dependency on a learned maximum.
+        /// <para/>
+        /// PER SECOND, not per frame, so a 30 Hz title and a 144 Hz title agree.
+        /// <para/>
+        /// THE NUMBER, and why it is deliberately permissive (the owner: "keep correct data AS MUCH AS
+        /// POSSIBLE... few and low percentage incorrect data leaking should be fine"). Measured on the
+        /// scenario probe:
+        /// <list type="bullet">
+        /// <item>upshift: 0.85 -&gt; 0.30 in one 60 Hz frame = 65% lost = <b>39/s</b></item>
+        /// <item>progressive crossing: ~4% per frame = <b>2.4/s</b></item>
+        /// <item>fast tarmac spin at detection: ~11% per frame = <b>6.4/s</b></item>
+        /// <item>steady-G exit: ~6% per frame = <b>3.3/s</b></item>
+        /// </list>
+        /// 15/s sits an order of magnitude clear of every genuine crossing above and still less than half
+        /// the upshift, so as a filter it errs heavily towards keeping real data.
+        /// <para/>
+        /// BUT IT SHIPS **OFF** (0.0), because replaying the 12-session corpus measured NO BENEFIT and a
+        /// real RISK. Sweeping it over 0 / 6 / 10 / 15 / 25 / 40 per second left ten of the twelve logs
+        /// bit-identical, and where it moved anything it was as likely to hurt as help:
+        /// <list type="bullet">
+        /// <item>c_1_5_3 Raw: max taught value went 78.3 (off) -&gt; <b>90.6</b> (at 6-15/s) - WORSE.</item>
+        /// <item>Common_1_5 ShakeItWet: p90 went 48.8 (off) -&gt; <b>66.4</b> (at 6/s) - WORSE.</item>
+        /// <item>c_1_7_1: 105 crossings -&gt; 103, p90 unchanged at 58.0 - neutral.</item>
+        /// </list>
+        /// WHY IT CAN BACKFIRE, which the synthetic scenario could never have shown: rejecting a crossing
+        /// does not open the hold window, so ONE CROSSING PER EVENT no longer suppresses the rest of the
+        /// break-away - and a LATER, HIGHER reading fires instead. The filter removes a bad sample and
+        /// admits a worse one. Fixing that properly means a rejected disturbance must also sit out the
+        /// hold window; until that is built and measured, this stays off.
+        /// <para/>
+        /// Set it to 15.0 to enable the behaviour the tests document.
+        /// </summary>
+        public const double DefaultMaxGCollapseFractionPerSecond = 0.0;
+
+        /// <summary>
+        /// Below this G the fractional test is SKIPPED rather than applied. Dividing by a near-zero G
+        /// makes the fraction meaningless and enormous, which would reject everything at low speed and
+        /// on very low grip - exactly the cars the owner asked not to penalise. Skipping is the
+        /// permissive choice, consistent with letting a little bad data through rather than losing good.
+        /// </summary>
+        public const double MinGForCollapseTest = 0.05;
+
         public const double LockRise = 1.0;
 
         /// <summary>Maximum change in achieved G over the trend for a crossing - G must be FALLING, not
@@ -73,6 +137,18 @@ namespace QAdvanceFeedback.Core.Normalized
         public const int HoldMaxFrames = 500;
 
         private const int HistoryLength = TrendFrames + 1;
+
+        /// <summary>The live G-collapse limit - see
+        /// <see cref="DefaultMaxGCollapseFractionPerSecond"/>. Set to 0 or less to DISABLE the test
+        /// entirely, which is the kill switch for it.</summary>
+        public double MaxGCollapseFractionPerSecond { get; set; } = DefaultMaxGCollapseFractionPerSecond;
+
+        /// <summary>The immediately previous accepted basis, for the frame-over-frame rise test - see
+        /// the rule 1 block in <see cref="Observe"/>. NaN until the first accepted frame.</summary>
+        private double _previousBasis = double.NaN;
+
+        /// <summary>The immediately previous accepted G, for the collapse-rate test.</summary>
+        private double _previousG = double.NaN;
 
         private readonly double[] _basisHistory = new double[HistoryLength];
         private readonly double[] _gHistory = new double[HistoryLength];
@@ -128,7 +204,7 @@ namespace QAdvanceFeedback.Core.Normalized
         /// </summary>
         public double TeachingBasis(double liveBasis)
         {
-            return Qualified && IsUsable(_crossingBasis) ? _crossingBasis : liveBasis;
+            return AtMostCeiling(Qualified && IsUsable(_crossingBasis) ? _crossingBasis : liveBasis);
         }
 
         /// <summary><see cref="TeachingBasis"/> for the Raw-fallback key. Both keys must learn on the
@@ -136,8 +212,14 @@ namespace QAdvanceFeedback.Core.Normalized
         /// not comparable.</summary>
         public double TeachingFallbackBasis(double liveFallbackBasis)
         {
-            return Qualified && IsUsable(_crossingFallbackBasis) ? _crossingFallbackBasis : liveFallbackBasis;
+            return AtMostCeiling(Qualified && IsUsable(_crossingFallbackBasis) ? _crossingFallbackBasis : liveFallbackBasis);
         }
+
+        /// <summary>Rule 2 applied on the way OUT as well as the way in: the live-value fallback
+        /// path never passed through Observe's clamp, so a live 100.0000000001 could still leave
+        /// this gate and become SMax. Caught by CrossingGateHeldSourceTests.</summary>
+        private static double AtMostCeiling(double basis)
+            => ClampMath.IsFinite(basis) && basis > SourceCeiling ? SourceCeiling : basis;
 
         private static bool IsUsable(double basis) => ClampMath.IsFinite(basis) && basis > 0.0;
 
@@ -146,6 +228,8 @@ namespace QAdvanceFeedback.Core.Normalized
         /// series.</summary>
         public void Reset()
         {
+            _previousBasis = double.NaN;
+            _previousG = double.NaN;
             _written = 0;
             _next = 0;
             _secondsSinceCrossing = double.PositiveInfinity;
@@ -179,6 +263,55 @@ namespace QAdvanceFeedback.Core.Normalized
             if (!ClampMath.IsFinite(lockBasis) || !ClampMath.IsFinite(achievedG) || lockBasis < 0.0)
                 return Qualified;
 
+            // ---- OWNER'S RULES 1 AND 2, 2026-09-07 ------------------------------------------------
+            //
+            // RULE 2 - CLAMP TO THE CEILING. Everything downstream of here, the snapshot that becomes
+            // SMax included, is therefore <= 100 exactly.
+            //
+            // RULE 1 - THE SOURCE MUST BE RISING ON THIS VERY FRAME, not merely higher than it was
+            // TrendFrames ago. THE LEAK THIS CLOSES: the trend below differences against 5 frames back,
+            // so a source that shoots 10 -> 100 in two frames and then SITS at 100 still reports a rise
+            // of +90 for the next five frames. Across those frames it is not rising at all - it is
+            // pegged - yet the gate saw a large rise, G was falling because the wheel had already let
+            // go, and the frame qualified and taught 100. That is the "source is HOLD but G is
+            // decreasing" case, reported from real driving.
+            //
+            // WHY THIS MAKES SMax = 100 STRUCTURALLY UNREACHABLE, which is the real prize: teaching now
+            // requires a strictly increasing source at the detection frame, and a value clamped to 100
+            // cannot increase. The taught snapshot is therefore always the last reading BELOW the
+            // ceiling. Normal-range crossings are untouched - a crossing at 55 is still rising at 55.
+            if (lockBasis > SourceCeiling) lockBasis = SourceCeiling;
+            if (ClampMath.IsFinite(fallbackBasis) && fallbackBasis > SourceCeiling) fallbackBasis = SourceCeiling;
+
+            double previousBasis = _previousBasis;
+            double previousG = _previousG;
+            _previousBasis = lockBasis;
+            _previousG = achievedG;
+            bool risingThisFrame = ClampMath.IsFinite(previousBasis)
+                                   && lockBasis - previousBasis > MinFrameRise;
+
+            // ---- THE G-COLLAPSE LIMIT (owner, 2026-09-07) ----------------------------------------
+            //
+            // A tyre passing the peak of its slip curve sheds grip PROGRESSIVELY. G that vanishes far
+            // faster than that did not come from the tyre: an upshift's torque interruption, a lift, a
+            // kerb, a landing. Those all show "slip up, G down" and used to qualify - the probe measured
+            // an upshift teaching 40 from a G drop of 0.85 -> 0.30 in a single frame.
+            //
+            // Self-scaling by construction - see MaxGCollapseFractionPerSecond.
+            bool collapseTooFast = false;
+            if (MaxGCollapseFractionPerSecond > 0.0
+                && ClampMath.IsFinite(previousG)
+                && previousG >= MinGForCollapseTest)
+            {
+                double dropFraction = (previousG - achievedG) / previousG;
+                if (dropFraction > 0.0)
+                {
+                    double perSecond = dropFraction / aged;
+                    collapseTooFast = perSecond > MaxGCollapseFractionPerSecond;
+                }
+            }
+
+
             int slot = _next;
             _basisHistory[slot] = lockBasis;
             _gHistory[slot] = achievedG;
@@ -190,7 +323,7 @@ namespace QAdvanceFeedback.Core.Normalized
             // snapshot with the runaway's value and the refreshed window would reach forward into the
             // next braking zone. And a crossing detected while the car is NOT at its braking limit is a
             // spin, a kerb, or wheels off the ground - all of which show the same signature.
-            if (_written >= HistoryLength && !Qualified && atLimit)
+            if (_written >= HistoryLength && !Qualified && atLimit && risingThisFrame && !collapseTooFast)
             {
                 double deltaBasis = lockBasis - _basisHistory[_next];
                 double deltaG = achievedG - _gHistory[_next];

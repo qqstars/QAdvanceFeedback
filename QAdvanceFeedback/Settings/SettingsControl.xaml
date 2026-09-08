@@ -829,7 +829,7 @@
                 <TextBlock x:Name="GForceMotionNote" TextWrapping="Wrap" FontStyle="Italic"/>
                 <Grid>
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" SharedSizeGroup="GForceAlign"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="GForceAlign"/><ColumnDefinition Width="Auto" SharedSizeGroup="GForceSpin"/><ColumnDefinition Width="*"/>
                   </Grid.ColumnDefinitions>
                   <Grid.RowDefinitions>
                     <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
@@ -837,27 +837,27 @@
 
                   <TextBlock Grid.Row="0" Grid.Column="0" x:Name="GForceLblSustainTau"/>
                   <mah:NumericUpDown Grid.Row="0" Grid.Column="1" x:Name="GForceSustainTau" Minimum="0.01" Maximum="3" Interval="0.01" StringFormat="0.00"/>
-                  <TextBlock Grid.Row="0" Grid.Column="2" x:Name="GForceSustainTauHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0" MaxWidth="430"/>
+                  <TextBlock Grid.Row="0" Grid.Column="2" x:Name="GForceSustainTauHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0"/>
 
                   <TextBlock Grid.Row="1" Grid.Column="0" x:Name="GForceLblTransientTau"/>
                   <mah:NumericUpDown Grid.Row="1" Grid.Column="1" x:Name="GForceTransientTau" Minimum="0.01" Maximum="3" Interval="0.01" StringFormat="0.00"/>
-                  <TextBlock Grid.Row="1" Grid.Column="2" x:Name="GForceTransientTauHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0" MaxWidth="430"/>
+                  <TextBlock Grid.Row="1" Grid.Column="2" x:Name="GForceTransientTauHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0"/>
 
                   <TextBlock Grid.Row="2" Grid.Column="0" x:Name="GForceLblTransientGain"/>
                   <mah:NumericUpDown Grid.Row="2" Grid.Column="1" x:Name="GForceTransientGain" Minimum="0" Maximum="5" Interval="0.1" StringFormat="0.0"/>
-                  <TextBlock Grid.Row="2" Grid.Column="2" x:Name="GForceTransientGainHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0" MaxWidth="430"/>
+                  <TextBlock Grid.Row="2" Grid.Column="2" x:Name="GForceTransientGainHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0"/>
 
                   <TextBlock Grid.Row="3" Grid.Column="0" x:Name="GForceLblRetriggerStrictness"/>
                   <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="GForceRetriggerStrictness" Minimum="0.1" Maximum="5" Interval="0.1" StringFormat="0.0"/>
-                  <TextBlock Grid.Row="3" Grid.Column="2" x:Name="GForceRetriggerStrictnessHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0" MaxWidth="430"/>
+                  <TextBlock Grid.Row="3" Grid.Column="2" x:Name="GForceRetriggerStrictnessHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0"/>
 
                   <TextBlock Grid.Row="4" Grid.Column="0" x:Name="GForceLblAutoTransitionScale"/>
                   <mah:NumericUpDown Grid.Row="4" Grid.Column="1" x:Name="GForceAutoTransitionScale" Minimum="0" Maximum="5" Interval="0.1" StringFormat="0.00"/>
-                  <TextBlock Grid.Row="4" Grid.Column="2" x:Name="GForceAutoTransitionScaleHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0" MaxWidth="430"/>
+                  <TextBlock Grid.Row="4" Grid.Column="2" x:Name="GForceAutoTransitionScaleHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0"/>
 
                   <TextBlock Grid.Row="5" Grid.Column="0" x:Name="GForceLblFixedTransitionScale"/>
                   <mah:NumericUpDown Grid.Row="5" Grid.Column="1" x:Name="GForceFixedTransitionScale" Minimum="0" Maximum="5" Interval="0.1" StringFormat="0.00"/>
-                  <TextBlock Grid.Row="5" Grid.Column="2" x:Name="GForceFixedTransitionScaleHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0" MaxWidth="430"/>
+                  <TextBlock Grid.Row="5" Grid.Column="2" x:Name="GForceFixedTransitionScaleHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0"/>
                 </Grid>
                 <TextBlock x:Name="GForceTransitionScaleNote" TextWrapping="Wrap" FontStyle="Italic"/>
               </StackPanel>
@@ -937,7 +937,7 @@
                     <Grid>
                       <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" SharedSizeGroup="GForceAlign"/>
-                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto" SharedSizeGroup="GForceSpin"/>
                         <ColumnDefinition Width="*"/>
                       </Grid.ColumnDefinitions>
                       <Grid.RowDefinitions>

@@ -144,13 +144,15 @@ namespace QAdvanceFeedback.Tests
         // ---------------- the strictness setting (driver-configurable since 2026-09-07) ----------------
 
         [Fact]
-        public void Retrigger_strictness_ships_at_1_2_and_is_clamped_at_both_ends()
+        public void Retrigger_strictness_ships_at_0_5_and_is_clamped_at_both_ends()
         {
             // It is a SETTING rather than a constant because only seat time can settle it. The floor is
             // deliberately not 0: a strictness of zero means a threshold of zero, which re-arms on ANY
             // rise - exactly the runaway the setting exists to prevent.
-            Assert.Equal(1.2, new GForceEngine().RetriggerStrictness, 6);
-            Assert.Equal(1.2, new Settings.GForceSettings().RetriggerStrictness, 6);
+            // 1.2 -> 0.5 in v1.0.9 (owner, after seat time): re-arm more readily, so a re-application
+            // mid-corner is felt rather than missed.
+            Assert.Equal(0.5, new GForceEngine().RetriggerStrictness, 6);
+            Assert.Equal(0.5, new Settings.GForceSettings().RetriggerStrictness, 6);
 
             var engine = new GForceEngine { RetriggerStrictness = 0.0 };
             Assert.Equal(GForceEngine.MinRetriggerStrictness, engine.RetriggerStrictness, 6);
@@ -162,7 +164,7 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(GForceEngine.MaxRetriggerStrictness, engine.RetriggerStrictness, 6);
 
             engine.RetriggerStrictness = double.NaN;
-            Assert.Equal(1.2, engine.RetriggerStrictness, 6);
+            Assert.Equal(0.5, engine.RetriggerStrictness, 6);
 
             // A hand-edited config file cannot smuggle a zero threshold in either.
             var settings = new Settings.GForceSettings { RetriggerStrictness = 0.0 };
@@ -180,7 +182,7 @@ namespace QAdvanceFeedback.Tests
             // stepped stab cannot distinguish the settings at all. Ramped over 5 frames it is
             // 0.82 / (5/60) = ~9.8 ratio/s, which sits between the 1.2 threshold (6.0) and the 2.5 one
             // (12.5) - so the two settings must disagree about it.
-            double lenient = TravelAfterRampedStab(strictness: 1.2, stabTo: 0.9, rampFrames: 5);
+            double lenient = TravelAfterRampedStab(strictness: 1.2, stabTo: 0.9, rampFrames: 5);   // was the shipped value; now a mid-range one
             double strict = TravelAfterRampedStab(strictness: 2.5, stabTo: 0.9, rampFrames: 5);
 
             _out.WriteLine($"~9.8 ratio/s stab - travel at 1.2: {lenient:F2}, at 2.5: {strict:F2}");

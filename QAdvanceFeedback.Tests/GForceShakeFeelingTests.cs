@@ -282,7 +282,7 @@ namespace QAdvanceFeedback.Tests
             var settings = new GForceSettings();
             double expected = GForceSettings.DefaultShakeScaleFor(GForceSettings.DefaultShakeApplyMode);
 
-            Assert.Equal(1.3, expected, 9);
+            Assert.Equal(1.2, expected, 9);
             Assert.Equal(expected, settings.WheelLockShakeScale, 9);
             Assert.Equal(expected, settings.WheelSlipShakeScale, 9);
         }

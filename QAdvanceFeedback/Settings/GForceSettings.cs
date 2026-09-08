@@ -348,33 +348,41 @@ namespace QAdvanceFeedback.Settings
         {
             switch (mode)
             {
+                case Core.GForce.ShakeApplyMode.HigherOfGForceOrLockSlip: return 1.2;   // 1.3 -> 1.2, v1.0.9
                 case Core.GForce.ShakeApplyMode.PerChannel: return 1.5;
                 case Core.GForce.ShakeApplyMode.AllChannelsLockSlip: return 1.0;
-                default: return 1.3;   // HigherOfGForceOrLockSlip and AllChannelsGForce
+                default: return 1.3;   // AllChannelsGForce
             }
         }
 
         /// <summary>
-        /// THE "START SHAKING ABOVE" EACH MODE STARTS FROM (owner, 2026-09-07): 5 for the two modes whose
-        /// band is anchored to a channel's own G-force level
-        /// (<see cref="ShakeApplyMode.HigherOfGForceOrLockSlip"/> and
-        /// <see cref="ShakeApplyMode.PerChannel"/>), 30 for the two that drive every pad from one shared
-        /// band regardless of where the load is.
+        /// THE "START SHAKING ABOVE" EACH MODE STARTS FROM. Revised in v1.0.9 after seat time:
+        /// <list type="bullet">
+        /// <item><see cref="ShakeApplyMode.PerChannel"/> - <b>5</b>, unchanged.</item>
+        /// <item><see cref="ShakeApplyMode.HigherOfGForceOrLockSlip"/> - <b>60</b> (was 5).</item>
+        /// <item><see cref="ShakeApplyMode.AllChannelsGForce"/> - <b>60</b> (was 30).</item>
+        /// <item><see cref="ShakeApplyMode.AllChannelsLockSlip"/> - <b>30</b>, unchanged.</item>
+        /// </list>
+        /// The original split reasoned only about how BROADLY a mode spreads the band: a per-channel band
+        /// adds width to an animation that was already there, so a trace of lock can be admitted early,
+        /// while an all-channels band is a floor under all eight pads and reads as a permanent buzz.
         /// <para/>
-        /// The reason for the split is what a low wheel value DOES in each mode. On a per-channel band a
-        /// trace of lock is a trace of extra width on top of an animation that was already there, so it
-        /// can be admitted early; on an all-channels band it is a floor under all eight pads at once,
-        /// which at a low threshold reads as the permanent background buzz the threshold exists to stop.
+        /// WHAT SEAT TIME ADDED: the combined mode raises each channel's CEILING by the wheel value, so a
+        /// low threshold there lets ordinary background lock/slip lift every ceiling continuously - the
+        /// same permanent-buzz failure, arriving by a different route. 60 keeps it silent until the wheel
+        /// is genuinely working, which is also where its raised ceiling starts to say something.
         /// </summary>
         public static double DefaultShakeTriggerFor(ShakeApplyMode mode)
         {
             switch (mode)
             {
                 case Core.GForce.ShakeApplyMode.PerChannel:
-                case Core.GForce.ShakeApplyMode.HigherOfGForceOrLockSlip:
                     return 5.0;
+                case Core.GForce.ShakeApplyMode.HigherOfGForceOrLockSlip:
+                case Core.GForce.ShakeApplyMode.AllChannelsGForce:
+                    return 60.0;   // RAISED from 5 / 30 in v1.0.9 - see the remarks above.
                 default:
-                    return 30.0;   // AllChannelsGForce and AllChannelsLockSlip
+                    return 30.0;   // AllChannelsLockSlip
             }
         }
 
@@ -531,7 +539,9 @@ namespace QAdvanceFeedback.Settings
             set => _transientGain = value >= 0.0 ? value : 0.0;
         }
 
-        private double _retriggerStrictness = 1.2;
+        // 1.2 -> 0.5 in v1.0.9 (owner, after seat time): re-arm more readily, so a re-application
+        // mid-corner is felt rather than missed.
+        private double _retriggerStrictness = 0.5;
 
         /// <summary>How hard a pedal stab has to be to restart the travel animation mid-corner. Default
         /// **1.2**. Clamped to the engine's own bounds in the setter, so a hand-edited config cannot
@@ -542,7 +552,7 @@ namespace QAdvanceFeedback.Settings
             get => _retriggerStrictness;
             set => _retriggerStrictness = ClampMath.IsFinite(value)
                 ? ClampMath.Clamp(value, GForceEngine.MinRetriggerStrictness, GForceEngine.MaxRetriggerStrictness)
-                : 1.2;
+                : 0.5;
         }
 
         private double _autoTransitionAnimationScale = 1.2;

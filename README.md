@@ -230,7 +230,7 @@ sampled every 5 across the range and the points joined.
 - Every setting in **Motion Feel** now carries a one-line note beside it saying which way to turn it.
   The shipped **Sweep speed is 1.0**; lower makes the travel across the pads longer and smoother,
   higher makes it snap through the three stages sooner.
-- **Re-trigger strictness** (default 1.2) decides how hard a pedal stab has to be to restart the
+- **Re-trigger strictness** (default 0.5) decides how hard a pedal stab has to be to restart the
   travel mid-corner once an earlier one has finished. Raise it if the animation feels busy under
   continuous braking; lower it if a genuine re-application goes unnoticed. It scales with the car’s own
   maximum G, so a gentler car needs a proportionally gentler stab.
@@ -291,11 +291,19 @@ warning rather than a motion simulation.
 | **All channels (follow G-Force strength)** | The strongest channel sets one shake strength, applied to all eight equally — so the otherwise-idle pads shake too. Still grows and eases with the G-force. | The default feels too localized and you want the whole seat involved, without losing the sense of how hard you're braking. |
 | **All channels (lock/slip strength only)** | All eight shake equally, travelling from silence up to the lock/slip value. G-force is ignored entirely. | You want lock/slip to read as its own distinct warning, identical whether you're braking hard or barely at all. |
 
-**Switching mode restores that mode's own scale and "start shaking above"** — 1.3 / 5 for the default
-mode, 1.5 / 5 for per-channel, 1.3 / 30 and 1.0 / 30 for the two all-channels modes. The threshold is
-higher for the all-channels modes because there a trace of lock is a floor under all eight pads at once,
-which at a low threshold is just a permanent background buzz. A hand-tuned value is overwritten on the
-switch, deliberately.
+**Switching mode restores that mode's own scale and "start shaking above"**:
+
+| Mode | Scale | Start shaking above |
+| --- | --- | --- |
+| Higher of G-Force or lock/slip | 1.2 | 60 |
+| Each channel's own G-Force level | 1.5 | 5 |
+| All channels (follow G-Force strength) | 1.3 | 60 |
+| All channels (lock/slip strength only) | 1.0 | 30 |
+
+The threshold is far higher for the two modes that lift every pad at once. In the all-channels modes a
+trace of lock is a floor under all eight pads; in the combined mode it lifts every channel's *ceiling*.
+Either way a low threshold turns ordinary background lock and slip into a permanent buzz — which is the
+thing the threshold exists to stop. A hand-tuned value is overwritten on the switch, deliberately.
 
 The remaining settings apply to every mode:
 
