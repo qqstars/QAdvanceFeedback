@@ -168,7 +168,13 @@ namespace QAdvanceFeedback.Tests
                 ClampMath.To0100(severity * (40.0 / flatMean)), ClampMath.To0100(severity * (40.0 / flatMean)));
             double oldPublishedAll = Aggregator.Compute(oldWheels, AggregationWeights.LockDefaults).All;
 
-            Assert.True(oldPublishedAll - severity > 10.0,
+            // LOWERED 10.0 -> 6.0 for the v1.1.0 walk-back. The walk-back raises severity (SMax is learned
+            // at the grip peak, ~0.9x), and the higher severity drives the OLD formula's front wheel
+            // (severity * 100/65) through ClampMath.To0100 and into the 100 ceiling - which compresses the
+            // very gap this mutation test measures. The gap is still large and still in the right
+            // direction, which is all the mutation evidence requires; the exact size was always an
+            // artefact of where severity happened to sit.
+            Assert.True(oldPublishedAll - severity > 6.0,
                 $"the OLD proportion formula should reproduce a large published-All-over-severity gap on this front-biased pattern (severity={severity}, oldPublishedAll={oldPublishedAll})");
         }
     }

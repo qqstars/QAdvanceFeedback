@@ -208,6 +208,12 @@ namespace QAdvanceFeedback.Tests
         /// its -0.05 g bar) - enough to qualify while staying inside the corner-local detector's own
         /// notion of "at the limit", which is what arms Lock's gate.
         /// </summary>
+        /// <summary>How much of its OWN at-limit value a source gives up per frame on the approach - see
+        /// the ramp's own remarks. 2% per frame over the 5 approach frames means every source starts the
+        /// rise at 90% of its at-limit reading, so the rise is always comfortably more than
+        /// <c>LockRise</c> (1.0 in source units) even for the smallest-scale source these tests use.</summary>
+        private const double RampFractionPerFrame = 0.02;
+
         public static void WarmLockWithCrossings(
             QAdvanceFeedback.Core.Normalized.NormalizedWheelLockSlipEngine engine,
             double peak, double atLimitRaw, int cycles = 40,
@@ -228,9 +234,28 @@ namespace QAdvanceFeedback.Tests
                 // EXACTLY ON atLimitRaw at the detection frame, so the onset snapshot - and therefore the
                 // learned ceiling - is atLimitRaw itself. That is what lets the tests that used to warm
                 // with a constant source at atLimitRaw keep their original expected numbers.
+                //
+                // THE RAMP IS PROPORTIONAL, NOT ABSOLUTE (v1.1.0 - a latent bug in this helper, exposed by
+                // the crossing gates' G-banded walk-back, which was the first code ever to READ these
+                // ramp frames rather than only the last one). It used to step `atLimitRaw - 5 + i`: a
+                // fixed 1.0 per frame for EVERY source. That is self-contradictory for the one thing this
+                // helper exists to model - several sources reading DIFFERENT native numbers at the SAME
+                // physical moment - because a 5-unit approach is 5.6% of a source that reads 90 at the
+                // limit but 17% of one that reads 30. The three synthetic sources in
+                // PerSourceCalibrationTests therefore arrived at the limit along three physically
+                // different trajectories, and anything sampling before the final frame saw them diverge.
+                // Real captures do not behave that way: on the four corpus sessions that carry a
+                // configured source AND the Raw fallback on the SAME frames, the configured/fallback
+                // ratio at crossings is unchanged by the walk-back to three decimal places (1.045 ->
+                // 1.043, 0.684 -> 0.684, 0.629 -> 0.623, 1.000 -> 1.000).
+                //
+                // Scaling by a FRACTION makes every source approach the limit along the same physical
+                // curve, which is what this helper always meant. The final frame is still exactly
+                // atLimitRaw, so every expectation that reads only the detection frame is untouched.
                 for (int i = 0; i < rise; i++)
                     engine.Compute(BrakingSampleFor(peak - i * step),
-                        QAdvanceFeedback.Core.Corners.Uniform(System.Math.Max(1.0, atLimitRaw - (rise - 1) + i)),
+                        QAdvanceFeedback.Core.Corners.Uniform(
+                            System.Math.Max(1.0, atLimitRaw * (1.0 - (rise - 1 - i) * RampFractionPerFrame))),
                         QAdvanceFeedback.Core.Corners.Zero, gameId, carId, lockSourceIdentity: lockSourceIdentity);
 
                 // Grip recovered, source held AT atLimitRaw. Holding it at the top rather than at the

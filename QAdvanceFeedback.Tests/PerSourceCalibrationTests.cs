@@ -69,8 +69,31 @@ namespace QAdvanceFeedback.Tests
             TestFrames.WarmLockWithCrossings(shakeItEngine, 4.0, 90.0, gameId: "GameA", carId: "Car1", lockSourceIdentity: "ShakeIt");
             TestFrames.WarmLockWithCrossings(rawEngine, 4.0, 20.0, gameId: "GameA", carId: "Car1", lockSourceIdentity: "RawSource");
 
-            double shakeItOutput = shakeItEngine.Compute(BrakingSample(2.0), Corners.Uniform(90.0), Corners.Zero, "GameA", "Car1", lockSourceIdentity: "ShakeIt").LockAll;
-            double rawOutput = rawEngine.Compute(BrakingSample(2.0), Corners.Uniform(20.0), Corners.Zero, "GameA", "Car1", lockSourceIdentity: "RawSource").LockAll;
+            // PROBED AT EACH SOURCE'S OWN LEARNED LIMIT (v1.1.0). This used to query the literal raw
+            // values the engines were warmed with (90 and 20), which worked because SMax was snapshotted
+            // at the detection frame and therefore equalled them - so both probes sat exactly ON the
+            // canonical anchor. The walk-back learns SMax at the grip PEAK instead, so 90 and 20 are now
+            // both ~11% PAST each source's limit, and the probe no longer describes the same physical
+            // moment for the two sources as a matter of definition.
+            //
+            // Asking each engine for ITS OWN ceiling restores exactly that: "the car-level number at the
+            // grip limit must not depend on which source is configured", which is the property this test
+            // is named for and which still holds precisely.
+            //
+            // WHAT IS NOT TESTED HERE, stated rather than hidden: above the anchor the two sources do NOT
+            // agree, and that is a PRE-EXISTING property of the uncalibrated raw floor
+            // (severity = Max(gripUtilization, mean(rawWheels)) - see KeyedScaleLearner's own header note
+            // on defects B/D), not something the walk-back introduced. Measured with the walk-back fully
+            // DISABLED, two sources at an identical Rescale of 88.9 publish LockAll 100.0 and 81.6. The
+            // old probe passed only because it sat exactly on the 80 boundary where the floor stops
+            // binding. The walk-back moves the operating point off that boundary and so makes the
+            // pre-existing divergence visible; closing it means calibrating the raw floor, which is its
+            // own task.
+            double shakeItCeiling = shakeItEngine.LockScaleLearner.LearnedCeiling("GameA", "Car1", "ShakeIt", out _).Value;
+            double rawCeiling = rawEngine.LockScaleLearner.LearnedCeiling("GameA", "Car1", "RawSource", out _).Value;
+
+            double shakeItOutput = shakeItEngine.Compute(BrakingSample(2.0), Corners.Uniform(shakeItCeiling), Corners.Zero, "GameA", "Car1", lockSourceIdentity: "ShakeIt").LockAll;
+            double rawOutput = rawEngine.Compute(BrakingSample(2.0), Corners.Uniform(rawCeiling), Corners.Zero, "GameA", "Car1", lockSourceIdentity: "RawSource").LockAll;
 
             Assert.Equal(shakeItOutput, rawOutput, 3);
         }
@@ -116,9 +139,15 @@ namespace QAdvanceFeedback.Tests
             // checkpoint (critical, nearest the calibration anchor) is held to a MUCH tighter 5-point
             // bar, since that is precisely the point the mechanism is designed to make agree - and is,
             // if anything, now MORE tightly satisfied than before this fix.
-            Assert.True(slightlySpread < 42.0,
+            // RAISED 42.0 -> 46.0 for the v1.1.0 walk-back. These two bounds measure an ABSOLUTE spread
+            // between three sources at an OFF-anchor checkpoint, so they scale with the output level - and
+            // the walk-back raises every output by 1/(1-drop) (the synthetic ramp here gives up a uniform
+            // 10%, so 1.111x). The measured spread moved 40.0 -> 44.4 by exactly that factor; the
+            // convergence itself is no better or worse. The at-anchor bound below is untouched at 5.0,
+            // deliberately - that is the checkpoint the mechanism exists to make agree, and it still does.
+            Assert.True(slightlySpread < 46.0,
                 $"'slightly' spread too wide: ShakeIt={shakeIt.slightly:F1} Raw={raw.slightly:F1} Viper={viper.slightly:F1} (spread={slightlySpread:F1})");
-            Assert.True(idealSpread < 42.0,
+            Assert.True(idealSpread < 46.0,
                 $"'ideal' spread too wide: ShakeIt={shakeIt.ideal:F1} Raw={raw.ideal:F1} Viper={viper.ideal:F1} (spread={idealSpread:F1})");
             Assert.True(criticalSpread < 5.0,
                 $"'critical' (the calibration anchor point) spread too wide: ShakeIt={shakeIt.critical:F1} Raw={raw.critical:F1} Viper={viper.critical:F1} (spread={criticalSpread:F1})");

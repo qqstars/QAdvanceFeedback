@@ -1,4 +1,4 @@
-using QAdvanceFeedback.Core;
+﻿using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.Projection;
 using QAdvanceFeedback.Core.MotorsExport;
 using QAdvanceFeedback.Core.Normalized;
@@ -43,6 +43,70 @@ namespace QAdvanceFeedback.Settings
         public ScriptType ScriptTypeFrontRight { get; set; } = ScriptType.Plain;
         public ScriptType ScriptTypeRearLeft { get; set; } = ScriptType.Plain;
         public ScriptType ScriptTypeRearRight { get; set; } = ScriptType.Plain;
+
+        // ---- PER-SOURCE ARCHIVES (owner, 2026-09-28: "switching between the sources will NOT derive
+        //      the settings from each other"). The four fields ABOVE remain the single ACTIVE
+        //      configuration - the only thing the engine reads each frame. These hold the modes that
+        //      are not currently selected, and SwitchSourceMode moves values between the two. An
+        //      existing config migrates for free: its active fields are already correct and these
+        //      simply start empty. See WheelSourceSet for the full reasoning. ----
+
+        public WheelSourceSet RawSources { get; set; }
+        public WheelSourceSet ShakeItSources { get; set; }
+        public WheelSourceSet ViperSources { get; set; }
+        public WheelSourceSet CustomSources { get; set; }
+
+        /// <summary>The archive slot for one mode, created on demand.</summary>
+        private WheelSourceSet ArchiveFor(SourceMode mode)
+        {
+            switch (mode)
+            {
+                case SourceMode.ShakeIt: return ShakeItSources ?? (ShakeItSources = new WheelSourceSet());
+                case SourceMode.Viper: return ViperSources ?? (ViperSources = new WheelSourceSet());
+                case SourceMode.Custom: return CustomSources ?? (CustomSources = new WheelSourceSet());
+                default: return RawSources ?? (RawSources = new WheelSourceSet());
+            }
+        }
+
+        /// <summary>
+        /// Move this channel to <paramref name="mode"/>, keeping every mode's own configuration intact.
+        /// <para/>
+        /// Archives whatever is currently active under the CURRENT mode first, then restores
+        /// <paramref name="mode"/>'s archive - or, when that mode has never been configured here,
+        /// applies its shipped preset. So Raw -&gt; Viper -&gt; Raw returns the driver's own Raw text
+        /// rather than a regenerated default, and a first-ever switch to Viper still lands on a working
+        /// preset.
+        /// <para/>
+        /// A switch to <see cref="SourceMode.Custom"/> with no archive yet deliberately KEEPS the
+        /// current text instead of resetting: Custom is reached by editing another mode's source, so the
+        /// edit in progress is exactly what it should start from.
+        /// </summary>
+        public void SwitchSourceMode(SourceMode mode, bool isLockChannel)
+        {
+            if (mode == SourceMode) return;
+
+            ArchiveCurrentSources();
+
+            WheelSourceSet target = ArchiveFor(mode);
+            SourceMode = mode;
+
+            if (target.HasContent()) target.ApplyTo(this);
+            else if (mode != SourceMode.Custom) ResetSourcesForCurrentMode(isLockChannel);
+        }
+
+        /// <summary>Snapshot the active four wheels into the CURRENT mode's archive. Called before every
+        /// switch, and by the settings page before it hands a working copy to Apply.</summary>
+        public void ArchiveCurrentSources()
+        {
+            WheelSourceSet current = WheelSourceSet.CaptureFrom(this);
+            switch (SourceMode)
+            {
+                case SourceMode.ShakeIt: ShakeItSources = current; break;
+                case SourceMode.Viper: ViperSources = current; break;
+                case SourceMode.Custom: CustomSources = current; break;
+                default: RawSources = current; break;
+            }
+        }
 
         /// <summary>
         /// Manual (this channel's four Source*/ScriptType* fields above, pointed at Layer 3's own Raw
@@ -368,6 +432,31 @@ namespace QAdvanceFeedback.Settings
         }
 
         /// <summary>
+        /// Points this channel's four wheels at viper4gh's CalcLngWheelSlip plugin - see
+        /// <see cref="Core.Viper.ViperPropertyNames"/> for the property names, the sign convention and
+        /// the measured limitation of the shipped expression.
+        /// <para/>
+        /// SETS THE SCRIPT TYPE TO NCalc, which is the half of this that cannot be left to the driver.
+        /// Viper's value is signed, so each channel must select and rescale its own half; left on
+        /// <see cref="ScriptType.Plain"/> SimHub would look up a property literally named
+        /// "min(1.0, max(0, ..." and quietly fall back to Raw forever.
+        /// </summary>
+        public void ApplyViperDefaults(bool isLockChannel)
+        {
+            SourceFrontLeft = Core.Viper.ViperPropertyNames.GetScript(isLockChannel, Core.MotorsExport.MotorsExportPropertyNames.FrontLeft);
+            SourceFrontRight = Core.Viper.ViperPropertyNames.GetScript(isLockChannel, Core.MotorsExport.MotorsExportPropertyNames.FrontRight);
+            SourceRearLeft = Core.Viper.ViperPropertyNames.GetScript(isLockChannel, Core.MotorsExport.MotorsExportPropertyNames.RearLeft);
+            SourceRearRight = Core.Viper.ViperPropertyNames.GetScript(isLockChannel, Core.MotorsExport.MotorsExportPropertyNames.RearRight);
+
+            ScriptTypeFrontLeft = ScriptType.NCalc;
+            ScriptTypeFrontRight = ScriptType.NCalc;
+            ScriptTypeRearLeft = ScriptType.NCalc;
+            ScriptTypeRearRight = ScriptType.NCalc;
+
+            SourceMode = SourceMode.Viper;
+        }
+
+        /// <summary>
         /// THE PER-SOURCE "Reset to default" button's actual logic - deliberately distinct from the
         /// GLOBAL "Restore all default settings" button (<see cref="QAdvanceFeedbackSettings.RestoreDefaults"/>),
         /// which always restores the shipped ShakeIt default regardless of what was there before.
@@ -383,7 +472,56 @@ namespace QAdvanceFeedback.Settings
         public void ResetSourcesForCurrentMode(bool isLockChannel)
         {
             if (SourceMode == SourceMode.ShakeIt) ApplyMotorsExportDefaults(isLockChannel);
+            else if (SourceMode == SourceMode.Viper) ApplyViperDefaults(isLockChannel);
             else ResetSourcesToDefault(isLockChannel);
+        }
+
+        /// <summary>
+        /// Rebuild a PRESET channel's four sources when the stored text is not what that preset says it
+        /// should be - returns whether anything was repaired.
+        /// <para/>
+        /// SELF-REPAIR FOR A CONFIG CORRUPTED BY v1.1.0's SHADOW BUG (owner-reported, 2026-10-01: "ADD
+        /// TO VIPER SUPPORT ALSO WILL NOT UPDATE THE SOURCE AND KEYPOINTS, STILL"). While a Viper
+        /// channel was blocked on an unsupported title the settings page filled its source boxes with
+        /// RAW's property names to show what was actually being read, and the save path wrote those
+        /// boxes straight back - so the file ended up saying "SourceMode = Viper" over four Raw
+        /// property names. The save path is fixed, but that only stops it happening again; a file
+        /// already in that state stays broken forever, because the page faithfully restores exactly the
+        /// text it was given. Re-picking the mode by hand was the only cure.
+        /// <para/>
+        /// SAFE BECAUSE A PRESET'S SOURCES ARE OURS, NOT THE DRIVER'S. Raw, ShakeIt and Viper each have
+        /// one correct set of four strings that this plugin generates; editing them is DEFINED to move
+        /// the channel to Custom (see the settings page's MoveToCustomIfPresetEdited). So a preset
+        /// channel whose text does not match its own preset cannot be a deliberate configuration - it
+        /// can only be damage. Custom is excluded outright: there is no canonical text to compare
+        /// against, and that text IS the driver's work.
+        /// </summary>
+        public bool RepairPresetSourcesIfStale(bool isLockChannel)
+        {
+            if (SourceMode == SourceMode.Custom) return false;
+
+            var expected = new WheelChannelSettings { SourceMode = SourceMode };
+            expected.ResetSourcesForCurrentMode(isLockChannel);
+
+            if (string.Equals(SourceFrontLeft, expected.SourceFrontLeft, System.StringComparison.Ordinal)
+                && string.Equals(SourceFrontRight, expected.SourceFrontRight, System.StringComparison.Ordinal)
+                && string.Equals(SourceRearLeft, expected.SourceRearLeft, System.StringComparison.Ordinal)
+                && string.Equals(SourceRearRight, expected.SourceRearRight, System.StringComparison.Ordinal)
+                && ScriptTypeFrontLeft == expected.ScriptTypeFrontLeft
+                && ScriptTypeFrontRight == expected.ScriptTypeFrontRight
+                && ScriptTypeRearLeft == expected.ScriptTypeRearLeft
+                && ScriptTypeRearRight == expected.ScriptTypeRearRight)
+                return false;
+
+            SourceFrontLeft = expected.SourceFrontLeft;
+            SourceFrontRight = expected.SourceFrontRight;
+            SourceRearLeft = expected.SourceRearLeft;
+            SourceRearRight = expected.SourceRearRight;
+            ScriptTypeFrontLeft = expected.ScriptTypeFrontLeft;
+            ScriptTypeFrontRight = expected.ScriptTypeFrontRight;
+            ScriptTypeRearLeft = expected.ScriptTypeRearLeft;
+            ScriptTypeRearRight = expected.ScriptTypeRearRight;
+            return true;
         }
     }
 }

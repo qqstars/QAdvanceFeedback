@@ -72,6 +72,19 @@ namespace QAdvanceFeedback.Settings
             // revert numbers they measured and typed in themselves.
             KeyDataPointDefaults defaults = KeyDataPointDefaults;
 
+            // THE CUSTOM SOURCE IS NOT OURS TO RESET (owner, 2026-09-28: "Restore to Default will ONLY
+            // override the settings for the known sources ... the Custom source settings will NOT be
+            // overriden"). Raw, ShakeIt and Viper are this plugin's own presets and restoring them to
+            // shipped values is exactly what the button promises; a hand-written source configuration
+            // is the driver's work, and this plugin has no default for it to restore TO.
+            //
+            // The archive is what carries it - Lock/Slip are replaced wholesale just below, so without
+            // this the driver's own source text would be gone while its cold-start reference (held in
+            // KeyDataPointDefaults, preserved above) survived: half a configuration, which is worse
+            // than either outcome.
+            WheelSourceSet lockCustom = Lock?.CustomSources;
+            WheelSourceSet slipCustom = Slip?.CustomSources;
+
             QAdvanceFeedbackSettings fresh = CreateDefault();
             Version = fresh.Version;
             Lock = fresh.Lock;
@@ -82,6 +95,8 @@ namespace QAdvanceFeedback.Settings
             if (lockKeyData != null) Lock.KeyDataPoints = lockKeyData;
             if (slipKeyData != null) Slip.KeyDataPoints = slipKeyData;
             if (defaults != null) KeyDataPointDefaults = defaults;
+            if (lockCustom != null) Lock.CustomSources = lockCustom;
+            if (slipCustom != null) Slip.CustomSources = slipCustom;
         }
     }
 }

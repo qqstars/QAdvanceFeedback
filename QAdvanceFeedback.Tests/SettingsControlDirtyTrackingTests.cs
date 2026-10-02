@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -25,9 +25,11 @@ namespace QAdvanceFeedback.Tests
         private readonly ITestOutputHelper _out;
         public SettingsControlDirtyTrackingTests(ITestOutputHelper output) { _out = output; }
 
-        /// <summary>The four control types <c>WireDirtyTracking</c>'s reflective sweep subscribes to.</summary>
+        /// <summary>The four control types <c>WireDirtyTracking</c>'s reflective sweep subscribes to.
+        /// NumericEditor is this project's own wrapper around MahApps' NumericUpDown - see that control
+        /// for why every numeric input on the page is wrapped rather than raw.</summary>
         private static readonly HashSet<string> HandledTypes =
-            new HashSet<string>(StringComparer.Ordinal) { "NumericUpDown", "ToggleSwitch", "ComboBox", "TextBox" };
+            new HashSet<string>(StringComparer.Ordinal) { "NumericEditor", "ToggleSwitch", "ComboBox", "TextBox" };
 
         /// <summary>Named elements that take user input but are NOT settings - nothing to mark dirty.</summary>
         private static readonly HashSet<string> NotSettings =
@@ -36,12 +38,82 @@ namespace QAdvanceFeedback.Tests
         private static string SettingsDirectory([CallerFilePath] string thisFile = "")
             => Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(thisFile)), "QAdvanceFeedback", "Settings");
 
+        [Fact]
+        public void There_is_exactly_ONE_suppression_mechanism_for_programmatic_writes()
+        {
+            // THE DEFECT THIS CLOSES (owner-reported, v1.1.0): "after relaunching SimHub the apply button
+            // might not be right". The page had TWO suppression flags - ApplyDirtyState's loading guard
+            // and a private _suppressKeyDataEvents bool - and the reflective wiring sweep hooks MarkDirty
+            // to EVERY NumericUpDown, the six key-data spinners included. That handler only honours
+            // _dirty.IsLoading, so a programmatic seed (which runs on the FRAME LOOP, on the first
+            // learned-value push after SimHub starts) suppressed the business-logic handler but not the
+            // sweep's - and Apply lit up on a freshly opened page with nothing to apply.
+            //
+            // The sweep's own remarks make the argument: "a list cannot be kept correct by discipline
+            // alone, because nothing fails when it is wrong". Two parallel guards are the same hazard, so
+            // there is now one - _dirty.BeginLoading() - and this test keeps it that way.
+            string code = ReadCodeBehind();
+
+            foreach (Match m in Regex.Matches(code, @"private\s+bool\s+(_suppress\w*)"))
+                Assert.Fail(
+                    $"'{m.Groups[1].Value}' is a second suppression flag. The reflective sweep's MarkDirty "
+                    + "handler honours ONLY _dirty.IsLoading, so anything guarded by a separate flag still "
+                    + "marks the page dirty. Wrap programmatic writes in _dirty.BeginLoading() instead.");
+        }
+
+        [Fact]
+        public void Programmatic_key_data_writes_go_through_the_loading_guard()
+        {
+            // The three helpers that write the key-data spinners from code rather than from a user edit.
+            // Each must sit inside a BeginLoading scope, or the sweep marks the page dirty behind them.
+            string code = ReadCodeBehind();
+            foreach (string helper in new[]
+                     { "SeedManualBoxesFromLearnedIfNeeded", "ReloadKeyDataForCurrentContext", "LoadKeyDataPoints" })
+            {
+                int at = code.IndexOf("private void " + helper, StringComparison.Ordinal);
+                Assert.True(at >= 0, $"{helper} not found - rename it here too.");
+
+                // Look only at the helper's own opening lines, not the rest of the file.
+                string head = code.Substring(at, Math.Min(400, code.Length - at));
+                Assert.True(head.Contains("_dirty.BeginLoading()"),
+                    $"{helper} writes controls programmatically but does not open a _dirty.BeginLoading() "
+                    + "scope, so the reflective sweep will mark the page dirty on every seed.");
+            }
+        }
+
+        [Fact]
+        public void Every_numeric_input_is_the_wrapped_NumericEditor_control()
+        {
+            // THE OWNER'S REQUIREMENT (2026-09-28): "if you disable the numeric editor, both of the
+            // textbox and +- will be disabled ... wrap the Textbox and the +- button as a control, to
+            // control the disable together, so ALL controls will apply the same thing."
+            //
+            // NumericEditor hosts exactly one MahApps NumericUpDown, so WPF coerces IsEnabled onto both
+            // halves and they cannot disagree - the guarantee is structural rather than a convention
+            // every call site has to remember. A raw <mah:NumericUpDown> left on the page would sit
+            // outside it, so none may remain.
+            //
+            // IsReadOnly is the specific trap the wrapper also closes: it stops typing while leaving the
+            // spin buttons live, which is a half-disabled editor. The control exposes no such property,
+            // and it must not reappear on the page either.
+            string xaml = ReadXaml();
+
+            Assert.DoesNotContain("<mah:NumericUpDown", xaml);
+            Assert.True(Regex.Matches(xaml, "<local:NumericEditor").Count > 50,
+                "expected the page's numeric inputs to be the wrapped control");
+            Assert.DoesNotContain("IsReadOnly", xaml);
+            Assert.DoesNotContain("IsReadOnly", ReadCodeBehind());
+        }
+
         private static string ReadXaml() => File.ReadAllText(Path.Combine(SettingsDirectory(), "SettingsControl.xaml"));
         private static string ReadCodeBehind() => File.ReadAllText(Path.Combine(SettingsDirectory(), "SettingsControl.xaml.cs"));
 
         /// <summary>Every x:Name'd element in the XAML, as (elementType, name).</summary>
+        /// <summary>Every x:Name'd element, as (type name, control name). The prefix is optional and
+        /// discarded - the page uses <c>mah:</c> for MahApps, <c>local:</c> for this project's own
+        /// NumericEditor wrapper, and none for stock WPF.</summary>
         private static List<KeyValuePair<string, string>> NamedElements(string xaml)
-            => Regex.Matches(xaml, @"<(?:mah:)?(\w+)[^>]*?x:Name=""([A-Za-z0-9_]+)""", RegexOptions.Singleline)
+            => Regex.Matches(xaml, @"<(?:\w+:)?(\w+)[^>]*?x:Name=""([A-Za-z0-9_]+)""", RegexOptions.Singleline)
                     .Cast<Match>()
                     .Select(m => new KeyValuePair<string, string>(m.Groups[1].Value, m.Groups[2].Value))
                     .ToList();
@@ -110,7 +182,7 @@ namespace QAdvanceFeedback.Tests
 
             var inputLike = new[]
             {
-                "NumericUpDown", "ToggleSwitch", "ComboBox", "TextBox",
+                "NumericEditor", "ToggleSwitch", "ComboBox", "TextBox",
                 "CheckBox", "Slider", "RadioButton", "ToggleButton", "PasswordBox", "DatePicker", "ListBox"
             };
 
@@ -139,7 +211,7 @@ namespace QAdvanceFeedback.Tests
             string body = Between(code, "private void WireDirtyTracking()", "\n        private void ");
 
             Assert.Contains("GetFields(", body);
-            Assert.Contains("NumericUpDown spinner", body);
+            Assert.Contains("NumericEditor spinner", body);
             Assert.Contains("ToggleSwitch toggle", body);
             Assert.Contains("ComboBox combo", body);
             Assert.Contains("TextBox box", body);
@@ -169,8 +241,12 @@ namespace QAdvanceFeedback.Tests
                 // dropdown - the guard caught its removal, which is the point of naming them.
                 "GForceShakeTrigger", "GForceShakeSustain", "GForceShakeFrequency",
                 "GForceAccelBackTopLatSplit", "GForceBrakeBottomFrontLatSplit",
-                "LockKeyDataSMax", "SlipKeyDataSMax", "LockKeyDataAutoToggle",
                 "LockCriticalFlattenRange", "ShakeItImportOverrideCheckBox",
+                // LockKeyDataSMax / SlipKeyDataSMax / LockKeyDataAutoToggle WERE listed here, and have
+                // deliberately moved OUT (2026-09-29): the key data controls now apply and persist
+                // themselves the moment they change, so arming a button that means "not applied yet"
+                // would be false. They are excluded from the sweep by IsImmediateApplyControl, which
+                // PerSourceKeyDataFlagsTests guards - the exclusion is named and tested, not a hole.
             };
 
             List<KeyValuePair<string, string>> named = NamedElements(ReadXaml());
