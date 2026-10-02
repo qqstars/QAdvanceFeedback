@@ -1,4 +1,5 @@
 ﻿using System;
+using QAdvanceFeedbackControls;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -41,6 +42,7 @@ namespace QAdvanceFeedback.Settings
         private readonly PropertyPickerLauncher _picker = new PropertyPickerLauncher();
         private readonly SimHubExpressionEvaluator _evaluator = new SimHubExpressionEvaluator();
         private readonly MotorsExportAvailabilityProvider _motorsExport = new MotorsExportAvailabilityProvider();
+        private readonly ViperAvailabilityProvider _viperExport = new ViperAvailabilityProvider();
 
         // Resolved ONCE at construction (mirrors every other reflection-wrapper IsAvailable check in
         // this plugin). IMPORTANT - what this now controls: ONLY whether the "not available yet" inline
@@ -53,8 +55,22 @@ namespace QAdvanceFeedback.Settings
         // work" was the wrong rule here - the toggle is what LETS a driver discover and select ShakeIt
         // mode before they have configured SimHub, so it must always render; only the truthful "is it
         // actually resolving right now" status is conditional. See RefreshSourceModeUi.
-        private readonly bool _lockMotorsExportAvailable;
-        private readonly bool _slipMotorsExportAvailable;
+        // NOT readonly - re-sampled while driving, for the same reason as _viperAvailable below: a
+        // page opened at the SimHub menu sampled "not publishing" and never looked again.
+        private bool _lockMotorsExportAvailable;
+        private bool _slipMotorsExportAvailable;
+
+        /// <summary>Whether viper4gh's CalcLngWheelSlip is currently publishing all four wheels. ONE
+        /// field, not two: both channels read the same four properties and differ only in sign - see
+        /// <see cref="Core.Viper.ViperAvailabilityResolver"/>.
+        /// <para/>
+        /// NOT readonly any more, and that was a real defect (owner-reported, 2026-09-30: "Viper
+        /// Detection incorrect"). It was sampled ONCE in the constructor, so a page opened before
+        /// viper4gh started publishing - which is the normal order, since a driver opens the settings at
+        /// the SimHub menu and the plugin only computes once a supported game is running - showed
+        /// "Plugin not detected" for the rest of the session no matter what. Re-sampled on the 1 Hz
+        /// learned-value push instead (see <see cref="RefreshViperAvailability"/>).</summary>
+        private bool _viperAvailable;
 
         private readonly ProjectorSettings _workingLockProjector = new ProjectorSettings();
         private readonly ProjectorSettings _workingSlipProjector = new ProjectorSettings();
@@ -111,11 +127,17 @@ namespace QAdvanceFeedback.Settings
 
             _lockMotorsExportAvailable = _motorsExport.IsLockAvailable(_pluginManager);
             _slipMotorsExportAvailable = _motorsExport.IsSlipAvailable(_pluginManager);
+            _viperAvailable = _viperExport.IsAvailable(_pluginManager);
+
+            // The three above are a first guess only - none of the three sources publishes anything
+            // before a game is running, and the page is normally opened before one is. RefreshSourceAvailability
+            // re-samples them while driving.
 
             LocalizeStaticText();
             WireSourceButtons();
             WireScriptTypeToggles();
             WireSourceModeToggles();
+            WireViperGameButtons();
             WireDirtyTracking();
 
             WireAnchorEvents(_workingLockProjector, LockStartRaw, LockStartOutput, LockSlightlyRaw, LockSlightlyOutput,
@@ -152,8 +174,6 @@ namespace QAdvanceFeedback.Settings
             // health section" rather than reaching SimHub's own UI thread unguarded.
             ApplyButton.Click += (s, e) => SafeUiAction(SaveToSettings, HealthSubsystems.SettingsUi);
             RestoreAllDefaultsButton.Click += (s, e) => SafeUiAction(RestoreAllDefaults, HealthSubsystems.SettingsUi);
-            LockResetSources.Click += (s, e) => SafeUiAction(() => ResetSourcesToDefault(isLock: true), HealthSubsystems.SettingsUi);
-            SlipResetSources.Click += (s, e) => SafeUiAction(() => ResetSourcesToDefault(isLock: false), HealthSubsystems.SettingsUi);
 
             // Under Auto, the fixed-value spinner stays visible but read-only (IsEnabled=false, not
             // Collapsed) - the brief's own wording - and its value is refreshed to the currently
@@ -259,7 +279,18 @@ namespace QAdvanceFeedback.Settings
 
         /// <summary>Set while the UI is being populated from settings, so the handlers below do not
         /// treat programmatic writes as driver edits (which would MarkDirty on every load).</summary>
-        private bool _suppressKeyDataEvents;
+        // RETIRED (v1.1.0). This used to be a SECOND suppression flag alongside ApplyDirtyState's
+        // own loading guard, and the split was a real defect: the reflective wiring sweep hooks
+        // MarkDirty to EVERY NumericEditor on the page, the six key-data spinners included, and that
+        // handler only honours _dirty.IsLoading. So every programmatic seed - which happens on the
+        // frame loop, on the very first learned-value push after SimHub starts - wrote those spinners,
+        // the business-logic handler correctly stood down, and the sweep's handler marked the page
+        // dirty anyway. Apply lit up on a freshly opened page with nothing to apply, which is exactly
+        // the owner's report: "after relaunching SimHub the apply button might not be right".
+        //
+        // The fix is the one the sweep's own remarks argue for - not a longer list of flags to keep in
+        // step, but ONE mechanism. Programmatic writes now go through _dirty.BeginLoading(), which
+        // both handler families already honour.
 
         /// <summary>Latest learned values, pushed in by the plugin - see <see cref="UpdateLearnedKeyDataPoints"/>.</summary>
         private double? _lockLearnedSMax, _lockLearnedS90, _lockLearnedS75;
@@ -328,14 +359,24 @@ namespace QAdvanceFeedback.Settings
 
             var boxes = new[] { LockKeyDataSMax, LockKeyDataS90, LockKeyDataS75,
                                 SlipKeyDataSMax, SlipKeyDataS90, SlipKeyDataS75 };
-            foreach (MahApps.Metro.Controls.NumericUpDown box in boxes)
+            foreach (NumericEditor box in boxes)
                 box.ValueChanged += (s, e) => OnKeyDataValueChanged();
         }
 
         private void OnKeyDataToggleChanged()
         {
-            if (_suppressKeyDataEvents) return;
-            MarkDirty();
+            if (_dirty.IsLoading) return;
+
+            // ORDER IS LOAD-BEARING. Flush first, against the flags STILL STORED, so a number typed just
+            // before the toggle is written to the slot it was typed for - Manual -> Auto would otherwise
+            // drop it, because PersistChannelIfManual would see Auto and stand down. Only then record
+            // the new choice.
+            FlushKeyDataPersistNow();
+            CommitKeyDataToggles();
+
+            // NO MarkDirty (owner, 2026-09-29). These apply and persist immediately, so lighting the
+            // Apply button - and raising the unapplied-changes banner with it - would be telling the
+            // driver something untrue and inviting a click that changes nothing.
             EnforceSlipPatternForAutoMode();
             // AUTO/MANUAL and GLOBAL/PER-GAME both change which slot is in play, so reload that slot's
             // stored numbers first. Only if it has none do we fall back to showing the learned values.
@@ -384,9 +425,9 @@ namespace QAdvanceFeedback.Settings
                 "Mapping") == "MaxGripOnly";
             if (maxGripOnly) return;
 
-            MahApps.Metro.Controls.NumericUpDown sMaxBox = isLock ? LockKeyDataSMax : SlipKeyDataSMax;
-            MahApps.Metro.Controls.NumericUpDown s90Box = isLock ? LockKeyDataS90 : SlipKeyDataS90;
-            MahApps.Metro.Controls.NumericUpDown s75Box = isLock ? LockKeyDataS75 : SlipKeyDataS75;
+            NumericEditor sMaxBox = isLock ? LockKeyDataSMax : SlipKeyDataSMax;
+            NumericEditor s90Box = isLock ? LockKeyDataS90 : SlipKeyDataS90;
+            NumericEditor s75Box = isLock ? LockKeyDataS75 : SlipKeyDataS75;
 
             bool s90Missing = (s90Box.Value ?? 0.0) <= 0.0;
             bool s75Missing = (s75Box.Value ?? 0.0) <= 0.0;
@@ -399,8 +440,7 @@ namespace QAdvanceFeedback.Settings
             bool shipped = KeyDataPointSettings.TryResolveShippedDefaults(
                 sourceIdentity, isLock, ConfiguredDefaults, out defaultSMax, out defaultS90, out defaultS75);
 
-            _suppressKeyDataEvents = true;
-            try
+            using (_dirty.BeginLoading())
             {
                 if (shipped && sMax <= 0.0)
                 {
@@ -420,18 +460,41 @@ namespace QAdvanceFeedback.Settings
                     if (s75Missing) s75Box.Value = Math.Round(derivedS75, 1);
                 }
             }
-            finally { _suppressKeyDataEvents = false; }
 
             ScheduleKeyDataPersist();
         }
 
         private void OnKeyDataValueChanged()
         {
-            if (_suppressKeyDataEvents) return;
-            MarkDirty();
-            // A TYPED VALUE APPLIES AT ONCE, and settles to disk shortly after - see
+            if (_dirty.IsLoading) return;
+            // A TYPED VALUE APPLIES AT ONCE, and settles to disk a moment later - see
             // ScheduleKeyDataPersist. It also latches the slot as seeded, so the automatic one-time
             // write can never come along later and overwrite what the driver just entered.
+            //
+            // AND DELIBERATELY NO MarkDirty (owner, 2026-09-29). The Apply button means "there is a
+            // change here that is NOT live yet"; a key data edit is live before the driver's finger
+            // leaves the spinner, so enabling it - and showing the unapplied-changes banner - would be
+            // false. Everything that genuinely needs an Apply (the source mode, the four source
+            // strings, thresholds, the curve) still marks dirty on its own path.
+            //
+            // THE MODEL IS WRITTEN SYNCHRONOUSLY; ONLY THE DISK WRITE IS DEBOUNCED. This split is the
+            // fix for a defect that destroyed typed values on every attempt (owner-reported,
+            // 2026-09-30: "Change Key Points number will not be saved, everytime restarted will always
+            // go back to default"), reproduced by driving the real control against a simulated frame
+            // loop.
+            //
+            // The debounce used to be what latched the slot as Seeded - so for 700 ms after a keystroke
+            // the slot still looked UNTOUCHED to the engine. AutoPersistSeededKeyDataPoints runs on the
+            // frame loop and fills exactly such a slot with the LEARNED value, latches Seeded itself,
+            // and bumps _keyDataRevision; the page sees the new revision, reloads the boxes from the
+            // slot, and the driver's number is gone from the screen. The debounce then dutifully saved
+            // whatever was left in the box - the learned value. Turning Auto off is always followed
+            // within a second by typing, so this fired essentially every time.
+            //
+            // Writing the slot here closes the window entirely: by the time any frame can look, the
+            // slot holds the driver's value and Seeded is set, so the one-time seed correctly stands
+            // down. It stays free to fire on a slot nobody has touched, which is what it is for.
+            CommitKeyDataValues();
             ScheduleKeyDataPersist();
             RefreshKeyDataPointUi();
             RefreshBothCurvePlots();
@@ -491,24 +554,25 @@ namespace QAdvanceFeedback.Settings
 
         private void SeedManualBoxesFromLearnedIfNeeded()
         {
-            _suppressKeyDataEvents = true;
-            try
+            using (_dirty.BeginLoading())
             {
                 SeedChannel(LockKeyDataAutoToggle, _currentLockSource, isLock: true,
+                            LockKeyDataPerGameToggle.IsChecked == true && string.IsNullOrEmpty(_currentGameId),
                             LockKeyDataSMax, LockKeyDataS90, LockKeyDataS75,
                             _lockLearnedSMax, _lockLearnedS90, _lockLearnedS75, ConfiguredDefaults);
                 SeedChannel(SlipKeyDataAutoToggle, _currentSlipSource, isLock: false,
+                            SlipKeyDataPerGameToggle.IsChecked == true && string.IsNullOrEmpty(_currentGameId),
                             SlipKeyDataSMax, SlipKeyDataS90, SlipKeyDataS75,
                             _slipLearnedSMax, _slipLearnedS90, _slipLearnedS75, ConfiguredDefaults);
             }
-            finally { _suppressKeyDataEvents = false; }
         }
 
         private static void SeedChannel(
             MahApps.Metro.Controls.ToggleSwitch auto, string sourceIdentity, bool isLock,
-            MahApps.Metro.Controls.NumericUpDown sMaxBox,
-            MahApps.Metro.Controls.NumericUpDown s90Box,
-            MahApps.Metro.Controls.NumericUpDown s75Box,
+            bool perGameWithoutGame,
+            NumericEditor sMaxBox,
+            NumericEditor s90Box,
+            NumericEditor s75Box,
             double? learnedSMax, double? learnedS90, double? learnedS75,
             KeyDataPointDefaults defaults)
         {
@@ -548,6 +612,26 @@ namespace QAdvanceFeedback.Settings
             }
 
             if (!empty) return;   // manual and already configured - the driver's values stand
+
+            // NO SLOT IS SELECTED YET, SO THERE IS NOTHING HONEST TO PREFILL.
+            //
+            // THE BUG THIS CLOSES (owner-reported, 2026-10-01: "Change KeyPoints value, then close
+            // SimHub, restart SimHub, KeyPoints restored, and the 'Restore to default' for KeyPoints
+            // displayed"). In Per-Game mode the slot key needs the running game, and on a fresh start
+            // the plugin has not supplied one yet - DataUpdate has not run, or no game is launched at
+            // all. ReloadChannel therefore found nothing for the slot and blanked the boxes, and this
+            // method then filled in the SHIPPED DEFAULTS, so the driver opened the page to 85 (or 15 on
+            // Viper) and every appearance of having lost their configuration. The reset button showing
+            // alongside was the tell: the stored values were still there and still differed from
+            // default - only the display was wrong.
+            //
+            // Blank plus the "no game is running" note (see RefreshKeyDataChannel) says what is
+            // actually true. The real values appear the moment a game id arrives.
+            if (perGameWithoutGame)
+            {
+                sMaxBox.Value = null; s90Box.Value = null; s75Box.Value = null;
+                return;
+            }
 
             double sMax, s90, s75;
             if (KeyDataPointSettings.TryResolveShippedDefaults(sourceIdentity, isLock, defaults, out sMax, out s90, out s75))
@@ -628,58 +712,67 @@ namespace QAdvanceFeedback.Settings
         {
             if (_plugin == null || _plugin.Settings == null) return;
 
-            _suppressKeyDataEvents = true;
-            try
+            using (_dirty.BeginLoading())
             {
-                ReloadChannel(_plugin.Settings.Lock.KeyDataPoints, LockKeyDataPerGameToggle,
+                ReloadChannel(_plugin.Settings.Lock.KeyDataPoints, LockKeyDataAutoToggle, LockKeyDataPerGameToggle,
                               _currentLockSource, LockKeyDataSMax, LockKeyDataS90, LockKeyDataS75);
-                ReloadChannel(_plugin.Settings.Slip.KeyDataPoints, SlipKeyDataPerGameToggle,
+                ReloadChannel(_plugin.Settings.Slip.KeyDataPoints, SlipKeyDataAutoToggle, SlipKeyDataPerGameToggle,
                               _currentSlipSource, SlipKeyDataSMax, SlipKeyDataS90, SlipKeyDataS75);
             }
-            finally { _suppressKeyDataEvents = false; }
         }
 
+        /// <summary>
+        /// Load one channel's key data state for the slot the CURRENT source selects - toggles first,
+        /// then the numbers that belong to the slot those toggles describe.
+        /// <para/>
+        /// STRICTLY MODEL -> UI, in one direction. Auto/Manual and Global/Per-Game are per-source now
+        /// (<see cref="KeyDataPointSettings.SourceFlags"/>), so arriving at a different source must
+        /// restore THAT source's whole calibration, toggles included. Before this, a source switch
+        /// reloaded the numbers but left the previous source's toggles showing, which read as "Viper is
+        /// on Manual" while Viper had never been configured at all.
+        /// <para/>
+        /// The opposite direction - UI -> model, when the driver flips a toggle - is
+        /// <see cref="CommitKeyDataToggles"/>. Keeping the two apart is what stops a reload from
+        /// overwriting the very setting it is supposed to be displaying.
+        /// <para/>
+        /// Callers run this inside a loading scope, so setting the toggles here cannot re-enter
+        /// <see cref="OnKeyDataToggleChanged"/>.
+        /// </summary>
         private void ReloadChannel(KeyDataPointSettings k,
+            MahApps.Metro.Controls.ToggleSwitch auto,
             MahApps.Metro.Controls.ToggleSwitch perGame,
             string sourceIdentity,
-            MahApps.Metro.Controls.NumericUpDown sMaxBox,
-            MahApps.Metro.Controls.NumericUpDown s90Box,
-            MahApps.Metro.Controls.NumericUpDown s75Box)
+            NumericEditor sMaxBox,
+            NumericEditor s90Box,
+            NumericEditor s75Box)
         {
             if (k == null) return;
 
-            // Read the TOGGLE rather than the persisted flag: the driver may have just flipped it without
-            // pressing Apply, and the slot they are looking at is the one the toggles describe.
-            bool previousPerGame = k.PerGame;
-            k.PerGame = perGame.IsChecked == true;
-            try
+            auto.IsChecked = k.GetAutoGenerate(sourceIdentity);
+            perGame.IsChecked = k.GetPerGame(sourceIdentity);
+
+            double sMax, s90, s75;
+            if (k.TryGetManual(_currentGameId, sourceIdentity, out sMax, out s90, out s75))
             {
-                double sMax, s90, s75;
-                if (k.TryGetManual(_currentGameId, sourceIdentity, out sMax, out s90, out s75))
-                {
-                    sMaxBox.Value = sMax; s90Box.Value = s90; s75Box.Value = s75;
-                }
-                else
-                {
-                    // Nothing stored for this slot - clear, so the watermark reads "---" and the seeding
-                    // path decides what (if anything) belongs here.
-                    sMaxBox.Value = null; s90Box.Value = null; s75Box.Value = null;
-                }
+                sMaxBox.Value = sMax; s90Box.Value = s90; s75Box.Value = s75;
             }
-            finally { k.PerGame = previousPerGame; }
+            else
+            {
+                // Nothing stored for this slot - clear, so the watermark reads "---" and the seeding
+                // path decides what (if anything) belongs here.
+                sMaxBox.Value = null; s90Box.Value = null; s75Box.Value = null;
+            }
         }
 
         private void LoadKeyDataPoints(QAdvanceFeedbackSettings s)
         {
-            _suppressKeyDataEvents = true;
-            try
+            using (_dirty.BeginLoading())
             {
                 LoadChannel(s.Lock.KeyDataPoints, LockKeyDataAutoToggle, LockKeyDataPerGameToggle,
                             _currentLockSource, LockKeyDataSMax, LockKeyDataS90, LockKeyDataS75);
                 LoadChannel(s.Slip.KeyDataPoints, SlipKeyDataAutoToggle, SlipKeyDataPerGameToggle,
                             _currentSlipSource, SlipKeyDataSMax, SlipKeyDataS90, SlipKeyDataS75);
             }
-            finally { _suppressKeyDataEvents = false; }
 
             SeedManualBoxesFromLearnedIfNeeded();
             RefreshKeyDataPointUi();
@@ -689,13 +782,13 @@ namespace QAdvanceFeedback.Settings
             MahApps.Metro.Controls.ToggleSwitch auto,
             MahApps.Metro.Controls.ToggleSwitch perGame,
             string sourceIdentity,
-            MahApps.Metro.Controls.NumericUpDown sMaxBox,
-            MahApps.Metro.Controls.NumericUpDown s90Box,
-            MahApps.Metro.Controls.NumericUpDown s75Box)
+            NumericEditor sMaxBox,
+            NumericEditor s90Box,
+            NumericEditor s75Box)
         {
             if (k == null) return;
-            auto.IsChecked = k.AutoGenerate;
-            perGame.IsChecked = k.PerGame;
+            auto.IsChecked = k.GetAutoGenerate(sourceIdentity);
+            perGame.IsChecked = k.GetPerGame(sourceIdentity);
 
             // ROUTED BY PerGame, not read straight off the global fields. Reading k.SMax directly would
             // show the global numbers while Per-Game was on, so the boxes would display one set and the
@@ -719,14 +812,28 @@ namespace QAdvanceFeedback.Settings
             MahApps.Metro.Controls.ToggleSwitch auto,
             MahApps.Metro.Controls.ToggleSwitch perGame,
             string sourceIdentity,
-            MahApps.Metro.Controls.NumericUpDown sMaxBox,
-            MahApps.Metro.Controls.NumericUpDown s90Box,
-            MahApps.Metro.Controls.NumericUpDown s75Box,
+            NumericEditor sMaxBox,
+            NumericEditor s90Box,
+            NumericEditor s75Box,
             bool maxGripOnly)
         {
             if (k == null) return;
-            k.AutoGenerate = auto.IsChecked == true;
-            k.PerGame = perGame.IsChecked == true;
+            k.SetAutoGenerate(sourceIdentity, auto.IsChecked == true);
+            k.SetPerGame(sourceIdentity, perGame.IsChecked == true);
+
+            // UNDER AUTO THE BOXES ARE A READOUT, SO THEY ARE NOT SAVED (owner, 2026-10-01: confirm
+            // that going back to Auto "will NOT override the manual KeyPoints settings").
+            //
+            // Under Auto, SeedChannel refills these three boxes with the LEARNED values every second,
+            // so they do not describe a configuration at all - they report what the plugin is using.
+            // Writing them into the manual slot therefore replaced the driver's own stored numbers with
+            // whatever had been learned by the time Apply happened to be pressed, and the manual values
+            // they would find on switching back were gone. Every OTHER writer already stands down under
+            // Auto (PersistChannelIfManual, and the engine's own TrySeedKeyDataSlot); this one did not,
+            // which made it the single remaining way to lose them.
+            //
+            // The Auto/Per-Game choice above IS saved either way - that is the setting being changed.
+            if (auto.IsChecked == true) return;
 
             double sMax = sMaxBox.Value ?? 0.0;
             double s90 = s90Box.Value ?? 0.0;
@@ -746,13 +853,55 @@ namespace QAdvanceFeedback.Settings
             // per-game mode writes only the current game's. An unknown source with nothing learned yet
             // simply has no valid triple to write, so the SELECTION (Auto/Per-Game) is still persisted by
             // the assignments above and the numbers arrive later via the one-time seed.
-            k.SetManual(_currentGameId, sourceIdentity, sMax, s90, s75, seeded: false);
+            //
+            // SEEDED: TRUE, MATCHING THE TYPING PATH (PersistChannelIfManual). This used to be FALSE,
+            // and that left a hole with the same symptom as the debounce race: a slot first written
+            // from HERE - which happens whenever Apply runs before the 700 ms commit has created it,
+            // and whenever toggling Per-Game moves the driver onto a brand-new slot key - was left
+            // UNLATCHED. AutoPersistSeededKeyDataPoints then treated it as never configured, overwrote
+            // it with the learned value and persisted that, so the driver's number was gone by the next
+            // start. Both paths carry the driver's own values, so both must latch the slot; only the
+            // engine's own one-time seed has any business writing an unlatched one.
+            k.SetManual(_currentGameId, sourceIdentity, sMax, s90, s75, seeded: true);
         }
 
         /// <summary>
         /// Push the current learned values (and whether a manual value is actually live yet) in from the
         /// plugin, so the "[Learned Value: xx.x]" hints stay current while the settings page is open.
         /// </summary>
+        /// <summary>
+        /// Which game is running - pushed even while the game is PAUSED or sitting in its own menu,
+        /// which is the normal state while somebody edits these settings.
+        /// <para/>
+        /// Deliberately separate from <see cref="UpdateLearnedKeyDataPoints"/>: that carries learned
+        /// values and is correctly gated behind "actually being driven", because a paused game has
+        /// nothing new to teach. The game's IDENTITY is not telemetry, and two things on this page need
+        /// it with no relation to learning:
+        /// <list type="bullet">
+        /// <item>the Per-Game key data slot, which cannot be keyed without it - edits were refused
+        /// outright while it was unknown;</item>
+        /// <item>whether the Viper source is supported on this title, which decides the amber notice
+        /// and whether the source rows are live.</item>
+        /// </list>
+        /// A CHANGE OF GAME IS A CHANGE OF SLOT, so the key data boxes and the source notes are both
+        /// re-resolved - exactly what the 1 Hz push does on a context change, minus the learned values.
+        /// </summary>
+        public void UpdateCurrentGame(string gameId)
+        {
+            if (string.Equals(_currentGameId, gameId, StringComparison.Ordinal)) return;
+
+            _currentGameId = gameId;
+
+            ReloadKeyDataForCurrentContext();
+            SeedManualBoxesFromLearnedIfNeeded();
+            RefreshKeyDataPointUi();
+
+            // Viper support is per game, so the notices and the source rows can both change with it.
+            RefreshSourceModeUi(isLock: true);
+            RefreshSourceModeUi(isLock: false);
+            RefreshBothCurvePlots();
+        }
+
         public void UpdateLearnedKeyDataPoints(
             string gameId, string lockSourceIdentity, string slipSourceIdentity, int keyDataRevision,
             double? lockSMax, double? lockS90, double? lockS75, bool lockManualLive,
@@ -778,12 +927,23 @@ namespace QAdvanceFeedback.Settings
                 ReloadKeyDataForCurrentContext();
                 RefreshBothCurvePlots();   // the one-time write after warm-up changes the mapping
             }
+            RefreshSourceAvailability();
+
             _lockLearnedSMax = lockSMax; _lockLearnedS90 = lockS90; _lockLearnedS75 = lockS75;
             _slipLearnedSMax = slipSMax; _slipLearnedS90 = slipS90; _slipLearnedS75 = slipS75;
             _lockManualLive = lockManualLive; _slipManualLive = slipManualLive;
 
-            if (LockKeyDataAutoToggle.IsChecked == true || SlipKeyDataAutoToggle.IsChecked == true)
-                SeedManualBoxesFromLearnedIfNeeded();
+            // UNCONDITIONAL (v1.1.0 - owner-reported: "set the numbers, start the game, they go back to
+            // ---"). This used to run only when at least one channel was on AUTO, which made the boxes
+            // blank out for exactly the driver who had turned Auto OFF and typed their own numbers:
+            // ReloadKeyDataForCurrentContext above clears every box whose slot has nothing stored (a
+            // game switch IS a new slot when Per-Game is on), and with the Auto gate here nothing ever
+            // refilled them. The two other call sites - the toggle handler and the source-change
+            // handler - already pair reload with seed unconditionally; this one was the odd one out.
+            //
+            // SAFE TO CALL ALWAYS. SeedChannel's manual branch is guarded by `if (!empty) return`, so a
+            // driver's own values are never overwritten - it only fills boxes that are genuinely blank.
+            SeedManualBoxesFromLearnedIfNeeded();
 
             RefreshKeyDataPointUi();
         }
@@ -815,6 +975,44 @@ namespace QAdvanceFeedback.Settings
         /// Persists immediately, like the Sources reset and Restore-to-Default already do, so the driver
         /// does not have to remember a second click for a destructive action.
         /// </summary>
+        /// <summary>
+        /// Whether this channel's CURRENT SOURCE has any key data configuration to restore - the one
+        /// condition that shows the dedicated reset button.
+        /// <para/>
+        /// Answers false for the Custom source, which has no shipped default and therefore nothing to
+        /// restore to; see <see cref="KeyDataPointSettings.MatchesDefaults"/>, where that falls out of
+        /// the same check rather than needing a special case here.
+        /// </summary>
+        private bool CanRestoreKeyDataDefaults(bool isLock)
+        {
+            KeyDataPointSettings keyData = isLock
+                ? _plugin?.Settings?.Lock?.KeyDataPoints : _plugin?.Settings?.Slip?.KeyDataPoints;
+            if (keyData == null) return false;
+
+            // CUSTOM IS A MODE, NOT AN IDENTITY, and only this page knows which mode is selected.
+            // MatchesDefaults already hides the button for an UNRECOGNISED identity, but that is not the
+            // same question: a driver's custom configuration can classify as one of the presets - most
+            // easily by being Raw's own properties, which is what Custom starts from - and would then be
+            // offered a preset's defaults. Checking the dropdown is the only way to honour the owner's
+            // rule as written ("for the custom source ... it will always not show the button"). Caught by
+            // driving the real control; the identity check alone passed every model test.
+            SourceMode mode = ParseEnum(
+                GetSelectedTag(isLock ? LockSourceModeCombo : SlipSourceModeCombo, "Manual"), SourceMode.Manual);
+            if (mode == SourceMode.Custom) return false;
+
+            string sourceIdentity = isLock ? _currentLockSource : _currentSlipSource;
+            return !keyData.MatchesDefaults(sourceIdentity, isLock, ConfiguredDefaults);
+        }
+
+        /// <summary>
+        /// Put this channel's current source back to shipped key data points - Auto on, Global, and its
+        /// stored numbers discarded - and SAVE AT ONCE.
+        /// <para/>
+        /// Immediate, exactly like the global Restore and like every other key data edit (owner,
+        /// 2026-09-30: "once click the GLOBAL Restore To default, or click the dedicated Restore to
+        /// default for KeyPoints, will save the changes IMMEDIATELY"). Nothing here waits for Apply,
+        /// which is also why Apply must not light up for it.
+        /// </summary>
         private void ResetKeyDataPoints(bool isLock)
         {
             if (_plugin == null || _plugin.Settings == null) return;
@@ -824,34 +1022,43 @@ namespace QAdvanceFeedback.Settings
             if (keyData == null) return;
 
             string sourceIdentity = isLock ? _currentLockSource : _currentSlipSource;
-            keyData.PerGame = (isLock ? LockKeyDataPerGameToggle : SlipKeyDataPerGameToggle).IsChecked == true;
 
-            MahApps.Metro.Controls.NumericUpDown sMaxBox = isLock ? LockKeyDataSMax : SlipKeyDataSMax;
-            MahApps.Metro.Controls.NumericUpDown s90Box = isLock ? LockKeyDataS90 : SlipKeyDataS90;
-            MahApps.Metro.Controls.NumericUpDown s75Box = isLock ? LockKeyDataS75 : SlipKeyDataS75;
+            // A PENDING EDIT WOULD OTHERWISE COME BACK. The debounced write is still armed from
+            // whatever was typed a moment ago; cancel it, or it fires after the reset and restores the
+            // very numbers just discarded.
+            if (_keyDataPersistTimer != null) _keyDataPersistTimer.Stop();
+
+            // Flags AND numbers, for this source only - the model owns the rule.
+            keyData.RestoreSourceDefaults(sourceIdentity);
+
+            NumericEditor sMaxBox = isLock ? LockKeyDataSMax : SlipKeyDataSMax;
+            NumericEditor s90Box = isLock ? LockKeyDataS90 : SlipKeyDataS90;
+            NumericEditor s75Box = isLock ? LockKeyDataS75 : SlipKeyDataS75;
 
             // The STRICT check, matching every other decision on this page - the lenient Classify would
             // hand shipped numbers to a driver-named export whose range nobody has measured.
             double sMax, s90, s75;
             bool hasDefault = KeyDataPointSettings.TryResolveShippedDefaults(sourceIdentity, isLock, ConfiguredDefaults, out sMax, out s90, out s75);
 
-            _suppressKeyDataEvents = true;
-            try
+            using (_dirty.BeginLoading())
             {
-                if (hasDefault)
-                {
-                    sMaxBox.Value = sMax; s90Box.Value = s90; s75Box.Value = s75;
-                    keyData.SetManual(_currentGameId, sourceIdentity, sMax, s90, s75, seeded: true);
-                }
-                else
-                {
-                    sMaxBox.Value = null; s90Box.Value = null; s75Box.Value = null;
-                    keyData.ClearSlot(_currentGameId, sourceIdentity);
-                }
-            }
-            finally { _suppressKeyDataEvents = false; }
+                // The toggles are part of what "default" means, so they move too.
+                (isLock ? LockKeyDataAutoToggle : SlipKeyDataAutoToggle).IsChecked = KeyDataPointSettings.DefaultAutoGenerate;
+                (isLock ? LockKeyDataPerGameToggle : SlipKeyDataPerGameToggle).IsChecked = KeyDataPointSettings.DefaultPerGame;
 
+                // NO SLOT IS WRITTEN BACK. RestoreSourceDefaults discarded this source's stored
+                // numbers, and re-storing the shipped triple would only look like a default while
+                // actually being a configured value - and, worse, would latch Seeded, so a later switch
+                // to Manual would be handed the shipped numbers instead of a proper seed from what the
+                // plugin has since learned. Under Auto these boxes are a READOUT, so showing the
+                // shipped figures here is the honest display of "nothing configured".
+                if (hasDefault) { sMaxBox.Value = sMax; s90Box.Value = s90; s75Box.Value = s75; }
+                else { sMaxBox.Value = null; s90Box.Value = null; s75Box.Value = null; }
+            }
+
+            // Immediate, per the owner's rule for this button - ConfigStore.Save lives in here.
             _plugin.ApplySettings();
+            SeedManualBoxesFromLearnedIfNeeded();
             RefreshKeyDataPointUi();
         }
 
@@ -885,32 +1092,94 @@ namespace QAdvanceFeedback.Settings
         {
             if (_plugin == null || _plugin.Settings == null) return;
 
-            bool wrote = false;
-            wrote |= PersistChannelIfManual(_plugin.Settings.Lock.KeyDataPoints, LockKeyDataAutoToggle,
-                LockKeyDataPerGameToggle, _currentLockSource,
-                LockKeyDataSMax, LockKeyDataS90, LockKeyDataS75,
-                GetSelectedTag(LockNormalizePatternCombo, "Mapping") == "MaxGripOnly");
-            wrote |= PersistChannelIfManual(_plugin.Settings.Slip.KeyDataPoints, SlipKeyDataAutoToggle,
-                SlipKeyDataPerGameToggle, _currentSlipSource,
-                SlipKeyDataSMax, SlipKeyDataS90, SlipKeyDataS75,
-                GetSelectedTag(SlipNormalizePatternCombo, "Mapping") == "MaxGripOnly");
-
-            if (wrote) _plugin.ApplySettings();
+            // ConfigStore.Save lives in ApplySettings, so the numbers are on disk the moment this
+            // returns - which is what lets the Apply button stay dark for a key data edit without
+            // risking the change being lost to a SimHub restart.
+            if (CommitKeyDataValues()) _plugin.ApplySettings();
         }
 
+        /// <summary>
+        /// Write both channels' typed key data points into the settings object - IN MEMORY ONLY, no
+        /// disk, no engine rebuild.
+        /// <para/>
+        /// Called synchronously from <see cref="OnKeyDataValueChanged"/> as well as from the debounced
+        /// <see cref="PersistKeyDataPointsNow"/>, and that is the whole point: see
+        /// <see cref="OnKeyDataValueChanged"/>'s own remarks for the defect this closes. In short, the
+        /// slot must be latched as the driver's the instant they type, or the frame loop's one-time seed
+        /// overwrites it with the learned value.
+        /// <para/>
+        /// Returns whether anything was actually written, so the caller can skip a pointless save.
+        /// </summary>
+        private bool CommitKeyDataValues()
+        {
+            if (_plugin == null || _plugin.Settings == null) return false;
+
+            bool wrote = false;
+            wrote |= PersistChannelIfManual(_plugin.Settings.Lock.KeyDataPoints, _currentLockSource,
+                LockKeyDataSMax, LockKeyDataS90, LockKeyDataS75,
+                GetSelectedTag(LockNormalizePatternCombo, "Mapping") == "MaxGripOnly");
+            wrote |= PersistChannelIfManual(_plugin.Settings.Slip.KeyDataPoints, _currentSlipSource,
+                SlipKeyDataSMax, SlipKeyDataS90, SlipKeyDataS75,
+                GetSelectedTag(SlipNormalizePatternCombo, "Mapping") == "MaxGripOnly");
+            return wrote;
+        }
+
+        /// <summary>
+        /// Run the debounced key data write NOW, cancelling the pending timer.
+        /// <para/>
+        /// Called before anything that changes WHICH SLOT is in play - a toggle, or the supported-game
+        /// button - so a number typed a few hundred milliseconds earlier lands in the slot it was meant
+        /// for instead of following the driver into the new one.
+        /// </summary>
+        private void FlushKeyDataPersistNow()
+        {
+            if (_keyDataPersistTimer != null) _keyDataPersistTimer.Stop();
+            PersistKeyDataPointsNow();
+        }
+
+        /// <summary>
+        /// Record both channels' Auto/Manual and Global/Per-Game choices against THEIR OWN SOURCE, and
+        /// save immediately.
+        /// <para/>
+        /// These are per-source settings (see <see cref="KeyDataPointSettings.SourceFlags"/>), and like
+        /// the numbers beside them they take effect at once rather than on Apply - so they must reach
+        /// disk at once too, or a SimHub restart would silently undo them.
+        /// </summary>
+        private void CommitKeyDataToggles()
+        {
+            QAdvanceFeedbackSettings s = _plugin?.Settings;
+            if (s == null || s.Lock?.KeyDataPoints == null || s.Slip?.KeyDataPoints == null) return;
+
+            s.Lock.KeyDataPoints.SetAutoGenerate(_currentLockSource, LockKeyDataAutoToggle.IsChecked == true);
+            s.Lock.KeyDataPoints.SetPerGame(_currentLockSource, LockKeyDataPerGameToggle.IsChecked == true);
+            s.Slip.KeyDataPoints.SetAutoGenerate(_currentSlipSource, SlipKeyDataAutoToggle.IsChecked == true);
+            s.Slip.KeyDataPoints.SetPerGame(_currentSlipSource, SlipKeyDataPerGameToggle.IsChecked == true);
+
+            _plugin.ApplySettings();
+        }
+
+        /// <summary>
+        /// GATED ON THE STORED FLAGS, NOT THE TOGGLES, and that is the whole point of this signature.
+        /// <para/>
+        /// A pending edit belongs to the state it was typed under. When the driver flips Auto on, the
+        /// toggle has ALREADY changed by the time its event fires, so reading it here would skip the
+        /// write and silently discard the numbers they just entered - the owner's own "from manual then
+        /// switch back to auto, the manual number should be saved properly". The stored flags still hold
+        /// the previous choice at that moment, so flushing against them writes to the right slot; the
+        /// new choice is committed immediately afterwards by <see cref="CommitKeyDataToggles"/>.
+        /// <para/>
+        /// The same reasoning covers Per-Game, which is part of the slot KEY: the pending numbers belong
+        /// to the slot that was selected when they were typed, not the one being switched to.
+        /// </summary>
         private bool PersistChannelIfManual(KeyDataPointSettings k,
-            MahApps.Metro.Controls.ToggleSwitch auto,
-            MahApps.Metro.Controls.ToggleSwitch perGame,
             string sourceIdentity,
-            MahApps.Metro.Controls.NumericUpDown sMaxBox,
-            MahApps.Metro.Controls.NumericUpDown s90Box,
-            MahApps.Metro.Controls.NumericUpDown s75Box,
+            NumericEditor sMaxBox,
+            NumericEditor s90Box,
+            NumericEditor s75Box,
             bool maxGripOnly)
         {
-            if (k == null || auto.IsChecked == true) return false;
-
-            k.PerGame = perGame.IsChecked == true;
-            if (k.PerGame && string.IsNullOrEmpty(_currentGameId)) return false;
+            if (k == null || k.GetAutoGenerate(sourceIdentity)) return false;
+            if (k.GetPerGame(sourceIdentity) && string.IsNullOrEmpty(_currentGameId)) return false;
 
             double sMax = sMaxBox.Value ?? 0.0, s90 = s90Box.Value ?? 0.0, s75 = s75Box.Value ?? 0.0;
             if (maxGripOnly) KeyDataPointSettings.DeriveLowerAnchors(sMax, out s90, out s75);
@@ -963,6 +1232,14 @@ namespace QAdvanceFeedback.Settings
             IsVisibleChanged += (s, e) => UpdateGraphRefreshState();
             Loaded += (s, e) => { AttachHostWindowHandlers(); UpdateGraphRefreshState(); };
             Unloaded += (s, e) => { DetachHostWindowHandlers(); StopGraphRefreshTimer(); };
+
+            // THE DEBOUNCE MUST NOT OUTLIVE THE PAGE. A key data edit settles to disk 700 ms after the
+            // last keystroke, and closing the settings tab inside that window used to destroy it
+            // silently - the timer simply never fired again. That was survivable while the Apply button
+            // lit up for these edits; now that it deliberately does not (they apply immediately), there
+            // is no second chance and no visible sign anything was lost. So the pending write is forced
+            // out on the way down.
+            Unloaded += (s, e) => SafeUiAction(FlushKeyDataPersistNow, HealthSubsystems.SettingsUi);
 
             AttachHostWindowHandlers();
             UpdateGraphRefreshState();
@@ -1054,7 +1331,10 @@ namespace QAdvanceFeedback.Settings
                 GetSelectedTag(LockNormalizePatternCombo, "Mapping") == "MaxGripOnly",
                 KeyDataPointSettings.IsExactShippedSource(_currentLockSource, isLockChannel: true),
                 ConfiguredDefaults,
-                Strings.Get("KeyData.Invalid"));
+                Strings.Get("KeyData.Invalid"),
+                LockKeyDataPerGameToggle.IsChecked == true && string.IsNullOrEmpty(_currentGameId),
+                Strings.Get("KeyData.PerGame.NoGame"),
+                CanRestoreKeyDataDefaults(isLock: true));
 
             RefreshKeyDataChannel(
                 SlipKeyDataAutoToggle, SlipKeyDataPerGameToggle, SlipKeyDataPerGameLabel, SlipKeyDataPerGameDesc, SlipKeyDataReset,
@@ -1066,21 +1346,25 @@ namespace QAdvanceFeedback.Settings
                 GetSelectedTag(SlipNormalizePatternCombo, "Mapping") == "MaxGripOnly",
                 KeyDataPointSettings.IsExactShippedSource(_currentSlipSource, isLockChannel: false),
                 ConfiguredDefaults,
-                Strings.Get("KeyData.Invalid.Slip"));
+                Strings.Get("KeyData.Invalid.Slip"),
+                SlipKeyDataPerGameToggle.IsChecked == true && string.IsNullOrEmpty(_currentGameId),
+                Strings.Get("KeyData.PerGame.NoGame"),
+                CanRestoreKeyDataDefaults(isLock: false));
         }
 
         private static void RefreshKeyDataChannel(
             MahApps.Metro.Controls.ToggleSwitch auto,
             MahApps.Metro.Controls.ToggleSwitch perGame,
             TextBlock perGameLabel, TextBlock perGameDesc, Button resetButton,
-            MahApps.Metro.Controls.NumericUpDown sMaxBox,
-            MahApps.Metro.Controls.NumericUpDown s90Box,
-            MahApps.Metro.Controls.NumericUpDown s75Box,
+            NumericEditor sMaxBox,
+            NumericEditor s90Box,
+            NumericEditor s75Box,
             TextBlock sMaxLearned, TextBlock s90Learned, TextBlock s75Learned,
             TextBlock s90Label, TextBlock s75Label, TextBlock s90Desc, TextBlock s75Desc,
             TextBlock status,
             double? learnedSMax, double? learnedS90, double? learnedS75, bool manualLive,
-            bool maxGripOnly, bool knownSource, KeyDataPointDefaults defaults, string invalidMessage)
+            bool maxGripOnly, bool knownSource, KeyDataPointDefaults defaults, string invalidMessage,
+            bool perGameWithoutGame, string perGameWithoutGameMessage, bool canRestoreDefaults)
         {
             bool isAuto = auto.IsChecked == true;
 
@@ -1090,7 +1374,13 @@ namespace QAdvanceFeedback.Settings
             perGame.Visibility = perGameVisibility;
             perGameLabel.Visibility = perGameVisibility;
             perGameDesc.Visibility = perGameVisibility;
-            resetButton.Visibility = perGameVisibility;
+
+            // THE DEDICATED KEY POINTS RESET, shown only when there is something to undo (owner,
+            // 2026-09-30). It used to follow the Per-Game row's visibility - i.e. "Manual only" - which
+            // both hid it from a driver on Auto whose stored numbers still differed, and showed it to
+            // one on Manual with nothing to restore. It is also independent of Auto/Manual now because
+            // it resets the Auto/Manual choice ITSELF, so gating it on that choice made no sense.
+            resetButton.Visibility = canRestoreDefaults ? Visibility.Visible : Visibility.Collapsed;
 
             // MAX-GRIP-ONLY hides the two lower anchors entirely - they are derived, not configured.
             Visibility lowerVisibility = maxGripOnly ? Visibility.Collapsed : Visibility.Visible;
@@ -1129,6 +1419,18 @@ namespace QAdvanceFeedback.Settings
             if (isAuto)
             {
                 status.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            // PER-GAME WITH NO GAME RUNNING IS A DEAD END, and it has to say so. The slot key is
+            // "game:<id>|src:<src>", so with no id there is nowhere real to write: the value would land
+            // in a slot no running game can ever select again. Persisting is therefore refused (see
+            // PersistChannelIfManual), and refusing silently is exactly the trap the Apply button used
+            // to paper over - it would light up, the driver would press it, and nothing would come back.
+            if (perGameWithoutGame)
+            {
+                status.Text = perGameWithoutGameMessage;
+                status.Visibility = Visibility.Visible;
                 return;
             }
 
@@ -1242,13 +1544,27 @@ namespace QAdvanceFeedback.Settings
         private void MarkDirty()
         {
             _dirty.MarkDirty();
+            RefreshApplyState();
+        }
+
+        /// <summary>
+        /// The Apply button and the unapplied-changes banner, always together.
+        /// <para/>
+        /// ONE PLACE, because they are one fact. The banner exists because an enabled button is easy to
+        /// walk away from (owner: "notify the user the current changes are not applied yet and will not
+        /// reflected with the game"), and a banner that could disagree with the button would be worse
+        /// than no banner - so nothing may set ApplyButton.IsEnabled except this.
+        /// </summary>
+        private void RefreshApplyState()
+        {
             ApplyButton.IsEnabled = _dirty.IsDirty;
+            UnappliedChangesBanner.Visibility = _dirty.IsDirty ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void MarkClean()
         {
             _dirty.MarkClean();
-            ApplyButton.IsEnabled = false;
+            RefreshApplyState();
         }
 
         /// <summary>
@@ -1265,8 +1581,6 @@ namespace QAdvanceFeedback.Settings
         /// <see cref="WireAnchorEvents"/>.</item>
         /// <item>Source mode combos (Lock/SlipSourceModeCombo) - <see cref="ApplySourceDefaultsForMode"/>,
         /// reached via <see cref="OnSourceModeChanged"/>.</item>
-        /// <item>Per-source "Reset to default" buttons - also <see cref="ApplySourceDefaultsForMode"/>,
-        /// reached via <see cref="ResetSourcesToDefault"/>.</item>
         /// <item>Script-type toggle buttons - <see cref="ScriptTypeToggle_Click"/> and, for the
         /// script-editor round trip, <see cref="EditInto"/>.</item>
         /// <item>Property-picker/script-editor buttons - indirectly, via the source TextBox's own
@@ -1311,9 +1625,14 @@ namespace QAdvanceFeedback.Settings
             {
                 if (IsTestEffectControl(field.Name)) continue;
 
+                // SECOND DELIBERATE EXCLUSION: the key data points. Unlike the Test Effect panel these
+                // ARE saved - immediately, by their own handlers, which is exactly why they must not
+                // arm a button whose meaning is "not applied yet". See IsImmediateApplyControl.
+                if (IsImmediateApplyControl(field.Name)) continue;
+
                 switch (field.GetValue(this))
                 {
-                    case MahApps.Metro.Controls.NumericUpDown spinner:
+                    case NumericEditor spinner:
                         spinner.ValueChanged += (s, e) => MarkDirty();
                         break;
                     case MahApps.Metro.Controls.ToggleSwitch toggle:
@@ -1338,7 +1657,14 @@ namespace QAdvanceFeedback.Settings
                 SlipSourceFl, SlipSourceFr, SlipSourceRl, SlipSourceRr
             };
             foreach (TextBox box in sourceBoxes)
-                box.TextChanged += (s, e) => OnSourceConfigurationChanged();
+            {
+                TextBox captured = box;
+                box.TextChanged += (s, e) =>
+                {
+                    MoveToCustomIfPresetEdited(_lockRows.Exists(r => ReferenceEquals(r.SourceBox, captured)));
+                    OnSourceConfigurationChanged();
+                };
+            }
         }
 
         /// <summary>
@@ -1351,6 +1677,30 @@ namespace QAdvanceFeedback.Settings
         /// </summary>
         private static bool IsTestEffectControl(string fieldName)
             => fieldName != null && fieldName.StartsWith("GForceTest", StringComparison.Ordinal);
+
+        /// <summary>
+        /// The key data controls, which APPLY AND PERSIST THEMSELVES and must therefore never light the
+        /// Apply button (owner, 2026-09-29).
+        /// <para/>
+        /// THIS IS THE EXCLUSION THAT ACTUALLY DOES IT, and removing MarkDirty from
+        /// <see cref="OnKeyDataValueChanged"/>/<see cref="OnKeyDataToggleChanged"/> without it achieved
+        /// NOTHING - proved by running the real control, not by reading it. The reflective sweep in
+        /// <see cref="WireDirtyTracking"/> hooks MarkDirty to every NumericEditor and ToggleSwitch on
+        /// the page by design, so it re-armed all ten of these behind the business handlers' backs.
+        /// <para/>
+        /// The sweep is right to be exhaustive - a silently unwired control is the worse failure, and
+        /// it has happened here before (52 of them). So the escape is an explicit, named exclusion like
+        /// <see cref="IsTestEffectControl"/>, not a hole in the sweep.
+        /// <para/>
+        /// BY PREFIX so a control added to this block later is covered without anyone remembering: the
+        /// six spinners and four toggles all start "LockKeyData"/"SlipKeyData". The Button and TextBlock
+        /// members sharing that prefix are not control types the sweep handles, so naming them costs
+        /// nothing.
+        /// </summary>
+        private static bool IsImmediateApplyControl(string fieldName)
+            => fieldName != null
+               && (fieldName.StartsWith("LockKeyData", StringComparison.Ordinal)
+                   || fieldName.StartsWith("SlipKeyData", StringComparison.Ordinal));
 
         private void RefreshGForceShakeControls()
         {
@@ -1471,13 +1821,26 @@ namespace QAdvanceFeedback.Settings
             LockLblFrontRight.Text = SlipLblFrontRight.Text = Strings.Get("Sources.FrontRight");
             LockLblRearLeft.Text = SlipLblRearLeft.Text = Strings.Get("Sources.RearLeft");
             LockLblRearRight.Text = SlipLblRearRight.Text = Strings.Get("Sources.RearRight");
-            LockResetSources.Content = SlipResetSources.Content = Strings.Get("Sources.ResetToDefault");
 
             // ---- Source mode toggle (Manual vs. ShakeIt Motors) - ALWAYS visible on both tabs (see
             // _lockMotorsExportAvailable/_slipMotorsExportAvailable's own remarks for why this changed). ----
             LockLblSourceMode.Text = SlipLblSourceMode.Text = Strings.Get("Sources.Mode.Label");
             LockSourceModeManual.Content = SlipSourceModeManual.Content = Strings.Get("Sources.Mode.Manual");
             LockSourceModeShakeIt.Content = SlipSourceModeShakeIt.Content = Strings.Get("Sources.Mode.ShakeIt");
+            LockSourceModeViper.Content = SlipSourceModeViper.Content = Strings.Get("Sources.Mode.Viper");
+            LockSourceModeCustom.Content = SlipSourceModeCustom.Content = Strings.Get("Sources.Mode.Custom");
+            LockCustomNote.Text = SlipCustomNote.Text = Strings.Get("Sources.Mode.CustomNote");
+            LockViperUnsupportedNote.Text = SlipViperUnsupportedNote.Text = Strings.Get("Sources.ViperUnsupported.Note");
+            LockKeyDataShadowNote.Text = SlipKeyDataShadowNote.Text = Strings.Get("KeyData.ShadowingRaw.Note");
+            UnappliedChangesBanner.Text = Strings.Get("Apply.Unapplied.Banner");
+            LockCustomRefHeader.Text = SlipCustomRefHeader.Text = Strings.Get("Sources.CustomRef.Header");
+            LockCustomRefDesc.Text = SlipCustomRefDesc.Text = Strings.Get("Sources.CustomRef.Desc");
+            LockCustomRefSMaxLabel.Text = SlipCustomRefSMaxLabel.Text = Strings.Get("Sources.CustomRef.SMax");
+            LockCustomRefS90Label.Text = SlipCustomRefS90Label.Text = Strings.Get("Sources.CustomRef.S90");
+            LockCustomRefS75Label.Text = SlipCustomRefS75Label.Text = Strings.Get("Sources.CustomRef.S75");
+            LockViperSetupNote.Text = Strings.Get("Sources.ViperSetup.Lock");
+            SlipViperSetupNote.Text = Strings.Get("Sources.ViperSetup.Slip");
+            LockViperUnavailableNote.Text = SlipViperUnavailableNote.Text = Strings.Get("Sources.ViperUnavailable.Note");
             LockShakeItSetupNote.Text = Strings.Get("Sources.ShakeItSetup.Lock");
             SlipShakeItSetupNote.Text = Strings.Get("Sources.ShakeItSetup.Slip");
             LockSourcesShakeItNote.Text = Strings.Get("Sources.ShakeItUnavailable.Note");
@@ -1948,19 +2311,6 @@ namespace QAdvanceFeedback.Settings
         /// editing - the toggle is simply hidden in that case, per <see cref="WireScriptTypeToggles"/>).</summary>
         private ScriptType CoerceLoadedScriptType(ScriptType stored) => _evaluator.IsAvailable ? stored : ScriptType.Plain;
 
-        /// <summary>
-        /// THE PER-SOURCE "Reset to default" button (under the four source fields - NOT the global
-        /// "Restore all default settings"). Follows the CURRENT mode rather than forcing Manual:
-        /// delegates to <see cref="WheelChannelSettings.ResetSourcesForCurrentMode"/> (unit-tested in
-        /// Core) so this UI-only method stays a thin read-combo/copy-into-textboxes wrapper around
-        /// already-tested logic, exactly like <see cref="OnSourceModeChanged"/> below.
-        /// </summary>
-        private void ResetSourcesToDefault(bool isLock)
-        {
-            SourceMode currentMode = ParseEnum(GetSelectedTag(isLock ? LockSourceModeCombo : SlipSourceModeCombo, "Manual"), SourceMode.Manual);
-            ApplySourceDefaultsForMode(isLock, currentMode);
-            OnSourceConfigurationChanged();
-        }
 
         // ------------------------------------------------------------------------------------
         // Source mode toggle - Manual vs. SimHub's own ShakeIt Motors export. ALWAYS visible and
@@ -1969,6 +2319,60 @@ namespace QAdvanceFeedback.Settings
         // control hid the toggle whenever availability could not be confirmed, which is why the owner
         // could not find it at all).
         // ------------------------------------------------------------------------------------
+
+        private void WireViperGameButtons()
+        {
+            LockViperGameButton.Click += (s, e) => ToggleCurrentGameSupport(isLock: true);
+            SlipViperGameButton.Click += (s, e) => ToggleCurrentGameSupport(isLock: false);
+        }
+
+        /// <summary>
+        /// Add or remove the running game from the Viper supported-game list, and persist it.
+        /// <para/>
+        /// WHY THIS SAVES IMMEDIATELY rather than waiting for Apply. The list is not a setting of this
+        /// plugin - it is a correction to what we know about SOMEBODY ELSE'S plugin, kept in its own
+        /// file for exactly that reason. It changes which source the channel reads on the very next
+        /// frame, so leaving it pending would mean the page said "supported" while the engine still
+        /// read Raw. The owner's Apply contract covers the settings; this is a different file with a
+        /// different lifetime.
+        /// <para/>
+        /// NOT PER CHANNEL, despite there being a button on each: the list describes the Viper plugin,
+        /// which either computes for this game or does not. Both channels are refreshed after the edit
+        /// so the two buttons never disagree.
+        /// </summary>
+        private void ToggleCurrentGameSupport(bool isLock)
+        {
+            if (_plugin == null || string.IsNullOrWhiteSpace(_currentGameId)) return;
+
+            Core.Viper.ViperDocument current = _plugin.ViperDocument;
+            bool supported = Core.Viper.ViperSupportedGames.IsSupported(_currentGameId, current?.SupportedGames);
+
+            Core.Viper.ViperDocument next = supported
+                ? Core.Viper.ViperSupportedGames.WithoutGame(current, _currentGameId)
+                : Core.Viper.ViperSupportedGames.WithGame(current, _currentGameId);
+
+            // WithGame/WithoutGame return the SAME instance when nothing changed, so this is also the
+            // "nothing to write" test.
+            if (ReferenceEquals(next, current)) return;
+
+            // FLUSH BEFORE SWITCHING, NOT AFTER. This button moves BOTH channels onto a different
+            // source, so any key data edit still sitting in the debounce belongs to the source being
+            // left. Writing it afterwards would file it under the source being arrived at.
+            FlushKeyDataPersistNow();
+
+            _plugin.ViperDocument = next;
+            _plugin.SaveViperDocument();
+
+            // The source a channel reads may have just changed, so everything that describes it has to
+            // be re-resolved - both channels, and the key data points that shadow Raw while blocked.
+            // Each of these runs under the loading guard where it writes controls, so none of them marks
+            // the page dirty: this button, like the key data points, takes effect at once and therefore
+            // must NOT light the Apply button or raise the unapplied-changes banner.
+            RefreshSourceModeUi(isLock: true);
+            RefreshSourceModeUi(isLock: false);
+            OnSourceConfigurationChanged();
+            RefreshKeyDataPointUi();
+        }
 
         private void WireSourceModeToggles()
         {
@@ -1982,7 +2386,27 @@ namespace QAdvanceFeedback.Settings
 
             ComboBox combo = isLock ? LockSourceModeCombo : SlipSourceModeCombo;
             SourceMode mode = ParseEnum(GetSelectedTag(combo, "Manual"), SourceMode.Manual);
+
+            // PICKING "Custom" FROM THE DROPDOWN SEEDS ITS REFERENCE, exactly as editing a preset's
+            // source text does. Both are ways of arriving at Custom, and the owner's rule is that a
+            // cold-start reference ALWAYS holds a real number - "duplicated from the known source, or
+            // the adjusted value by the user" - so neither route may leave it blank. Seeded BEFORE
+            // ApplySourceDefaultsForMode, while the four boxes still hold the source being left.
+            if (mode == SourceMode.Custom) SeedCustomReferenceFromCurrentSource(isLock);
+
             ApplySourceDefaultsForMode(isLock, mode);
+        }
+
+        /// <summary>Copy the reference of whatever source this channel is reading RIGHT NOW into its
+        /// Custom slot. A no-op when that source is already Custom, so a driver's corrected numbers are
+        /// never overwritten by re-entering the mode they are already in.</summary>
+        private void SeedCustomReferenceFromCurrentSource(bool isLock)
+        {
+            KeyDataPointDefaults defaults = _plugin?.Settings?.KeyDataPointDefaults;
+            if (defaults == null) return;
+
+            string identity = ComputeCurrentSourceIdentity(isLock);
+            defaults.SeedCustomFrom(KeyDataPointSettings.ClassifyExact(identity, isLock), isLock);
         }
 
         /// <summary>
@@ -2001,11 +2425,23 @@ namespace QAdvanceFeedback.Settings
             WheelChannelSettings scratch = new WheelChannelSettings { SourceMode = mode };
             scratch.ResetSourcesForCurrentMode(isLock);
 
-            rows[0].SourceBox.Text = scratch.SourceFrontLeft; SetScriptTypeVisual(rows[0].ScriptTypeButton, scratch.ScriptTypeFrontLeft);
-            rows[1].SourceBox.Text = scratch.SourceFrontRight; SetScriptTypeVisual(rows[1].ScriptTypeButton, scratch.ScriptTypeFrontRight);
-            rows[2].SourceBox.Text = scratch.SourceRearLeft; SetScriptTypeVisual(rows[2].ScriptTypeButton, scratch.ScriptTypeRearLeft);
-            rows[3].SourceBox.Text = scratch.SourceRearRight; SetScriptTypeVisual(rows[3].ScriptTypeButton, scratch.ScriptTypeRearRight);
-            foreach (SourceRow row in rows) RefreshRowButton(row);
+            // WRITTEN UNDER THE LOADING GUARD (v1.1.0). These four assignments are the PLUGIN applying
+            // a preset, not the driver typing - and MoveToCustomIfPresetEdited, hooked to the same
+            // TextChanged, cannot tell the difference on its own. Without this, picking "Viper" from
+            // the dropdown wrote Viper's expressions, the edit hook read them as a user edit, and the
+            // combo bounced straight back to Custom: the dropdown was unusable. Caught by the v1.1.0
+            // screenshot pass, where every posed capture came out showing Custom.
+            //
+            // MarkDirty is still called explicitly at the end, so the driver's click on the combo does
+            // still require an Apply - the guard suppresses the ECHO, not the intent.
+            using (_dirty.BeginLoading())
+            {
+                rows[0].SourceBox.Text = scratch.SourceFrontLeft; SetScriptTypeVisual(rows[0].ScriptTypeButton, scratch.ScriptTypeFrontLeft);
+                rows[1].SourceBox.Text = scratch.SourceFrontRight; SetScriptTypeVisual(rows[1].ScriptTypeButton, scratch.ScriptTypeFrontRight);
+                rows[2].SourceBox.Text = scratch.SourceRearLeft; SetScriptTypeVisual(rows[2].ScriptTypeButton, scratch.ScriptTypeRearLeft);
+                rows[3].SourceBox.Text = scratch.SourceRearRight; SetScriptTypeVisual(rows[3].ScriptTypeButton, scratch.ScriptTypeRearRight);
+                foreach (SourceRow row in rows) RefreshRowButton(row);
+            }
 
             RefreshSourceModeUi(isLock);
 
@@ -2019,14 +2455,327 @@ namespace QAdvanceFeedback.Settings
         }
 
         /// <summary>
-        /// Updates the three mode-dependent notes under the toggle for one channel, from whatever the
-        /// combo currently shows:
+        /// A source edit while a PRESET is selected moves that channel to Custom - before Apply, as the
+        /// owner specified ("when the source string being changed, even though the apply button not
+        /// being clicked, the dropdown need to be switched to the Custom").
+        /// <para/>
+        /// WHY THE PRESET MUST NOT BE MUTATED. Each mode keeps its own archive
+        /// (<see cref="WheelSourceSet"/>), and a preset is this plugin's own configuration, not the
+        /// driver's - editing Raw's text must leave Raw exactly as shipped so switching back returns
+        /// something that works. The edit becomes Custom's, and Custom's cold-start reference is seeded
+        /// from the preset just left, so the numbers start somewhere sensible rather than at "---".
+        /// <para/>
+        /// A no-op while loading, and a no-op when already on Custom - otherwise every keystroke would
+        /// re-seed the reference the driver may have just corrected by hand.
+        /// </summary>
+        private void MoveToCustomIfPresetEdited(bool isLock)
+        {
+            if (_dirty.IsLoading) return;
+
+            ComboBox combo = isLock ? LockSourceModeCombo : SlipSourceModeCombo;
+            SourceMode current = ParseEnum(GetSelectedTag(combo, "Manual"), SourceMode.Manual);
+            if (current == SourceMode.Custom) return;
+
+            // Seed Custom's reference from the preset being left, while we still know which it was.
+            SeedCustomReferenceFromCurrentSource(isLock);
+
+            // The combo change must NOT re-apply a preset over what is being typed, so the mode is set
+            // under the loading guard and only the notes are refreshed afterwards.
+            using (_dirty.BeginLoading())
+            {
+                SelectComboItemByTag(combo, SourceMode.Custom.ToString());
+            }
+
+            RefreshSourceModeUi(isLock);
+        }
+
+        /// <summary>
+        /// Show, populate and enable the Custom source's own cold-start reference editors.
+        /// <para/>
+        /// WHY CUSTOM HAS THESE AND THE PRESETS DO NOT. Raw, ShakeIt and Viper have references this
+        /// project measured, so there is nothing for a driver to decide. A custom source has a scale
+        /// only they know - see <see cref="KeyDataPointDefaults.LockCustom"/> - so the number has to be
+        /// theirs, seeded by copying whichever preset they edited their way in from.
+        /// <para/>
+        /// DISABLED WHILE FALLEN BACK TO RAW (the owner's own rule): the channel is then reading Raw,
+        /// whose reference is fixed and not configurable, so leaving these live would offer an edit
+        /// that changes nothing.
+        /// <para/>
+        /// THESE THREE CAN NEVER READ "---", AND THAT IS THE POINT (owner, 2026-09-29: "the cold-start
+        /// reference should ALWAYS have particular value, duplicated from the known source, or the
+        /// adjusted value by the user"). They are an ASSUMPTION the plugin makes before it knows
+        /// anything, so a blank one would mean "assume nothing", which is not a state the projection
+        /// can be in. That is the opposite of the Key Data Points directly above, which report what has
+        /// actually been LEARNED and must be able to say "nothing yet". Hence no Watermark in the XAML
+        /// and the Raw backstop below: every arrival at Custom seeds the reference from the source
+        /// being left, and if some path ever misses one, Raw's own numbers stand in rather than a hole.
+        /// </summary>
+        private void RefreshCustomReferenceEditors(bool isLock, bool isCustom, bool shadowing)
+        {
+            StackPanel panel = isLock ? LockCustomRefPanel : SlipCustomRefPanel;
+            panel.Visibility = isCustom ? Visibility.Visible : Visibility.Collapsed;
+            if (!isCustom) return;
+
+            NumericEditor sMax = isLock ? LockCustomRefSMax : SlipCustomRefSMax;
+            NumericEditor s90 = isLock ? LockCustomRefS90 : SlipCustomRefS90;
+            NumericEditor s75 = isLock ? LockCustomRefS75 : SlipCustomRefS75;
+
+            KeyDataPointDefaults defaults = _plugin?.Settings?.KeyDataPointDefaults;
+            KeyDataPointDefaultSet set = isLock ? defaults?.LockCustom : defaults?.SlipCustom;
+
+            if (set == null || !set.IsUsable())
+            {
+                // The backstop. Raw is the one source that is always present and always on a 0-100
+                // scale, so its reference is the only honest thing to assume about a source we know
+                // nothing about. Not written back to the settings here - the editors now hold it, and
+                // SaveCustomReferences persists whatever they hold on the next Apply, so the value
+                // becomes the driver's in the same way a typed one would.
+                set = (defaults ?? KeyDataPointDefaults.CreateShipped())
+                          .TryResolve(KnownFeedbackSource.QAdvanceFeedbackRaw, isLock,
+                                      out double rawSMax, out double rawS90, out double rawS75)
+                      ? new KeyDataPointDefaultSet(rawSMax, rawS90, rawS75)
+                      : null;
+            }
+
+            using (_dirty.BeginLoading())
+            {
+                sMax.Value = set?.SMax;
+                s90.Value = set?.S90;
+                s75.Value = set?.S75;
+            }
+
+            sMax.IsEnabled = !shadowing;
+            s90.IsEnabled = !shadowing;
+            s75.IsEnabled = !shadowing;
+        }
+
+        /// <summary>Write the Custom reference editors back into the settings - called from the save
+        /// path, so an edit only reaches the running calibration on Apply like every other setting.</summary>
+        private void SaveCustomReferences(QAdvanceFeedbackSettings target)
+        {
+            if (target?.KeyDataPointDefaults == null) return;
+
+            target.KeyDataPointDefaults.LockCustom =
+                BuildReferenceSet(LockCustomRefSMax, LockCustomRefS90, LockCustomRefS75)
+                ?? target.KeyDataPointDefaults.LockCustom;
+            target.KeyDataPointDefaults.SlipCustom =
+                BuildReferenceSet(SlipCustomRefSMax, SlipCustomRefS90, SlipCustomRefS75)
+                ?? target.KeyDataPointDefaults.SlipCustom;
+        }
+
+        /// <summary>A reference triple from three editors, or null when they do not hold a usable one -
+        /// in which case the stored value is kept rather than being cleared by a blank box.</summary>
+        private static KeyDataPointDefaultSet BuildReferenceSet(NumericEditor sMax, NumericEditor s90, NumericEditor s75)
+        {
+            var candidate = new KeyDataPointDefaultSet(sMax.Value ?? 0.0, s90.Value ?? 0.0, s75.Value ?? 0.0);
+            return candidate.IsUsable() ? candidate : null;
+        }
+
+        /// <summary>
+        /// Re-sample whether ShakeIt and Viper are actually publishing, and redraw the notes if that
+        /// changed.
+        /// <para/>
+        /// Called from the 1 Hz learned-value push, which only runs while a game is actually being
+        /// driven - precisely the moment these three answers can first become true. Sampling them once
+        /// in the constructor left every "plugin not detected" note permanently stuck on for a page
+        /// that had been opened at the menu, which is how a page is normally opened.
+        /// <para/>
+        /// Cheap enough at 1 Hz: eight guarded property reads through the providers' own SafeGet.
+        /// </summary>
+        private void RefreshSourceAvailability()
+        {
+            bool lockShakeIt = _motorsExport.IsLockAvailable(_pluginManager);
+            bool slipShakeIt = _motorsExport.IsSlipAvailable(_pluginManager);
+            bool viper = _viperExport.IsAvailable(_pluginManager);
+
+            if (lockShakeIt == _lockMotorsExportAvailable
+                && slipShakeIt == _slipMotorsExportAvailable
+                && viper == _viperAvailable) return;
+
+            _lockMotorsExportAvailable = lockShakeIt;
+            _slipMotorsExportAvailable = slipShakeIt;
+            _viperAvailable = viper;
+
+            RefreshSourceModeUi(isLock: true);
+            RefreshSourceModeUi(isLock: false);
+        }
+
+        /// <summary>
+        /// Whether this channel's configured source cannot work on the game currently running - today
+        /// only the Viper case, where the plugin returns before computing and leaves its properties at
+        /// the 0 it declared them with.
+        /// <para/>
+        /// Asks the PLUGIN rather than re-deriving it, so the page and the engine can never disagree
+        /// about which source is actually being read.
+        /// </summary>
+        private bool ChannelShadowsRaw(bool isLock)
+        {
+            if (_plugin == null || _plugin.Settings == null) return false;
+
+            WheelChannelSettings channel = isLock ? _plugin.Settings.Lock : _plugin.Settings.Slip;
+            SourceMode shown = ParseEnum(GetSelectedTag(isLock ? LockSourceModeCombo : SlipSourceModeCombo, "Manual"),
+                                         SourceMode.Manual);
+
+            // Read the COMBO, not the persisted mode: the driver may have switched without applying,
+            // and the page must describe what they are looking at.
+            if (shown != SourceMode.Viper) return false;
+            return _plugin.ViperSourceBlocked(
+                new WheelChannelSettings { SourceMode = SourceMode.Viper }, _currentGameId);
+        }
+
+        /// <summary>
+        /// Disable the four source rows and show this channel's Raw properties in them, for a channel
+        /// whose configured source cannot work right now.
+        /// <para/>
+        /// The owner's requirement is that the boxes show WHAT IS ACTUALLY BEING USED, not a
+        /// configuration that is being ignored - and that every control in the row goes dead together,
+        /// so nothing looks editable when it is not.
+        /// </summary>
+        /// <summary>Whether each channel's source rows are currently showing Raw because the configured
+        /// source cannot work - tracked so the transition BACK can restore the real configuration.</summary>
+        private bool _lockShadowing, _slipShadowing;
+
+        /// <summary>
+        /// Disable the four source rows and show this channel's Raw properties in them, for a channel
+        /// whose configured source cannot work right now - and put everything back when it can again.
+        /// <para/>
+        /// The owner's requirement is that the boxes show WHAT IS ACTUALLY BEING USED, not a
+        /// configuration that is being ignored, and that every control in the row goes dead together so
+        /// nothing looks editable when it is not.
+        /// <para/>
+        /// THE IDENTITY IS SET EXPLICITLY, NOT INFERRED FROM THE TEXT, and that is the subtle part. The
+        /// rows are written inside a loading scope - they must be, or the edit hook would read them as
+        /// the driver typing and flip the channel to Custom - but OnSourceConfigurationChanged
+        /// deliberately stands down while loading, so the automatic "text changed, recompute the
+        /// identity" path never runs. Leaving it at that looked correct on screen while
+        /// _currentLockSource still pointed at the blocked source, which is what the key data points are
+        /// keyed by: the panel would have shown, and SAVED, the wrong source's numbers. Setting it here
+        /// is also simply more honest - while shadowing, the identity IS Raw's, by definition.
+        /// <para/>
+        /// RESTORING MATTERS AS MUCH AS SHADOWING. When a game becomes supported - which the
+        /// Add-to-supported-list button can do at any moment - the configured text has to come back, or
+        /// the driver is left looking at Raw properties in an enabled Viper channel.
+        /// </summary>
+        private void ApplyRawShadowToSourceRows(bool isLock, bool shadowing)
+        {
+            List<SourceRow> rows = isLock ? _lockRows : _slipRows;
+            if (rows == null || rows.Count < 4) return;
+
+            bool was = isLock ? _lockShadowing : _slipShadowing;
+            if (isLock) _lockShadowing = shadowing; else _slipShadowing = shadowing;
+
+            if (shadowing)
+            {
+                using (_dirty.BeginLoading())
+                {
+                    for (int i = 0; i < 4; i++)
+                    {
+                        rows[i].SourceBox.Text = RawSourceFallback.PropertyName(isLock, i);
+                        SetScriptTypeVisual(rows[i].ScriptTypeButton, RawSourceFallback.RawScriptType);
+                    }
+                }
+                AdoptSourceIdentity(isLock, RawSourceFallback.RawIdentity(isLock));
+            }
+            else
+            {
+                if (was)
+                {
+                    // COMING BACK FROM A SHADOW: REBUILD FROM THE MODE THE DROPDOWN SHOWS, NOT FROM THE
+                    // STORED SETTINGS.
+                    //
+                    // THE BUG THIS CLOSES, and it is the one that kept coming back (owner, 2026-10-02:
+                    // "launch SimHub WITHOUT any setting files, and with unsupported game, click 'Add to
+                    // supported list', source text box can be edit, but it still shows Raw"):
+                    //
+                    //   fresh config  -> stored SourceMode is Manual, stored sources are Raw
+                    //   pick Viper    -> only the COMBO and the boxes change; nothing is applied yet
+                    //                    (and the title is unsupported, so the boxes are shadowed to Raw)
+                    //   Add to list   -> shadow ends, and restoring "the channel's own configured
+                    //                    source" restored RAW, because that is genuinely what is stored
+                    //
+                    // No Apply has happened, so the settings cannot describe what the driver is looking
+                    // at - which is exactly why ChannelShadowsRaw reads the combo rather than the
+                    // persisted mode. The restore has to do the same, and regenerate the preset the
+                    // combo names. That is safe because a preset's four strings are this plugin's own.
+                    //
+                    // CUSTOM IS EXCLUDED: its text IS the driver's configuration, there is nothing to
+                    // regenerate, and the boxes already hold it.
+                    SourceMode shown = ParseEnum(
+                        GetSelectedTag(isLock ? LockSourceModeCombo : SlipSourceModeCombo, "Manual"),
+                        SourceMode.Manual);
+
+                    if (shown != SourceMode.Custom)
+                    {
+                        var preset = new WheelChannelSettings { SourceMode = shown };
+                        preset.ResetSourcesForCurrentMode(isLock);
+
+                        using (_dirty.BeginLoading())
+                        {
+                            rows[0].SourceBox.Text = preset.SourceFrontLeft; SetScriptTypeVisual(rows[0].ScriptTypeButton, preset.ScriptTypeFrontLeft);
+                            rows[1].SourceBox.Text = preset.SourceFrontRight; SetScriptTypeVisual(rows[1].ScriptTypeButton, preset.ScriptTypeFrontRight);
+                            rows[2].SourceBox.Text = preset.SourceRearLeft; SetScriptTypeVisual(rows[2].ScriptTypeButton, preset.ScriptTypeRearLeft);
+                            rows[3].SourceBox.Text = preset.SourceRearRight; SetScriptTypeVisual(rows[3].ScriptTypeButton, preset.ScriptTypeRearRight);
+                            foreach (SourceRow row in rows) RefreshRowButton(row);
+                        }
+                    }
+                }
+
+                // UNCONDITIONAL, NOT ONLY ON THE WAY BACK FROM A SHADOW - and the `was` guard that used
+                // to be here was a real defect, reported from the Viper Slip screenshot: the key data
+                // points read 75 / 67.5 / 52.5, which is Slip's RAW reference, while the dropdown said
+                // Viper (whose reference is 10 / 9 / 7).
+                //
+                // Every mode switch goes through ApplySourceDefaultsForMode, which MUST write the four
+                // source boxes inside a loading scope or the edit hook mistakes the preset for the
+                // driver typing and bounces the dropdown to Custom. But OnSourceConfigurationChanged -
+                // the automatic "text changed, recompute the identity" path - stands down while
+                // loading. So on a plain Manual -> Viper switch, with no shadow on either side, nothing
+                // adopted the new identity at all: _currentLockSource / _currentSlipSource still named
+                // the previous source, and that identity is what the key data points are read from AND
+                // written back to. AdoptSourceIdentity returns immediately when the identity has not
+                // actually changed, so calling it on every refresh costs nothing.
+                AdoptSourceIdentity(isLock, ComputeCurrentSourceIdentity(isLock));
+            }
+
+            foreach (SourceRow row in rows)
+            {
+                row.SourceBox.IsEnabled = !shadowing;
+                row.ScriptTypeButton.IsEnabled = !shadowing;
+                row.ActionButton.IsEnabled = !shadowing;
+            }
+        }
+
+        /// <summary>
+        /// Point one channel at <paramref name="identity"/> and reload everything keyed by it.
+        /// <para/>
+        /// The unconditional twin of <see cref="OnSourceConfigurationChanged"/>, which stands down while
+        /// loading. Callers that write the source boxes THEMSELVES - and therefore must suppress the
+        /// edit hook - use this to do the identity half explicitly.
+        /// </summary>
+        private void AdoptSourceIdentity(bool isLock, string identity)
+        {
+            string current = isLock ? _currentLockSource : _currentSlipSource;
+            if (string.Equals(current, identity, StringComparison.Ordinal)) return;
+
+            if (isLock) _currentLockSource = identity; else _currentSlipSource = identity;
+
+            PullPersistedLearnedValues();
+            ReloadKeyDataForCurrentContext();
+            SeedManualBoxesFromLearnedIfNeeded();
+            RefreshKeyDataPointUi();
+        }
+
+        /// <summary>
+        /// Updates the mode-dependent notes under the toggle for one channel, from whatever the combo
+        /// currently shows:
         /// <list type="bullet">
         /// <item>ShakeIt mode: the concise setup guide is shown; the "not available yet" warning is
         /// ALSO shown, but only if <see cref="_lockMotorsExportAvailable"/>/<see cref="_slipMotorsExportAvailable"/>
         /// says SimHub is not currently reporting the four expected properties.</item>
         /// <item>Manual mode: neither ShakeIt note is shown; the short "supply a 0-100 value" note is
         /// shown instead.</item>
+        /// <item>Custom mode: the fallback note, and the cold-start reference editors below the key
+        /// data points (<see cref="RefreshCustomReferenceEditors"/>).</item>
         /// </list>
         /// Called at construction (via <see cref="LocalizeStaticText"/>), on every mode change, on every
         /// per-source reset, and after loading settings.
@@ -2037,14 +2786,65 @@ namespace QAdvanceFeedback.Settings
             SourceMode mode = ParseEnum(GetSelectedTag(combo, "Manual"), SourceMode.Manual);
             bool available = isLock ? _lockMotorsExportAvailable : _slipMotorsExportAvailable;
             bool isShakeIt = mode == SourceMode.ShakeIt;
+            bool isViper = mode == SourceMode.Viper;
 
             TextBlock setupNote = isLock ? LockShakeItSetupNote : SlipShakeItSetupNote;
             TextBlock unavailableNote = isLock ? LockSourcesShakeItNote : SlipSourcesShakeItNote;
             TextBlock manualNote = isLock ? LockManualNote : SlipManualNote;
+            TextBlock viperSetupNote = isLock ? LockViperSetupNote : SlipViperSetupNote;
+            TextBlock viperUnavailableNote = isLock ? LockViperUnavailableNote : SlipViperUnavailableNote;
+
+            bool isCustom = mode == SourceMode.Custom;
+            bool shadowing = ChannelShadowsRaw(isLock);
+
+            TextBlock unsupportedNote = isLock ? LockViperUnsupportedNote : SlipViperUnsupportedNote;
+            TextBlock customNote = isLock ? LockCustomNote : SlipCustomNote;
+            TextBlock shadowNote = isLock ? LockKeyDataShadowNote : SlipKeyDataShadowNote;
+            StackPanel gamePanel = isLock ? LockViperGamePanel : SlipViperGamePanel;
+            Button gameButton = isLock ? LockViperGameButton : SlipViperGameButton;
+
+            unsupportedNote.Visibility = shadowing ? Visibility.Visible : Visibility.Collapsed;
+            shadowNote.Visibility = shadowing ? Visibility.Visible : Visibility.Collapsed;
+            customNote.Visibility = isCustom ? Visibility.Visible : Visibility.Collapsed;
+
+            // The Add/Remove button only makes sense on the Viper source, with a game running, and ONLY
+            // for a title this project does not already ship knowledge of (owner, 2026-10-01: "ONLY the
+            // game not in the internal support lists will display the button").
+            //
+            // A shipped title has nothing to add and must not offer Remove: that list is this project's
+            // record of what viper4gh's plugin actually handles, not a preference. Offering Remove on
+            // one produced exactly the trap reported - F12025 removed, the channel dropped to Raw, and
+            // re-adding did nothing useful.
+            bool canEditGameList = isViper
+                                   && !string.IsNullOrWhiteSpace(_currentGameId)
+                                   && !Core.Viper.ViperSupportedGames.IsShipped(_currentGameId);
+            gamePanel.Visibility = canEditGameList ? Visibility.Visible : Visibility.Collapsed;
+            if (canEditGameList)
+                gameButton.Content = Strings.Get(
+                    Core.Viper.ViperSupportedGames.IsSupported(_currentGameId, _plugin?.ViperDocument?.SupportedGames)
+                        ? "Sources.ViperGame.Remove"
+                        : "Sources.ViperGame.Add");
+
+            ApplyRawShadowToSourceRows(isLock, shadowing);
+            RefreshCustomReferenceEditors(isLock, isCustom, shadowing);
 
             setupNote.Visibility = isShakeIt ? Visibility.Visible : Visibility.Collapsed;
             unavailableNote.Visibility = (isShakeIt && !available) ? Visibility.Visible : Visibility.Collapsed;
-            manualNote.Visibility = isShakeIt ? Visibility.Collapsed : Visibility.Visible;
+            // Not while the game is unsupported: the setup guide describes configuring a source this
+            // channel cannot use on this title, and the unsupported notice above already explains why.
+            viperSetupNote.Visibility = (isViper && !shadowing) ? Visibility.Visible : Visibility.Collapsed;
+            // The Viper warning matters MORE than the ShakeIt one: a missing ShakeIt export makes the
+            // expression fail, so the engine falls back and the driver still gets a cue. A missing Viper
+            // property EVALUATES CLEANLY TO 0 instead, so without this note there is no signal at all
+            // that the source is dead - the failure the owner lost a whole session to.
+            // NOT WHILE THE GAME IS UNSUPPORTED. "Install the plugin" is actively misleading then -
+            // the plugin may well be installed and simply not compute for this title, which the
+            // unsupported notice above already says. Two amber warnings with different explanations
+            // for one condition is worse than one correct warning.
+            viperUnavailableNote.Visibility = (isViper && !_viperAvailable && !shadowing)
+                ? Visibility.Visible : Visibility.Collapsed;
+            // "Manual" note belongs to Manual alone - both presets fill the fields in themselves.
+            manualNote.Visibility = (isShakeIt || isViper || isCustom) ? Visibility.Collapsed : Visibility.Visible;
         }
 
         private void SetSourceModeCombo(bool isLock, SourceMode mode)
@@ -2098,11 +2898,11 @@ namespace QAdvanceFeedback.Settings
 
         private void WireAnchorEvents(
             ProjectorSettings working,
-            MahApps.Metro.Controls.NumericUpDown startRaw, MahApps.Metro.Controls.NumericUpDown startOutput,
-            MahApps.Metro.Controls.NumericUpDown slightlyRaw, MahApps.Metro.Controls.NumericUpDown slightlyOutput,
-            MahApps.Metro.Controls.NumericUpDown moderateRaw, MahApps.Metro.Controls.NumericUpDown moderateOutput,
-            MahApps.Metro.Controls.NumericUpDown criticalRaw, MahApps.Metro.Controls.NumericUpDown criticalOutput,
-            MahApps.Metro.Controls.NumericUpDown endRaw, MahApps.Metro.Controls.NumericUpDown endOutput,
+            NumericEditor startRaw, NumericEditor startOutput,
+            NumericEditor slightlyRaw, NumericEditor slightlyOutput,
+            NumericEditor moderateRaw, NumericEditor moderateOutput,
+            NumericEditor criticalRaw, NumericEditor criticalOutput,
+            NumericEditor endRaw, NumericEditor endOutput,
             ComboBox presetCombo, ProjectionChannel channel)
         {
             startRaw.ValueChanged += (s, e) => OnAnchorRawChanged(working, AnchorSlot.Start, e.NewValue, channel);
@@ -2142,9 +2942,9 @@ namespace QAdvanceFeedback.Settings
         /// </summary>
         private void WireFlattenRangeEvents(
             ProjectorSettings working,
-            MahApps.Metro.Controls.NumericUpDown slightlyRange,
-            MahApps.Metro.Controls.NumericUpDown moderateRange,
-            MahApps.Metro.Controls.NumericUpDown criticalRange,
+            NumericEditor slightlyRange,
+            NumericEditor moderateRange,
+            NumericEditor criticalRange,
             ProjectionChannel channel)
         {
             slightlyRange.ValueChanged += (s, e) => OnFlattenRangeChanged(working, channel, v => working.SlightlyFlattenRange = v, e.NewValue);
@@ -2189,11 +2989,11 @@ namespace QAdvanceFeedback.Settings
 
         private void LoadAnchorControls(
             ProjectorSettings working,
-            MahApps.Metro.Controls.NumericUpDown startRaw, MahApps.Metro.Controls.NumericUpDown startOutput,
-            MahApps.Metro.Controls.NumericUpDown slightlyRaw, MahApps.Metro.Controls.NumericUpDown slightlyOutput,
-            MahApps.Metro.Controls.NumericUpDown moderateRaw, MahApps.Metro.Controls.NumericUpDown moderateOutput,
-            MahApps.Metro.Controls.NumericUpDown criticalRaw, MahApps.Metro.Controls.NumericUpDown criticalOutput,
-            MahApps.Metro.Controls.NumericUpDown endRaw, MahApps.Metro.Controls.NumericUpDown endOutput, ComboBox presetCombo)
+            NumericEditor startRaw, NumericEditor startOutput,
+            NumericEditor slightlyRaw, NumericEditor slightlyOutput,
+            NumericEditor moderateRaw, NumericEditor moderateOutput,
+            NumericEditor criticalRaw, NumericEditor criticalOutput,
+            NumericEditor endRaw, NumericEditor endOutput, ComboBox presetCombo)
         {
             using (_dirty.BeginLoading())
             {
@@ -2654,7 +3454,7 @@ namespace QAdvanceFeedback.Settings
 
         private void LoadChannel(
             WheelChannelSettings channel, List<SourceRow> rows,
-            MahApps.Metro.Controls.ToggleSwitch pulseEnabled, MahApps.Metro.Controls.NumericUpDown pulseGap, MahApps.Metro.Controls.NumericUpDown pulseMin)
+            MahApps.Metro.Controls.ToggleSwitch pulseEnabled, NumericEditor pulseGap, NumericEditor pulseMin)
         {
             rows[0].SourceBox.Text = channel.SourceFrontLeft; SetScriptTypeVisual(rows[0].ScriptTypeButton, CoerceLoadedScriptType(channel.ScriptTypeFrontLeft));
             rows[1].SourceBox.Text = channel.SourceFrontRight; SetScriptTypeVisual(rows[1].ScriptTypeButton, CoerceLoadedScriptType(channel.ScriptTypeFrontRight));
@@ -2671,7 +3471,12 @@ namespace QAdvanceFeedback.Settings
         {
             QAdvanceFeedbackSettings s = _plugin.Settings;
 
-            SaveChannel(s.Lock, _lockRows, LockPulseEnabled, LockPulseGapMs, LockPulseMinValue);
+            // The Custom source's own cold-start reference, if the driver edited it. Saved here with
+            // everything else so it reaches the running calibration only on Apply, like every other
+            // setting - the engine picks it up on the next frame via ApplyCustomColdStart.
+            SaveCustomReferences(s);
+
+            SaveChannel(s.Lock, _lockRows, LockPulseEnabled, LockPulseGapMs, LockPulseMinValue, _lockShadowing);
             s.Lock.SourceMode = ParseEnum(GetSelectedTag(LockSourceModeCombo, s.Lock.SourceMode.ToString()), s.Lock.SourceMode);
             s.Lock.BrakeThresholdPercent = LockBrakeThreshold.Value ?? s.Lock.BrakeThresholdPercent;
             s.Lock.LockSensibility = LockSensibility.Value ?? s.Lock.LockSensibility;
@@ -2685,7 +3490,7 @@ namespace QAdvanceFeedback.Settings
             SaveKeyDataPoints(s);
             CopyProjector(_workingLockProjector, s.Lock.Projector);
 
-            SaveChannel(s.Slip, _slipRows, SlipPulseEnabled, SlipPulseGapMs, SlipPulseMinValue);
+            SaveChannel(s.Slip, _slipRows, SlipPulseEnabled, SlipPulseGapMs, SlipPulseMinValue, _slipShadowing);
             s.Slip.SourceMode = ParseEnum(GetSelectedTag(SlipSourceModeCombo, s.Slip.SourceMode.ToString()), s.Slip.SourceMode);
             s.Slip.BrakeThresholdPercent = SlipBrakeThreshold.Value ?? s.Slip.BrakeThresholdPercent;
             s.Slip.ThrottleThresholdPercent = SlipThrottleThreshold.Value ?? s.Slip.ThrottleThresholdPercent;
@@ -2764,21 +3569,40 @@ namespace QAdvanceFeedback.Settings
 
         private void SaveChannel(
             WheelChannelSettings channel, List<SourceRow> rows,
-            MahApps.Metro.Controls.ToggleSwitch pulseEnabled, MahApps.Metro.Controls.NumericUpDown pulseGap, MahApps.Metro.Controls.NumericUpDown pulseMin)
+            MahApps.Metro.Controls.ToggleSwitch pulseEnabled, NumericEditor pulseGap, NumericEditor pulseMin,
+            bool shadowingRaw)
         {
-            channel.SourceFrontLeft = rows[0].SourceBox.Text.Trim();
-            channel.SourceFrontRight = rows[1].SourceBox.Text.Trim();
-            channel.SourceRearLeft = rows[2].SourceBox.Text.Trim();
-            channel.SourceRearRight = rows[3].SourceBox.Text.Trim();
+            // A SHADOWED CHANNEL'S BOXES ARE A READOUT, NOT A CONFIGURATION - so they are NOT saved.
+            //
+            // THIS WAS A DATA-DESTROYING BUG (owner-reported, 2026-10-01: "Add current game to Viper
+            // support list will NOT change the sources ... Restart SimHub NOT help. Only if switching
+            // the source to other one then switch back to Viper will work").
+            //
+            // When a Viper channel is blocked on an unsupported title, ApplyRawShadowToSourceRows fills
+            // these four boxes with RAW's property names so the page shows what is actually being read.
+            // Saving them wrote Raw's names over the channel's configured Viper scripts, permanently:
+            // the mode still said Viper while the sources were Raw. Adding the game to the supported
+            // list then "restored the configured text" - which was now Raw - so nothing appeared to
+            // change, and a restart could not help because the settings genuinely held Raw. Only
+            // re-picking Viper in the dropdown fixed it, because that rewrites the scripts from scratch.
+            //
+            // Everything else on this channel is still saved, because nothing else is being shadowed.
+            if (!shadowingRaw)
+            {
+                channel.SourceFrontLeft = rows[0].SourceBox.Text.Trim();
+                channel.SourceFrontRight = rows[1].SourceBox.Text.Trim();
+                channel.SourceRearLeft = rows[2].SourceBox.Text.Trim();
+                channel.SourceRearRight = rows[3].SourceBox.Text.Trim();
 
-            // BUG 1's other half, applied on the way BACK into settings too: a hand-toggled
-            // JavaScript/NCalc row while the evaluator is unavailable this session (impossible via
-            // the UI, since the toggle is hidden - but defensive here regardless) is never persisted
-            // as anything other than Plain.
-            channel.ScriptTypeFrontLeft = CoerceLoadedScriptType(GetScriptType(rows[0].ScriptTypeButton));
-            channel.ScriptTypeFrontRight = CoerceLoadedScriptType(GetScriptType(rows[1].ScriptTypeButton));
-            channel.ScriptTypeRearLeft = CoerceLoadedScriptType(GetScriptType(rows[2].ScriptTypeButton));
-            channel.ScriptTypeRearRight = CoerceLoadedScriptType(GetScriptType(rows[3].ScriptTypeButton));
+                // BUG 1's other half, applied on the way BACK into settings too: a hand-toggled
+                // JavaScript/NCalc row while the evaluator is unavailable this session (impossible via
+                // the UI, since the toggle is hidden - but defensive here regardless) is never persisted
+                // as anything other than Plain.
+                channel.ScriptTypeFrontLeft = CoerceLoadedScriptType(GetScriptType(rows[0].ScriptTypeButton));
+                channel.ScriptTypeFrontRight = CoerceLoadedScriptType(GetScriptType(rows[1].ScriptTypeButton));
+                channel.ScriptTypeRearLeft = CoerceLoadedScriptType(GetScriptType(rows[2].ScriptTypeButton));
+                channel.ScriptTypeRearRight = CoerceLoadedScriptType(GetScriptType(rows[3].ScriptTypeButton));
+            }
 
             channel.Pulse.Enabled = pulseEnabled.IsChecked == true;
             channel.Pulse.GapMs = pulseGap.Value ?? channel.Pulse.GapMs;

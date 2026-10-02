@@ -35,7 +35,9 @@ namespace QAdvanceFeedback.Tests
         /// <summary>Runs a trace and reports what (if anything) the gate taught, with the limit ON.</summary>
         private double? RunSlip(double[] basis, double[] g, double gScale = 1.0)
         {
-            var gate = new SlipCrossingGate { MaxGCollapseFractionPerSecond = Enabled };
+            // WalkBackGBandFraction = 0 isolates the collapse limit from the v1.1.0 walk-back, which
+            // also moves the snapshot. Two features, two test files.
+            var gate = new SlipCrossingGate { MaxGCollapseFractionPerSecond = Enabled, WalkBackGBandFraction = 0.0 };
             for (int i = 0; i < 6; i++) gate.Observe(basis[0], basis[0], g[0] * gScale, true, Dt);
 
             for (int i = 0; i < basis.Length; i++)

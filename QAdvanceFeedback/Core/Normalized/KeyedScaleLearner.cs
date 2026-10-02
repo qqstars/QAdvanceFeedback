@@ -187,9 +187,12 @@ namespace QAdvanceFeedback.Core.Normalized
             OnlineDistributionLearner primary = Find(_physicalAnchor, key);
             if (primary == null || primary.Count <= 0) return 0.0;
 
-            double weight = primary.Count >= (int)CalibrationConfidenceScaleSamples
-                ? 1.0
-                : ColdWarmBlend.ConcaveHotWeight(primary.Count, DispersionFor(key).CoefficientOfVariation, CalibrationConfidenceScaleSamples);
+            // THE SAME FADE THE LIVE PATH USES (v1.1.0). This diagnostic exists to report when cold start
+            // actually finished; computing it from a different curve than LearnedCeilingForKey's own
+            // would make it report a hand-over that did not happen on the frame it claims.
+            double weight = ApplyFullTrustFade(
+                ColdWarmBlend.ConcaveHotWeight(primary.Count, DispersionFor(key).CoefficientOfVariation, CalibrationConfidenceScaleSamples),
+                primary.Count);
             return ClampMath.To01(weight * PhysicalAnchorReadinessWeight(key));
         }
 
@@ -403,13 +406,91 @@ namespace QAdvanceFeedback.Core.Normalized
         /// borrow, and as the return value when it has no evidence at all - so the two agree by
         /// construction and the transition between them cannot step.
         /// </summary>
+        /// <summary>
+        /// The identity <see cref="ConfiguredColdStartSMax"/> applies to, or null for "no override".
+        /// <para/>
+        /// SET PER CHANNEL FROM THE SETTINGS, not global and not static. A CUSTOM source
+        /// (<c>Settings.SourceMode.Custom</c>) is whatever the driver configured, so
+        /// <see cref="KnownSourceColdStartReference"/> cannot classify it and has no measured number to
+        /// offer - the driver supplies one instead, seeded from whichever preset they edited their way
+        /// in from. This is how that number reaches the live calibration rather than only the settings
+        /// page.
+        /// <para/>
+        /// GUARDED BY THE IDENTITY, which is the whole reason this is not just a nullable double. The
+        /// value belongs to ONE source configuration; a channel that switches source, or that falls back
+        /// to Raw because its own source cannot work right now, must stop using it immediately. Matching
+        /// on the identity makes that automatic - no separate "clear this on switch" call that a future
+        /// code path could forget.
+        /// </summary>
+        public string ConfiguredColdStartIdentity { get; set; }
+
+        /// <summary>The driver-configured cold-start SMax for <see cref="ConfiguredColdStartIdentity"/>.
+        /// Zero or less means "none", which is also the default - so a learner nobody configures behaves
+        /// exactly as it did before this existed.</summary>
+        public double ConfiguredColdStartSMax { get; set; }
+
+        /// <summary>
+        /// This source's cold-start SMax: the driver's own configured value when one applies to exactly
+        /// this identity, otherwise the shipped table's. False when neither has an answer, which is the
+        /// honest state for a source nobody has measured and keeps the pre-existing identity cold start.
+        /// </summary>
+        /// <summary>
+        /// The fraction of a source's OWN cold-start reference below which a reading is too small to be
+        /// at-limit evidence - see <see cref="CalibrationObservationFloor"/>.
+        /// </summary>
+        public const double ColdStartObservationFloorFraction = 0.25;
+
+        /// <summary>
+        /// The minimum reading this SOURCE must produce before a frame may teach SMax - the absolute
+        /// floor, or a quarter of the source's own cold-start reference, whichever is LOWER.
+        /// <para/>
+        /// THE ABSOLUTE FLOOR WAS CALIBRATED FOR A SOURCE THAT READS ~70-85 AT ITS LIMIT (our own Raw).
+        /// Measured on the owner's 1.1.0 Viper capture, that assumption breaks badly on a slip-ratio
+        /// source: Viper's Slip channel reads p90 = 4.4, so a flat floor of 10 discarded 99.7% of the
+        /// signal - 20 teachable frames out of 6000 - and SMax was computed from a handful of extreme
+        /// outliers, giving 18.1 and 11.9 on two runs of the same car and track. With the floor taken
+        /// from the source's own scale it reads 1719 frames and settles at 7.1 and 7.3: the same
+        /// number twice, which is what a calibration is supposed to look like.
+        /// <para/>
+        /// RAW AND SHAKEIT ARE PROVABLY UNCHANGED, which is the whole reason this is a MINIMUM rather
+        /// than a plain scaling: their references are 85/75, and a quarter of those (21.25/18.75) is
+        /// above the absolute floor, so <c>Math.Min</c> returns the absolute floor exactly as before.
+        /// Only a source whose limit sits below ~40 moves at all.
+        /// <para/>
+        /// THE REFERENCE IS PER SOURCE, INCLUDING CUSTOM (the owner's own requirement). It comes from
+        /// <see cref="TryGetColdStartSMax"/>, which resolves the driver's CONFIGURED cold-start
+        /// reference for a custom source before falling back to the shipped table - so a hand-written
+        /// source is calibrated against the number its driver supplied, not against Raw's. A source
+        /// with no reference at all keeps the absolute floor, since there is nothing better to scale by.
+        /// </summary>
+        public double CalibrationObservationFloor(string sourceIdentity, double absoluteFloor)
+        {
+            double referenceSMax;
+            if (!TryGetColdStartSMax(sourceIdentity, out referenceSMax) || referenceSMax <= 0.0)
+                return absoluteFloor;
+
+            return Math.Min(absoluteFloor, referenceSMax * ColdStartObservationFloorFraction);
+        }
+
+        private bool TryGetColdStartSMax(string sourceIdentity, out double sMax)
+        {
+            if (ConfiguredColdStartSMax > 1e-6
+                && !string.IsNullOrEmpty(ConfiguredColdStartIdentity)
+                && string.Equals(sourceIdentity, ConfiguredColdStartIdentity, StringComparison.Ordinal))
+            {
+                sMax = ConfiguredColdStartSMax;
+                return true;
+            }
+
+            sMax = 0.0;
+            return _isLockChannel.HasValue
+                && KnownSourceColdStartReference.TryGetSMax(sourceIdentity, _isLockChannel.Value, out sMax)
+                && sMax > 1e-6;
+        }
+
         private double? Tier1ColdCeiling(string key, string sourceIdentity)
         {
-            bool hasShipped = _isLockChannel.HasValue
-                && KnownSourceColdStartReference.TryGetSMax(sourceIdentity, _isLockChannel.Value, out double shipped)
-                && shipped > 1e-6;
-            double shippedSMax = 0.0;
-            if (hasShipped) KnownSourceColdStartReference.TryGetSMax(sourceIdentity, _isLockChannel.Value, out shippedSMax);
+            bool hasShipped = TryGetColdStartSMax(sourceIdentity, out double shippedSMax);
 
             OnlineDistributionLearner secondary = Find(_generalDistribution, key);
             // The SAME confidence-weighted blend the warm path uses, so the cold hand-off converges on
@@ -669,6 +750,62 @@ namespace QAdvanceFeedback.Core.Normalized
         /// the two would make an unrelated change to one silently retune the other.
         /// </summary>
         public const int CalibrationConfidenceScaleSamples = 200;
+
+        /// <summary>
+        /// Where the hand-over to full trust STARTS, so that it is a fade rather than a cliff - see the
+        /// block at <see cref="ApplyFullTrustFade"/>'s call site for the measured defect.
+        /// <para/>
+        /// WHAT THIS DOES AND DOES NOT CHANGE, which is the whole reason it sits before
+        /// <see cref="CalibrationConfidenceScaleSamples"/> rather than after it:
+        /// <list type="bullet">
+        /// <item>Below this count - NOTHING changes. The concave, dispersion-weighted ramp is used
+        /// exactly as before, value for value.</item>
+        /// <item>At <see cref="CalibrationConfidenceScaleSamples"/> and beyond - NOTHING changes. Weight
+        /// is 1.0, so a mature key's published ceiling is identical to what it was.</item>
+        /// <item>Between the two - the weight climbs to 1.0 across these 50 samples instead of in one
+        /// frame. It is therefore slightly HIGHER here than before, never lower.</item>
+        /// </list>
+        /// SO COLD START DOES NOT GET LONGER, which was the owner's own question when this was proposed.
+        /// Full trust still arrives at exactly <see cref="CalibrationConfidenceScaleSamples"/> samples -
+        /// a median of 23 seconds of engaged braking across the 22 channel-sessions in the log corpus
+        /// that reach it at all, unchanged. Ramping AFTER 200 instead would have pushed that to 44 s
+        /// (ending at 300) or 56 s (at 400) and left 2-3 of those 22 sessions never reaching full trust;
+        /// that was measured and deliberately not chosen.
+        /// <para/>
+        /// WHAT IS GIVEN UP, stated plainly: dispersion stops influencing the weight from this count
+        /// rather than from <see cref="CalibrationConfidenceScaleSamples"/>. The previous code asserted
+        /// exactly the same thing - that 200+ at-limit observations ARE this source's ceiling however
+        /// noisy - it just asserted it in a single frame. This spreads that same assertion over 50
+        /// samples. At a realistic CV of 0.10 the published ceiling then moves about 0.25 points per
+        /// sample at its fastest, against the 8.4-point single-frame step it replaces.
+        /// </summary>
+        public const int FullTrustFadeStartSamples = 150;
+
+        /// <summary>
+        /// Fades <paramref name="weight"/> to full trust across
+        /// <see cref="FullTrustFadeStartSamples"/>..<see cref="CalibrationConfidenceScaleSamples"/> - see
+        /// <see cref="FullTrustFadeStartSamples"/> for why, and for what deliberately does not change.
+        /// <para/>
+        /// Monotone in <paramref name="count"/> by construction: the underlying weight is itself
+        /// non-decreasing and the fade fraction only grows, so the published ceiling can never move
+        /// backwards as evidence accumulates.
+        /// </summary>
+        /// <summary>TEST HOOK ONLY - this key's own primary-tier coefficient of variation, so a test can
+        /// reconstruct the UNFADED weight from <see cref="ColdWarmBlend.ConcaveHotWeight"/> and prove that
+        /// nothing below <see cref="FullTrustFadeStartSamples"/> changed. Nothing in the pipeline reads
+        /// it.</summary>
+        public double DispersionCoefficientOfVariationForTesting(string gameId, string carId, string sourceIdentity)
+            => DispersionFor(KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty)).CoefficientOfVariation;
+
+        private static double ApplyFullTrustFade(double weight, int count)
+        {
+            if (count >= CalibrationConfidenceScaleSamples) return 1.0;
+            if (count <= FullTrustFadeStartSamples) return weight;
+
+            double fade = (double)(count - FullTrustFadeStartSamples)
+                          / (CalibrationConfidenceScaleSamples - FullTrustFadeStartSamples);
+            return weight + (1.0 - weight) * ClampMath.To01(fade);
+        }
 
         private readonly Dictionary<string, OnlineDistributionLearner> _physicalAnchor = new Dictionary<string, OnlineDistributionLearner>(StringComparer.Ordinal);
         private readonly Dictionary<string, OnlineDistributionLearner> _generalDistribution = new Dictionary<string, OnlineDistributionLearner>(StringComparer.Ordinal);
@@ -1216,7 +1353,16 @@ namespace QAdvanceFeedback.Core.Normalized
                 // not a value that should stay partially anchored to the canonical constant forever.
                 // Below that sample count the existing concave, dispersion-weighted ramp is unchanged -
                 // this only removes the PERMANENT asymptotic cap, not the graceful early ramp.
-                if (primary.Count >= (int)CalibrationConfidenceScaleSamples) weight = 1.0;
+                //
+                // FADED IN RATHER THAN SNAPPED (v1.1.0 - the owner's own report from the FH6 capture).
+                // The floor above was correct but it arrived as a CLIFF: DispersionQuality does not vary
+                // with sample count, so the weight plateaus early (0.375-0.75 depending on dispersion)
+                // and then jumped to 1.0 on the single frame sample #200 arrived. Measured on
+                // QAdvanceFeedback.session-20260925-115227, frames 7625 -> 7626, the published ceiling
+                // moved 80.152 -> 88.574 - 8.4 points in ONE frame, against roughly 0.4 points per frame
+                // everywhere else in that session, and it lands MID-BRAKING-ZONE because the hold window
+                // is precisely what is feeding the counter. See FullTrustFadeStartSamples.
+                weight = ApplyFullTrustFade(weight, primary.Count);
 
                 // TIERED COLD-START REFERENCE SYSTEM (v1.0.7, docs\v107-tiered-coldstart-report.md) -
                 // RECONCILED replacement for the old cross-car seed (see this class's own remarks above

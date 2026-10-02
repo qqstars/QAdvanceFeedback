@@ -178,6 +178,122 @@ namespace QAdvanceFeedback.Core.Normalized
         /// entirely, which is the kill switch for it.</summary>
         public double MaxGCollapseFractionPerSecond { get; set; } = DefaultMaxGCollapseFractionPerSecond;
 
+        /// <summary>
+        /// THE SATURATED-WHEEL GUARD (owner, 2026-09-25 - v1.1.0). How many of the four wheels may
+        /// already be reading full scale before a crossing is rejected as "not the onset".
+        /// <para/>
+        /// SLIP'S OWN COPY of <see cref="LockCrossingGate.DefaultMinSaturatedWheelsForRejection"/> - see
+        /// that constant for the mechanism, for why the test is car/surface/weather-neutral, and for why
+        /// the owner's own walk-back alternative was measured and declined. Duplicated rather than
+        /// shared for this class's own standing reason: either channel must be switchable without
+        /// touching the other, and the two are free to diverge as evidence accumulates.
+        /// <para/>
+        /// SLIP GAINS MORE FROM IT THAN LOCK DOES, which is why it ships on for both. Replayed over the
+        /// same corpus, Slip crossing snapshots:
+        /// <code>
+        ///   log                  current p90 / max      with guard p90 / max
+        ///   FH6      115227          72.1 / 100.0           57.2 / 86.3
+        ///   F1 25    20260825        57.0 / 100.0           49.2 / 76.8
+        ///   old-logs 20260815        84.4 / 100.0           74.8 / 74.8
+        ///   F1 25    114458          72.7 /  98.1           25.3 / 83.3
+        ///   F1 25    20260831        79.6 /  99.0           37.9 / 79.6
+        ///   seven further logs               bit-identical
+        /// </code>
+        /// THREE logs sat at exactly 100.0 and all three come down, while the median barely moves
+        /// (16.8 -> 14.2, 26.4 -> 25.9, 62.2 -> 58.9) and the crossing count is nearly untouched
+        /// (200 -> 196, 118 -> 110, 45 -> 42) - i.e. it removes the saturated tail without thinning the
+        /// evidence the ceiling is actually built from.
+        /// </summary>
+        public const int DefaultMinSaturatedWheelsForRejection = 2;
+
+        /// <summary>How close to <see cref="SourceCeiling"/> a single wheel must read to count as
+        /// saturated. A hair below the ceiling rather than an exact compare, since the aggregate and the
+        /// per-wheel values both arrive through floating-point arithmetic.</summary>
+        public const double SaturatedWheelThreshold = SourceCeiling - 1e-6;
+
+        /// <summary>The live saturated-wheel guard - see
+        /// <see cref="DefaultMinSaturatedWheelsForRejection"/>. Set to 0 or less to DISABLE the guard
+        /// entirely, which is the kill switch for it; the two channels own independent gate objects, so
+        /// switching one off leaves the other exactly as it was.</summary>
+        public int MinSaturatedWheelsForRejection { get; set; } = DefaultMinSaturatedWheelsForRejection;
+
+        /// <summary>
+        /// THE G-BANDED WALK-BACK (owner, 2026-09-25 - v1.1.0). Slip's own copy of
+        /// <see cref="LockCrossingGate.DefaultWalkBackGBandFraction"/> - see that constant for the
+        /// mechanism, for the corpus measurement of the band width, and for the honestly-disclosed cost.
+        /// Duplicated rather than shared for this class's own standing reason: either channel must be
+        /// switchable without touching the other.
+        /// <para/>
+        /// SLIP'S OWN SHARE of the measured result, on top of the saturated-wheel guard: 20260831 Slip
+        /// 37.9 -&gt; 32.5, 20260815-230140 Slip 66.4 -&gt; 58.8, 20260816-212439 Slip 58.5 -&gt; 53.0,
+        /// while FH6 Slip, the Viper capture's Slip and two further sessions are bit-identical.
+        /// </summary>
+        /// <summary>
+        /// THE COST, ACCEPTED DELIBERATELY BY THE OWNER (2026-09-25). This walk-back is in tension with
+        /// <see cref="KeyedScaleLearner.CanonicalAtLimitAnchor"/> and that was weighed before enabling it.
+        /// <para/>
+        /// SMax was previously defined so that a reading AT the grip limit Rescales to EXACTLY 80 - the
+        /// input position of the four-range curve's top knot ("60-80: the ideal band, up to the measured
+        /// grip limit; 80-100: past the limit"). Reading SMax at the grip PEAK instead of at the
+        /// detection frame teaches a ceiling BELOW the detection value, so an at-limit reading now maps
+        /// to <c>80 / (1 - drop)</c> - above that knot. The effect is one-way by construction: the walk
+        /// can only ever lower SMax, never raise it, so it does not average out.
+        /// <para/>
+        /// MEASURED SIZE. On the synthetic acceptance suite, whose ramp gives up a uniform 10%, a raw 90
+        /// taught at the limit Rescales to 88.9 rather than 80. On the real log corpus the drift is
+        /// smaller - median SMax -4.2%, so the anchor lands nearer 83.5 - because the walk averages only
+        /// 1.16 frames deep rather than the suite's full 5. Either way, genuinely-at-limit braking now
+        /// reads slightly INTO the "past the limit" band rather than exactly at its edge, which is a
+        /// real behavioural change and not merely a louder output.
+        /// <para/>
+        /// WHY IT IS WORTH IT (the owner's call, recorded here rather than argued): the defect being
+        /// fixed is SMax learning 98-100 on titles whose source saturates, which mis-scales the ENTIRE
+        /// channel; a few points of anchor drift is the smaller error. Tests that pinned the exact
+        /// 80-anchor identity were re-baselined to the new value at the same time, deliberately and in
+        /// one place, rather than loosened.
+        /// <para/>
+        /// Set to 0 or less to DISABLE the walk-back entirely, which restores the pre-1.1.0 behaviour of
+        /// snapshotting the detection frame and with it the exact 80-anchor identity.
+        /// </summary>
+        public const double DefaultWalkBackGBandFraction = 0.10;
+
+        /// <summary>The live G-banded walk-back - see <see cref="DefaultWalkBackGBandFraction"/>. Set to
+        /// 0 or less to DISABLE the walk-back entirely (snapshot the detection frame, as before v1.1.0),
+        /// which is the kill switch for it.</summary>
+        public double WalkBackGBandFraction { get; set; } = DefaultWalkBackGBandFraction;
+
+        /// <summary>The Raw-fallback basis per slot, so the walk-back snapshots BOTH keys at the SAME
+        /// frame - see <see cref="TeachingFallbackBasis"/> on why they must agree.</summary>
+        private readonly double[] _fallbackHistory = new double[HistoryLength];
+
+        /// <summary>
+        /// Picks the frame this crossing should teach from: walking back from the detection frame while
+        /// the basis keeps falling AND the G stays inside <see cref="WalkBackGBandFraction"/>, return the
+        /// slot with the HIGHEST G - the traction peak of this one rise. Returns
+        /// <paramref name="newestSlot"/> unchanged whenever the walk cannot step, so every degenerate
+        /// case reproduces the pre-1.1.0 snapshot exactly.
+        /// </summary>
+        private int WalkBackSlot(int newestSlot)
+        {
+            double gAtDetection = _gHistory[newestSlot];
+            if (WalkBackGBandFraction <= 0.0 || !ClampMath.IsFinite(gAtDetection) || gAtDetection <= 0.0)
+                return newestSlot;
+
+            double band = WalkBackGBandFraction * gAtDetection;
+            int best = newestSlot;
+            int here = newestSlot;
+            // At most HistoryLength-1 steps, so the walk can never wrap onto the detection frame.
+            for (int step = 0; step < HistoryLength - 1; step++)
+            {
+                int previous = (here - 1 + HistoryLength) % HistoryLength;
+                if (!(_basisHistory[previous] < _basisHistory[here])) break;      // left this rise
+                if (Math.Abs(_gHistory[previous] - gAtDetection) > band) break;   // outside the G band
+                here = previous;
+                if (_gHistory[here] > _gHistory[best]) best = here;
+            }
+            return best;
+        }
+
         /// <summary>The immediately previous accepted basis, for the frame-over-frame rise test - see
         /// the rule 1 block in <see cref="Observe"/>. NaN until the first accepted frame.</summary>
         private double _previousBasis = double.NaN;
@@ -313,7 +429,14 @@ namespace QAdvanceFeedback.Core.Normalized
         /// remarks at the arm condition below. The trend history is fed regardless.</param>
         /// <param name="dtSeconds">Frame time. Non-finite or non-positive values age the window by
         /// <see cref="NominalFrameSeconds"/> instead - see that constant.</param>
-        public bool Observe(double slipBasis, double fallbackBasis, double accelG, bool atLimit, double dtSeconds)
+        /// <param name="saturatedWheelCount">How many of THIS frame's four CONFIGURED wheel readings are
+        /// at the source's own ceiling - see <see cref="DefaultMinSaturatedWheelsForRejection"/>. The
+        /// configured wheels specifically, because <paramref name="slipBasis"/> is built from them and it
+        /// is that basis the crossing is defined on; the Raw-fallback snapshot rides along with the same
+        /// decision. DEFAULTS TO 0 - "the caller did not report saturation" - so every pre-existing
+        /// caller and test keeps its previous behaviour byte for byte.</param>
+        public bool Observe(double slipBasis, double fallbackBasis, double accelG, bool atLimit, double dtSeconds,
+            int saturatedWheelCount = 0)
         {
             // AGE THE WINDOW FIRST, AND ALWAYS. An unusable frame time ages it by a nominal frame rather
             // than by nothing: the engine passes 0.0 whenever the title reports no frame time, and a
@@ -387,6 +510,7 @@ namespace QAdvanceFeedback.Core.Normalized
             int slot = _next;
             _basisHistory[slot] = slipBasis;
             _gHistory[slot] = accelG;
+            _fallbackHistory[slot] = fallbackBasis;
             _next = (slot + 1) % HistoryLength;
             if (_written < HistoryLength) _written++;
 
@@ -419,7 +543,15 @@ namespace QAdvanceFeedback.Core.Normalized
             //
             // The trend history above is deliberately fed on every engaged frame anyway, so the series
             // being differenced stays continuous through the frames that may not arm it.
-            if (_written >= HistoryLength && !holdIsLive && atLimit && risingThisFrame && !collapseTooFast)
+            // THE SATURATED-WHEEL GUARD (v1.1.0) - see DefaultMinSaturatedWheelsForRejection for this
+            // channel's own measurement, and LockCrossingGate's for the mechanism and the declined
+            // walk-back alternative. A crossing whose wheels are already pegged is the break-away
+            // running away, not the traction limit being reached.
+            bool sourceAlreadyLetGo = MinSaturatedWheelsForRejection > 0
+                                      && saturatedWheelCount >= MinSaturatedWheelsForRejection;
+
+            if (_written >= HistoryLength && !holdIsLive && atLimit && risingThisFrame && !collapseTooFast
+                && !sourceAlreadyLetGo)
             {
                 double deltaBasis = slipBasis - _basisHistory[_next];
                 double deltaG = accelG - _gHistory[_next];
@@ -428,12 +560,20 @@ namespace QAdvanceFeedback.Core.Normalized
                     _secondsSinceCrossing = 0.0;
                     _framesSinceCrossing = 0;
                     CrossedThisFrame = true;
-                    // THE ONSET SNAPSHOT - see TeachingBasis. Taken at the DETECTION frame, the top of
-                    // the confirmed rise: the earliest reading at which more slip is demonstrably
-                    // buying less grip. The frame TrendFrames back is the pre-crossing value (still
-                    // gripping) and would under-report; anything later is the break-away running away.
-                    _crossingBasis = slipBasis;
-                    _crossingFallbackBasis = fallbackBasis;
+                    // THE ONSET SNAPSHOT - see TeachingBasis. Anything LATER than the detection frame is
+                    // the break-away running away, so the snapshot never moves forward.
+                    //
+                    // REFINED IN v1.1.0 (the owner's own observation): it no longer sits ON the detection
+                    // frame either. Confirming the crossing costs TrendFrames of evidence, so detection is
+                    // structurally late and G has already fallen off its peak by the time we get here. The
+                    // walk-back steps back to the grip peak OF THIS ONE RISE, bounded by the G band so it
+                    // can never cross into an earlier, unrelated phase - the failure that made a plain
+                    // "take the highest-G frame in the window" rule collapse a 74.0 snapshot to 11.8. A
+                    // flat, blind step of TrendFrames back was ALSO measured and rejected: that lands on
+                    // the pre-crossing value, still gripping, and under-reports badly.
+                    int teachSlot = WalkBackSlot(slot);
+                    _crossingBasis = _basisHistory[teachSlot];
+                    _crossingFallbackBasis = _fallbackHistory[teachSlot];
                 }
             }
 

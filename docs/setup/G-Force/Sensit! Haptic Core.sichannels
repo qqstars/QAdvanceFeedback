@@ -9,9 +9,9 @@
     "IsEnabled": true,
     "AudioMode": 3,
     "DeviceType": 0,
-    "HardwareID2": "{1}.USB\\VID_1FC9&PID_832B&MI_01\\8&398053A8&0&0001",
+    "HardwareID2": "{1}.USB\\VID_1FC9&PID_832B&MI_01\\8&39CC2E38&0&0001",
     "HardwareID1": "USB\\Class_01&SubClass_00&Prot_20",
-    "HardwareID3": "{2}.\\\\?\\usb#vid_1fc9&pid_832b&mi_01#8&398053a8&0&0001#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\\msft_wave",
+    "HardwareID3": "{2}.\\\\?\\usb#vid_1fc9&pid_832b&mi_01#8&39cc2e38&0&0001#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\\msft_wave",
     "EffectToChannelsMapStore": {
       "WheelsImpactContainer": {
         "FrontLeft": {
@@ -90,18 +90,10 @@
           "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;1;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
         },
         "Left": {
-          "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;1;50;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+          "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;1;75;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
         },
         "Right": {
-          "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;1;50;;;|6;0;100;;;|7;0;100;;;"
-        }
-      },
-      "CustomEffectContainerQA-BottomFront": {
-        "Left": {
-          "MapsStore": "0;1;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
-        },
-        "Right": {
-          "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+          "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;1;75;;;|6;0;100;;;|7;0;100;;;"
         }
       },
       "CustomEffectContainerQAdvanceFeedback-Back": {
@@ -116,6 +108,14 @@
         },
         "RearRight": {
           "MapsStore": "0;0;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;1;100;;;|6;0;100;;;|7;0;100;;;"
+        }
+      },
+      "CustomEffectContainerQA-BottomFront": {
+        "Left": {
+          "MapsStore": "0;1;100;;;|1;0;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
+        },
+        "Right": {
+          "MapsStore": "0;0;100;;;|1;1;100;;;|2;0;100;;;|3;0;100;;;|4;0;100;;;|5;0;100;;;|6;0;100;;;|7;0;100;;;"
         }
       },
       "ImpactEffectContainer": {
@@ -308,8 +308,8 @@
         "MapsStore": "0;1;100;1 SEAT TOP LEFT;;|1;1;100;2 SEAT TOP RIGHT;;|2;1;100;3 BACK MID LEFT;;|3;1;100;4 BACK MID RIGHT;;|4;0;100;5 BACK TOP LEFT;;|5;0;100;6 BACK TOP RIGHT;;|6;0;100;7 SEAT MID LEFT;;|7;0;100;8 SEAT MID RIGHT;;"
       }
     },
-    "Name": "扬声器 (3- Sensit! Haptic Core)",
-    "OutputId": "{0.0.0.00000000}.{fb6a4f13-2084-4b5f-a68b-0c13f8935b45}",
+    "Name": "扬声器 (Sensit! Haptic Core)",
+    "OutputId": "{0.0.0.00000000}.{9884bcd7-7828-43da-88ff-d3cd51793791}",
     "InstanceId": "09755cc5-2940-45c6-918c-0a0cae9d7637",
     "ShowPerEffectsLevels": true,
     "IsFavorite": false

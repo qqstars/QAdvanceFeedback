@@ -181,8 +181,16 @@ namespace QAdvanceFeedback.Tests
             // to 86.0 rather than chasing the old accidental number.
             double probe = engine.Compute(BrakingSample(0.1), Corners.Uniform(90.0), Corners.Zero, "F12025", "Sauber", lockSourceIdentity: "ShakeIt").LockAll;
 
-            Assert.True(probe < 86.0,
-                $"a realistic single-session braking count must produce a MEANINGFULLY calibrated output, not one still close to the uncalibrated identity value (90) - got {probe:F2}");
+            // RE-BASELINED FOR THE v1.1.0 WALK-BACK - and this one is a genuine, disclosed WEAKENING of
+            // the guarantee, not just a moved number. SMax is now learned at the grip peak (~0.9x of the
+            // value this probe queries), so the probe legitimately reads higher: 89.4 rather than ~85.3.
+            // That is within a point of the UNCALIBRATED 90 this test exists to distance itself from, so
+            // it no longer demonstrates much about calibration STRENGTH at this query point. It is kept,
+            // at the new bound, as a directional regression guard only - if calibration stopped working
+            // entirely the value would pin at 90.0 exactly. The strong form of this property now lives at
+            // the anchor itself (PerSourceCalibrationTests), which is where the walk-back leaves it intact.
+            Assert.True(probe < 89.9,
+                $"a realistic single-session braking count must still move the output off the uncalibrated identity value (90) - got {probe:F2}");
         }
 
         /// <summary>

@@ -1,7 +1,8 @@
 ﻿<UserControl x:Class="QAdvanceFeedback.Settings.SettingsControl"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:mah="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro">
+             xmlns:mah="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro"
+             xmlns:local="clr-namespace:QAdvanceFeedbackControls">
   <UserControl.Resources>
     <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
       <Setter Property="Margin" Value="4"/>
@@ -90,6 +91,11 @@
       <Button x:Name="RestoreAllDefaultsButton" Padding="16,4"/>
     </StackPanel>
 
+    <!-- Sits directly above the two buttons (Dock=Bottom stacks upward), so "you have not applied
+         this yet" is the last thing between an edit and the driver walking away from the page. -->
+    <TextBlock DockPanel.Dock="Bottom" x:Name="UnappliedChangesBanner" Margin="12,8,8,0"
+               TextWrapping="Wrap" FontWeight="Bold" Foreground="#FFCC4400" Visibility="Collapsed"/>
+
     <TabControl x:Name="MainTabs">
 
       <!-- ================================================================================ -->
@@ -105,7 +111,7 @@
               <StackPanel>
                 <StackPanel Orientation="Horizontal">
                   <TextBlock x:Name="LockLblBrakeThreshold"/>
-                  <mah:NumericUpDown x:Name="LockBrakeThreshold" StringFormat="0"/>
+                  <local:NumericEditor x:Name="LockBrakeThreshold" StringFormat="0"/>
                 </StackPanel>
                 <TextBlock x:Name="LockThresholdNote" TextWrapping="Wrap" FontStyle="Italic"/>
 
@@ -114,7 +120,7 @@
                      load-bearing for Lock's own corrected Layer 3 algorithm. -->
                 <StackPanel Orientation="Horizontal">
                   <TextBlock x:Name="LockLblSensibility"/>
-                  <mah:NumericUpDown x:Name="LockSensibility" StringFormat="0"/>
+                  <local:NumericEditor x:Name="LockSensibility" StringFormat="0"/>
                 </StackPanel>
                 <TextBlock x:Name="LockSensibilityNote" TextWrapping="Wrap" FontStyle="Italic"/>
               </StackPanel>
@@ -126,15 +132,36 @@
                      switchable regardless of whether ShakeIt Motors is currently reporting the four
                      expected properties (see SettingsControl.xaml.cs's own remarks on why this used to
                      be hidden, and why that was wrong). -->
-                <StackPanel x:Name="LockSourceModePanel" Orientation="Horizontal">
-                  <TextBlock x:Name="LockLblSourceMode"/>
-                  <ComboBox x:Name="LockSourceModeCombo" HorizontalAlignment="Left">
+                <!-- A Grid, not a horizontal StackPanel, purely so the Add/Remove-game button on the
+                     row below can be flush with "Source:" on its left and with the dropdown on its
+                     right (owner, 2026-09-29). The button's caption is the longest thing in here, so
+                     column 1 is star-sized and the ComboBox stretches into it: the dropdown grows to
+                     meet the button rather than the button being clipped to the dropdown. Every child
+                     carries the same implicit Margin of 4, so the two edges line up exactly. -->
+                <Grid x:Name="LockSourceModePanel" HorizontalAlignment="Left">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
+                  <TextBlock Grid.Row="0" Grid.Column="0" x:Name="LockLblSourceMode"/>
+                  <ComboBox Grid.Row="0" Grid.Column="1" x:Name="LockSourceModeCombo" HorizontalAlignment="Stretch">
                     <ComboBoxItem x:Name="LockSourceModeManual" Tag="Manual"/>
                     <ComboBoxItem x:Name="LockSourceModeShakeIt" Tag="ShakeIt"/>
+                    <ComboBoxItem x:Name="LockSourceModeViper" Tag="Viper"/>
+                    <ComboBoxItem x:Name="LockSourceModeCustom" Tag="Custom"/>
                   </ComboBox>
-                </StackPanel>
+                  <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" x:Name="LockViperGamePanel">
+                    <Button x:Name="LockViperGameButton" Padding="10,2" Margin="4" HorizontalAlignment="Stretch"/>
+                  </StackPanel>
+                </Grid>
                 <TextBlock x:Name="LockShakeItSetupNote" TextWrapping="Wrap" FontStyle="Italic"/>
                 <TextBlock x:Name="LockSourcesShakeItNote" TextWrapping="Wrap" FontStyle="Italic" Foreground="DarkOrange"/>
+                <TextBlock x:Name="LockViperUnsupportedNote" TextWrapping="Wrap" FontWeight="Bold" Foreground="#FFCC4400"/>
+                <TextBlock x:Name="LockCustomNote" TextWrapping="Wrap" FontStyle="Italic"/>
+                <TextBlock x:Name="LockViperSetupNote" TextWrapping="Wrap" FontStyle="Italic"/>
+                <TextBlock x:Name="LockViperUnavailableNote" TextWrapping="Wrap" FontStyle="Italic" Foreground="DarkOrange"/>
                 <TextBlock x:Name="LockManualNote" TextWrapping="Wrap" FontStyle="Italic"/>
 
                 <TextBlock x:Name="LockSourcesNote" TextWrapping="Wrap" FontStyle="Italic"/>
@@ -168,16 +195,16 @@
                   <TextBox   Grid.Row="3" Grid.Column="2" x:Name="LockSourceRr"/>
                   <Button    Grid.Row="3" Grid.Column="3" x:Name="LockPickRr"/>
                 </Grid>
-                <Button x:Name="LockResetSources" Padding="16,4" HorizontalAlignment="Left"/>
 
                 <!-- KEY DATA POINTS (v1.0.7.2). Four columns, one Grid, so labels / controls / learned
                      hints / descriptions all line up down the section. The learned-value hint has its own
                      fixed-width monospace column precisely so "10.5" and "9.3" align. -->
                 <TextBlock x:Name="LockKeyDataHeader" FontWeight="Bold" Margin="4,14,4,4"/>
+                <TextBlock x:Name="LockKeyDataShadowNote" TextWrapping="Wrap" FontWeight="Bold" Foreground="#FFCC4400" Margin="4,0,4,4"/>
                 <Grid>
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" SharedSizeGroup="LockAlign"/>
-                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="LockEditor"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                   </Grid.ColumnDefinitions>
@@ -198,17 +225,17 @@
                   <TextBlock     Grid.Row="1" Grid.Column="3" x:Name="LockKeyDataPerGameDesc" TextWrapping="Wrap" FontStyle="Italic"/>
 
                   <TextBlock         Grid.Row="2" Grid.Column="0" x:Name="LockKeyDataSMaxLabel"/>
-                  <mah:NumericUpDown Grid.Row="2" Grid.Column="1" x:Name="LockKeyDataSMax" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" mah:TextBoxHelper.Watermark="---"/>
+                  <local:NumericEditor Grid.Row="2" Grid.Column="1" x:Name="LockKeyDataSMax" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" Watermark="---"/>
                   <TextBlock         Grid.Row="2" Grid.Column="2" x:Name="LockKeyDataSMaxLearned" FontFamily="Consolas" Width="150"/>
                   <TextBlock         Grid.Row="2" Grid.Column="3" x:Name="LockKeyDataSMaxDesc" TextWrapping="Wrap" FontStyle="Italic"/>
 
                   <TextBlock         Grid.Row="3" Grid.Column="0" x:Name="LockKeyDataS90Label"/>
-                  <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="LockKeyDataS90" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" mah:TextBoxHelper.Watermark="---"/>
+                  <local:NumericEditor Grid.Row="3" Grid.Column="1" x:Name="LockKeyDataS90" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" Watermark="---"/>
                   <TextBlock         Grid.Row="3" Grid.Column="2" x:Name="LockKeyDataS90Learned" FontFamily="Consolas" Width="150"/>
                   <TextBlock         Grid.Row="3" Grid.Column="3" x:Name="LockKeyDataS90Desc" TextWrapping="Wrap" FontStyle="Italic"/>
 
                   <TextBlock         Grid.Row="4" Grid.Column="0" x:Name="LockKeyDataS75Label"/>
-                  <mah:NumericUpDown Grid.Row="4" Grid.Column="1" x:Name="LockKeyDataS75" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" mah:TextBoxHelper.Watermark="---"/>
+                  <local:NumericEditor Grid.Row="4" Grid.Column="1" x:Name="LockKeyDataS75" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" Watermark="---"/>
                   <TextBlock         Grid.Row="4" Grid.Column="2" x:Name="LockKeyDataS75Learned" FontFamily="Consolas" Width="150"/>
                   <TextBlock         Grid.Row="4" Grid.Column="3" x:Name="LockKeyDataS75Desc" TextWrapping="Wrap" FontStyle="Italic"/>
                 </Grid>
@@ -216,6 +243,38 @@
                      values are whatever the plugin has learned. -->
                 <Button x:Name="LockKeyDataReset" Padding="16,4" HorizontalAlignment="Left"/>
                 <TextBlock x:Name="LockKeyDataStatus" TextWrapping="Wrap" FontStyle="Italic" Foreground="#C62828" Margin="4,4,4,0"/>
+
+                <!-- CUSTOM SOURCE COLD-START REFERENCE. Sits UNDER Key Data Points (owner,
+                     2026-09-29) because it answers the question the block above raises: the key data
+                     points are what the plugin LEARNED, these are what it assumes until it has. Only
+                     the Custom source has them - the three presets ship with measured references.
+                     BOTH columns join a shared-size group, and the second one is the non-obvious half.
+                     Sharing column 0 only still left these editors 7px LEFT of the Key Data ones:
+                     column 1 up there is widened by the ToggleSwitch, and a fixed-Width child with the
+                     default HorizontalAlignment="Stretch" is CENTRED in a column wider than itself,
+                     not left-aligned. Sharing column 1 as well (LockEditor) makes the two columns the
+                     same width, so the identical centring happens in both and the boxes line up.
+                     Measured from the render, not assumed - the 7px is invisible by inspection. -->
+                <StackPanel x:Name="LockCustomRefPanel">
+                  <TextBlock x:Name="LockCustomRefHeader" FontWeight="Bold" Margin="4,14,4,4"/>
+                  <TextBlock x:Name="LockCustomRefDesc" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,4"/>
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto" SharedSizeGroup="LockAlign"/>
+                      <ColumnDefinition Width="Auto" SharedSizeGroup="LockEditor"/>
+                      <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                      <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" x:Name="LockCustomRefSMaxLabel"/>
+                    <local:NumericEditor Grid.Row="0" Grid.Column="1" x:Name="LockCustomRefSMax" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0"/>
+                    <TextBlock Grid.Row="1" Grid.Column="0" x:Name="LockCustomRefS90Label"/>
+                    <local:NumericEditor Grid.Row="1" Grid.Column="1" x:Name="LockCustomRefS90" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0"/>
+                    <TextBlock Grid.Row="2" Grid.Column="0" x:Name="LockCustomRefS75Label"/>
+                    <local:NumericEditor Grid.Row="2" Grid.Column="1" x:Name="LockCustomRefS75" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0"/>
+                  </Grid>
+                </StackPanel>
 
               </StackPanel>
             </GroupBox>
@@ -238,16 +297,16 @@
                   </Grid.RowDefinitions>
 
                   <TextBlock Grid.Row="0" Grid.Column="0" x:Name="LockLblWMax"/>
-                  <mah:NumericUpDown Grid.Row="0" Grid.Column="1" x:Name="LockWMax" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+                  <local:NumericEditor Grid.Row="0" Grid.Column="1" x:Name="LockWMax" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
 
                   <TextBlock Grid.Row="1" Grid.Column="0" x:Name="LockLblWMin"/>
-                  <mah:NumericUpDown Grid.Row="1" Grid.Column="1" x:Name="LockWMin" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+                  <local:NumericEditor Grid.Row="1" Grid.Column="1" x:Name="LockWMin" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
 
                   <TextBlock Grid.Row="2" Grid.Column="0" x:Name="LockLblWFront"/>
-                  <mah:NumericUpDown Grid.Row="2" Grid.Column="1" x:Name="LockWFront" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+                  <local:NumericEditor Grid.Row="2" Grid.Column="1" x:Name="LockWFront" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
 
                   <TextBlock Grid.Row="3" Grid.Column="0" x:Name="LockLblWRear"/>
-                  <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="LockWRear" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+                  <local:NumericEditor Grid.Row="3" Grid.Column="1" x:Name="LockWRear" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
                 </Grid>
 
                 <TextBlock x:Name="LockAggregationAxleHelp" TextWrapping="Wrap" FontStyle="Italic" Margin="4,8,4,0"/>
@@ -308,34 +367,34 @@
                   <TextBlock Grid.Row="0" Grid.Column="3" x:Name="LockColFlattenRangeHeader" HorizontalAlignment="Center" FontWeight="Bold"/>
 
                   <TextBlock Grid.Row="1" Grid.Column="0" x:Name="LockLblStart" FontWeight="Bold"/>
-                  <mah:NumericUpDown Grid.Row="1" Grid.Column="1" x:Name="LockStartRaw"/>
-                  <mah:NumericUpDown Grid.Row="1" Grid.Column="2" x:Name="LockStartOutput" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
+                  <local:NumericEditor Grid.Row="1" Grid.Column="1" x:Name="LockStartRaw"/>
+                  <local:NumericEditor Grid.Row="1" Grid.Column="2" x:Name="LockStartOutput" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
                   <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="5" x:Name="LockDescStart" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="3" Grid.Column="0" x:Name="LockLblSlightly" FontWeight="Bold"/>
-                  <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="LockSlightlyRaw"/>
-                  <mah:NumericUpDown Grid.Row="3" Grid.Column="2" x:Name="LockSlightlyOutput"/>
-                  <mah:NumericUpDown Grid.Row="3" Grid.Column="3" x:Name="LockSlightlyFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+                  <local:NumericEditor Grid.Row="3" Grid.Column="1" x:Name="LockSlightlyRaw"/>
+                  <local:NumericEditor Grid.Row="3" Grid.Column="2" x:Name="LockSlightlyOutput"/>
+                  <local:NumericEditor Grid.Row="3" Grid.Column="3" x:Name="LockSlightlyFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
                   <TextBlock Grid.Row="3" Grid.Column="4" x:Name="LockLiveSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
                   <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5" x:Name="LockDescSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="5" Grid.Column="0" x:Name="LockLblModerate" FontWeight="Bold"/>
-                  <mah:NumericUpDown Grid.Row="5" Grid.Column="1" x:Name="LockModerateRaw"/>
-                  <mah:NumericUpDown Grid.Row="5" Grid.Column="2" x:Name="LockModerateOutput"/>
-                  <mah:NumericUpDown Grid.Row="5" Grid.Column="3" x:Name="LockModerateFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+                  <local:NumericEditor Grid.Row="5" Grid.Column="1" x:Name="LockModerateRaw"/>
+                  <local:NumericEditor Grid.Row="5" Grid.Column="2" x:Name="LockModerateOutput"/>
+                  <local:NumericEditor Grid.Row="5" Grid.Column="3" x:Name="LockModerateFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
                   <TextBlock Grid.Row="5" Grid.Column="4" x:Name="LockLiveModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
                   <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="5" x:Name="LockDescModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="7" Grid.Column="0" x:Name="LockLblCritical" FontWeight="Bold"/>
-                  <mah:NumericUpDown Grid.Row="7" Grid.Column="1" x:Name="LockCriticalRaw"/>
-                  <mah:NumericUpDown Grid.Row="7" Grid.Column="2" x:Name="LockCriticalOutput"/>
-                  <mah:NumericUpDown Grid.Row="7" Grid.Column="3" x:Name="LockCriticalFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+                  <local:NumericEditor Grid.Row="7" Grid.Column="1" x:Name="LockCriticalRaw"/>
+                  <local:NumericEditor Grid.Row="7" Grid.Column="2" x:Name="LockCriticalOutput"/>
+                  <local:NumericEditor Grid.Row="7" Grid.Column="3" x:Name="LockCriticalFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
                   <TextBlock Grid.Row="7" Grid.Column="4" x:Name="LockLiveCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
                   <TextBlock Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="5" x:Name="LockDescCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="9" Grid.Column="0" x:Name="LockLblEnd" FontWeight="Bold"/>
-                  <mah:NumericUpDown Grid.Row="9" Grid.Column="1" x:Name="LockEndRaw"/>
-                  <mah:NumericUpDown Grid.Row="9" Grid.Column="2" x:Name="LockEndOutput" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
+                  <local:NumericEditor Grid.Row="9" Grid.Column="1" x:Name="LockEndRaw"/>
+                  <local:NumericEditor Grid.Row="9" Grid.Column="2" x:Name="LockEndOutput" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
                   <TextBlock Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="5" x:Name="LockDescEnd" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
                 </Grid>
 
@@ -385,8 +444,8 @@
                   <mah:ToggleSwitch Grid.Column="1" x:Name="LockPulseEnabled" HorizontalAlignment="Left" Margin="4"/>
                 </Grid>
                 <StackPanel Orientation="Horizontal">
-                  <TextBlock x:Name="LockLblGapMs"/><mah:NumericUpDown x:Name="LockPulseGapMs" Minimum="200" Maximum="5000" Interval="50"/>
-                  <TextBlock x:Name="LockLblMinValue"/><mah:NumericUpDown x:Name="LockPulseMinValue"/>
+                  <TextBlock x:Name="LockLblGapMs"/><local:NumericEditor x:Name="LockPulseGapMs" Minimum="200" Maximum="5000" Interval="50"/>
+                  <TextBlock x:Name="LockLblMinValue"/><local:NumericEditor x:Name="LockPulseMinValue"/>
                 </StackPanel>
                 <TextBlock x:Name="LockPulseFloorNote" TextWrapping="Wrap" FontStyle="Italic"/>
               </StackPanel>
@@ -405,9 +464,9 @@
               <StackPanel>
                 <StackPanel Orientation="Horizontal">
                   <TextBlock x:Name="SlipLblBrakeThreshold"/>
-                  <mah:NumericUpDown x:Name="SlipBrakeThreshold" StringFormat="0"/>
+                  <local:NumericEditor x:Name="SlipBrakeThreshold" StringFormat="0"/>
                   <TextBlock x:Name="SlipLblThrottleThreshold"/>
-                  <mah:NumericUpDown x:Name="SlipThrottleThreshold" StringFormat="0"/>
+                  <local:NumericEditor x:Name="SlipThrottleThreshold" StringFormat="0"/>
                 </StackPanel>
                 <TextBlock x:Name="SlipThresholdNote" TextWrapping="Wrap" FontStyle="Italic"/>
               </StackPanel>
@@ -417,15 +476,30 @@
               <StackPanel>
                 <!-- Source mode toggle - see LockSourcesGroup's own remarks; identical layout/logic,
                      independently for this channel. -->
-                <StackPanel x:Name="SlipSourceModePanel" Orientation="Horizontal">
-                  <TextBlock x:Name="SlipLblSourceMode"/>
-                  <ComboBox x:Name="SlipSourceModeCombo" HorizontalAlignment="Left">
+                <Grid x:Name="SlipSourceModePanel" HorizontalAlignment="Left">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
+                  <TextBlock Grid.Row="0" Grid.Column="0" x:Name="SlipLblSourceMode"/>
+                  <ComboBox Grid.Row="0" Grid.Column="1" x:Name="SlipSourceModeCombo" HorizontalAlignment="Stretch">
                     <ComboBoxItem x:Name="SlipSourceModeManual" Tag="Manual"/>
                     <ComboBoxItem x:Name="SlipSourceModeShakeIt" Tag="ShakeIt"/>
+                    <ComboBoxItem x:Name="SlipSourceModeViper" Tag="Viper"/>
+                    <ComboBoxItem x:Name="SlipSourceModeCustom" Tag="Custom"/>
                   </ComboBox>
-                </StackPanel>
+                  <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" x:Name="SlipViperGamePanel">
+                    <Button x:Name="SlipViperGameButton" Padding="10,2" Margin="4" HorizontalAlignment="Stretch"/>
+                  </StackPanel>
+                </Grid>
                 <TextBlock x:Name="SlipShakeItSetupNote" TextWrapping="Wrap" FontStyle="Italic"/>
                 <TextBlock x:Name="SlipSourcesShakeItNote" TextWrapping="Wrap" FontStyle="Italic" Foreground="DarkOrange"/>
+                <TextBlock x:Name="SlipViperUnsupportedNote" TextWrapping="Wrap" FontWeight="Bold" Foreground="#FFCC4400"/>
+                <TextBlock x:Name="SlipCustomNote" TextWrapping="Wrap" FontStyle="Italic"/>
+                <TextBlock x:Name="SlipViperSetupNote" TextWrapping="Wrap" FontStyle="Italic"/>
+                <TextBlock x:Name="SlipViperUnavailableNote" TextWrapping="Wrap" FontStyle="Italic" Foreground="DarkOrange"/>
                 <TextBlock x:Name="SlipManualNote" TextWrapping="Wrap" FontStyle="Italic"/>
 
                 <TextBlock x:Name="SlipSourcesNote" TextWrapping="Wrap" FontStyle="Italic"/>
@@ -459,16 +533,16 @@
                   <TextBox   Grid.Row="3" Grid.Column="2" x:Name="SlipSourceRr"/>
                   <Button    Grid.Row="3" Grid.Column="3" x:Name="SlipPickRr"/>
                 </Grid>
-                <Button x:Name="SlipResetSources" Padding="16,4" HorizontalAlignment="Left"/>
 
                 <!-- KEY DATA POINTS (v1.0.7.2). Four columns, one Grid, so labels / controls / learned
                      hints / descriptions all line up down the section. The learned-value hint has its own
                      fixed-width monospace column precisely so "10.5" and "9.3" align. -->
                 <TextBlock x:Name="SlipKeyDataHeader" FontWeight="Bold" Margin="4,14,4,4"/>
+                <TextBlock x:Name="SlipKeyDataShadowNote" TextWrapping="Wrap" FontWeight="Bold" Foreground="#FFCC4400" Margin="4,0,4,4"/>
                 <Grid>
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAlign"/>
-                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="SlipEditor"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                   </Grid.ColumnDefinitions>
@@ -489,17 +563,17 @@
                   <TextBlock     Grid.Row="1" Grid.Column="3" x:Name="SlipKeyDataPerGameDesc" TextWrapping="Wrap" FontStyle="Italic"/>
 
                   <TextBlock         Grid.Row="2" Grid.Column="0" x:Name="SlipKeyDataSMaxLabel"/>
-                  <mah:NumericUpDown Grid.Row="2" Grid.Column="1" x:Name="SlipKeyDataSMax" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" mah:TextBoxHelper.Watermark="---"/>
+                  <local:NumericEditor Grid.Row="2" Grid.Column="1" x:Name="SlipKeyDataSMax" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" Watermark="---"/>
                   <TextBlock         Grid.Row="2" Grid.Column="2" x:Name="SlipKeyDataSMaxLearned" FontFamily="Consolas" Width="150"/>
                   <TextBlock         Grid.Row="2" Grid.Column="3" x:Name="SlipKeyDataSMaxDesc" TextWrapping="Wrap" FontStyle="Italic"/>
 
                   <TextBlock         Grid.Row="3" Grid.Column="0" x:Name="SlipKeyDataS90Label"/>
-                  <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="SlipKeyDataS90" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" mah:TextBoxHelper.Watermark="---"/>
+                  <local:NumericEditor Grid.Row="3" Grid.Column="1" x:Name="SlipKeyDataS90" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" Watermark="---"/>
                   <TextBlock         Grid.Row="3" Grid.Column="2" x:Name="SlipKeyDataS90Learned" FontFamily="Consolas" Width="150"/>
                   <TextBlock         Grid.Row="3" Grid.Column="3" x:Name="SlipKeyDataS90Desc" TextWrapping="Wrap" FontStyle="Italic"/>
 
                   <TextBlock         Grid.Row="4" Grid.Column="0" x:Name="SlipKeyDataS75Label"/>
-                  <mah:NumericUpDown Grid.Row="4" Grid.Column="1" x:Name="SlipKeyDataS75" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" mah:TextBoxHelper.Watermark="---"/>
+                  <local:NumericEditor Grid.Row="4" Grid.Column="1" x:Name="SlipKeyDataS75" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" Watermark="---"/>
                   <TextBlock         Grid.Row="4" Grid.Column="2" x:Name="SlipKeyDataS75Learned" FontFamily="Consolas" Width="150"/>
                   <TextBlock         Grid.Row="4" Grid.Column="3" x:Name="SlipKeyDataS75Desc" TextWrapping="Wrap" FontStyle="Italic"/>
                 </Grid>
@@ -507,6 +581,28 @@
                      values are whatever the plugin has learned. -->
                 <Button x:Name="SlipKeyDataReset" Padding="16,4" HorizontalAlignment="Left"/>
                 <TextBlock x:Name="SlipKeyDataStatus" TextWrapping="Wrap" FontStyle="Italic" Foreground="#C62828" Margin="4,4,4,0"/>
+
+                <!-- See LockCustomRefPanel's own remarks; identical block for this channel. -->
+                <StackPanel x:Name="SlipCustomRefPanel">
+                  <TextBlock x:Name="SlipCustomRefHeader" FontWeight="Bold" Margin="4,14,4,4"/>
+                  <TextBlock x:Name="SlipCustomRefDesc" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,4"/>
+                  <Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAlign"/>
+                      <ColumnDefinition Width="Auto" SharedSizeGroup="SlipEditor"/>
+                      <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                      <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" x:Name="SlipCustomRefSMaxLabel"/>
+                    <local:NumericEditor Grid.Row="0" Grid.Column="1" x:Name="SlipCustomRefSMax" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0"/>
+                    <TextBlock Grid.Row="1" Grid.Column="0" x:Name="SlipCustomRefS90Label"/>
+                    <local:NumericEditor Grid.Row="1" Grid.Column="1" x:Name="SlipCustomRefS90" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0"/>
+                    <TextBlock Grid.Row="2" Grid.Column="0" x:Name="SlipCustomRefS75Label"/>
+                    <local:NumericEditor Grid.Row="2" Grid.Column="1" x:Name="SlipCustomRefS75" Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0"/>
+                  </Grid>
+                </StackPanel>
 
               </StackPanel>
             </GroupBox>
@@ -527,16 +623,16 @@
                   </Grid.RowDefinitions>
 
                   <TextBlock Grid.Row="0" Grid.Column="0" x:Name="SlipLblWMax"/>
-                  <mah:NumericUpDown Grid.Row="0" Grid.Column="1" x:Name="SlipWMax" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+                  <local:NumericEditor Grid.Row="0" Grid.Column="1" x:Name="SlipWMax" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
 
                   <TextBlock Grid.Row="1" Grid.Column="0" x:Name="SlipLblWMin"/>
-                  <mah:NumericUpDown Grid.Row="1" Grid.Column="1" x:Name="SlipWMin" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+                  <local:NumericEditor Grid.Row="1" Grid.Column="1" x:Name="SlipWMin" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
 
                   <TextBlock Grid.Row="2" Grid.Column="0" x:Name="SlipLblWFront"/>
-                  <mah:NumericUpDown Grid.Row="2" Grid.Column="1" x:Name="SlipWFront" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+                  <local:NumericEditor Grid.Row="2" Grid.Column="1" x:Name="SlipWFront" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
 
                   <TextBlock Grid.Row="3" Grid.Column="0" x:Name="SlipLblWRear"/>
-                  <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="SlipWRear" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+                  <local:NumericEditor Grid.Row="3" Grid.Column="1" x:Name="SlipWRear" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
                 </Grid>
 
                 <TextBlock x:Name="SlipAggregationAxleHelp" TextWrapping="Wrap" FontStyle="Italic" Margin="4,8,4,0"/>
@@ -544,7 +640,7 @@
 
                 <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                   <TextBlock x:Name="SlipLblFloorFactor"/>
-                  <mah:NumericUpDown x:Name="SlipFloorFactor" Minimum="0" Maximum="1" Interval="0.05" StringFormat="0.00"/>
+                  <local:NumericEditor x:Name="SlipFloorFactor" Minimum="0" Maximum="1" Interval="0.05" StringFormat="0.00"/>
                 </StackPanel>
                 <TextBlock x:Name="SlipFloorFactorNote" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,4"/>
               </StackPanel>
@@ -601,34 +697,34 @@
                   <TextBlock Grid.Row="0" Grid.Column="3" x:Name="SlipColFlattenRangeHeader" HorizontalAlignment="Center" FontWeight="Bold"/>
 
                   <TextBlock Grid.Row="1" Grid.Column="0" x:Name="SlipLblStart" FontWeight="Bold"/>
-                  <mah:NumericUpDown Grid.Row="1" Grid.Column="1" x:Name="SlipStartRaw"/>
-                  <mah:NumericUpDown Grid.Row="1" Grid.Column="2" x:Name="SlipStartOutput" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
+                  <local:NumericEditor Grid.Row="1" Grid.Column="1" x:Name="SlipStartRaw"/>
+                  <local:NumericEditor Grid.Row="1" Grid.Column="2" x:Name="SlipStartOutput" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
                   <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="5" x:Name="SlipDescStart" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="3" Grid.Column="0" x:Name="SlipLblSlightly" FontWeight="Bold"/>
-                  <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="SlipSlightlyRaw"/>
-                  <mah:NumericUpDown Grid.Row="3" Grid.Column="2" x:Name="SlipSlightlyOutput"/>
-                  <mah:NumericUpDown Grid.Row="3" Grid.Column="3" x:Name="SlipSlightlyFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+                  <local:NumericEditor Grid.Row="3" Grid.Column="1" x:Name="SlipSlightlyRaw"/>
+                  <local:NumericEditor Grid.Row="3" Grid.Column="2" x:Name="SlipSlightlyOutput"/>
+                  <local:NumericEditor Grid.Row="3" Grid.Column="3" x:Name="SlipSlightlyFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
                   <TextBlock Grid.Row="3" Grid.Column="4" x:Name="SlipLiveSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
                   <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5" x:Name="SlipDescSlightly" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="5" Grid.Column="0" x:Name="SlipLblModerate" FontWeight="Bold"/>
-                  <mah:NumericUpDown Grid.Row="5" Grid.Column="1" x:Name="SlipModerateRaw"/>
-                  <mah:NumericUpDown Grid.Row="5" Grid.Column="2" x:Name="SlipModerateOutput"/>
-                  <mah:NumericUpDown Grid.Row="5" Grid.Column="3" x:Name="SlipModerateFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+                  <local:NumericEditor Grid.Row="5" Grid.Column="1" x:Name="SlipModerateRaw"/>
+                  <local:NumericEditor Grid.Row="5" Grid.Column="2" x:Name="SlipModerateOutput"/>
+                  <local:NumericEditor Grid.Row="5" Grid.Column="3" x:Name="SlipModerateFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
                   <TextBlock Grid.Row="5" Grid.Column="4" x:Name="SlipLiveModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
                   <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="5" x:Name="SlipDescModerate" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="7" Grid.Column="0" x:Name="SlipLblCritical" FontWeight="Bold"/>
-                  <mah:NumericUpDown Grid.Row="7" Grid.Column="1" x:Name="SlipCriticalRaw"/>
-                  <mah:NumericUpDown Grid.Row="7" Grid.Column="2" x:Name="SlipCriticalOutput"/>
-                  <mah:NumericUpDown Grid.Row="7" Grid.Column="3" x:Name="SlipCriticalFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+                  <local:NumericEditor Grid.Row="7" Grid.Column="1" x:Name="SlipCriticalRaw"/>
+                  <local:NumericEditor Grid.Row="7" Grid.Column="2" x:Name="SlipCriticalOutput"/>
+                  <local:NumericEditor Grid.Row="7" Grid.Column="3" x:Name="SlipCriticalFlattenRange" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
                   <TextBlock Grid.Row="7" Grid.Column="4" x:Name="SlipLiveCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
                   <TextBlock Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="5" x:Name="SlipDescCritical" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
 
                   <TextBlock Grid.Row="9" Grid.Column="0" x:Name="SlipLblEnd" FontWeight="Bold"/>
-                  <mah:NumericUpDown Grid.Row="9" Grid.Column="1" x:Name="SlipEndRaw"/>
-                  <mah:NumericUpDown Grid.Row="9" Grid.Column="2" x:Name="SlipEndOutput" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
+                  <local:NumericEditor Grid.Row="9" Grid.Column="1" x:Name="SlipEndRaw"/>
+                  <local:NumericEditor Grid.Row="9" Grid.Column="2" x:Name="SlipEndOutput" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
                   <TextBlock Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="5" x:Name="SlipDescEnd" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
                 </Grid>
 
@@ -678,8 +774,8 @@
                   <mah:ToggleSwitch Grid.Column="1" x:Name="SlipPulseEnabled" HorizontalAlignment="Left" Margin="4"/>
                 </Grid>
                 <StackPanel Orientation="Horizontal">
-                  <TextBlock x:Name="SlipLblGapMs"/><mah:NumericUpDown x:Name="SlipPulseGapMs" Minimum="200" Maximum="5000" Interval="50"/>
-                  <TextBlock x:Name="SlipLblMinValue"/><mah:NumericUpDown x:Name="SlipPulseMinValue"/>
+                  <TextBlock x:Name="SlipLblGapMs"/><local:NumericEditor x:Name="SlipPulseGapMs" Minimum="200" Maximum="5000" Interval="50"/>
+                  <TextBlock x:Name="SlipLblMinValue"/><local:NumericEditor x:Name="SlipPulseMinValue"/>
                 </StackPanel>
                 <TextBlock x:Name="SlipPulseFloorNote" TextWrapping="Wrap" FontStyle="Italic"/>
               </StackPanel>
@@ -717,7 +813,7 @@
                     <TextBlock x:Name="GForceAccelAutoLabel"/>
                     <mah:ToggleSwitch x:Name="GForceAccelAutoToggle" Margin="4"/>
                   </StackPanel>
-                  <mah:NumericUpDown  Grid.Row="0" Grid.Column="2" x:Name="GForceFixedAccelMax" Minimum="0.1" Maximum="10" Interval="0.1" StringFormat="0.00"/>
+                  <local:NumericEditor  Grid.Row="0" Grid.Column="2" x:Name="GForceFixedAccelMax" Minimum="0.1" Maximum="10" Interval="0.1" StringFormat="0.00"/>
                   <TextBlock          Grid.Row="0" Grid.Column="3" x:Name="GForceAccelLearnedText" TextWrapping="Wrap"/>
 
                   <TextBlock          Grid.Row="1" Grid.Column="0" x:Name="GForceLblDecelMax"/>
@@ -725,7 +821,7 @@
                     <TextBlock x:Name="GForceDecelAutoLabel"/>
                     <mah:ToggleSwitch x:Name="GForceDecelAutoToggle" Margin="4"/>
                   </StackPanel>
-                  <mah:NumericUpDown  Grid.Row="1" Grid.Column="2" x:Name="GForceFixedDecelMax" Minimum="0.1" Maximum="10" Interval="0.1" StringFormat="0.00"/>
+                  <local:NumericEditor  Grid.Row="1" Grid.Column="2" x:Name="GForceFixedDecelMax" Minimum="0.1" Maximum="10" Interval="0.1" StringFormat="0.00"/>
                   <TextBlock          Grid.Row="1" Grid.Column="3" x:Name="GForceDecelLearnedText" TextWrapping="Wrap"/>
 
                   <TextBlock          Grid.Row="2" Grid.Column="0" x:Name="GForceLblLatMax"/>
@@ -733,7 +829,7 @@
                     <TextBlock x:Name="GForceLatAutoLabel"/>
                     <mah:ToggleSwitch x:Name="GForceLatAutoToggle" Margin="4"/>
                   </StackPanel>
-                  <mah:NumericUpDown  Grid.Row="2" Grid.Column="2" x:Name="GForceFixedLatMax" Minimum="0.1" Maximum="10" Interval="0.1" StringFormat="0.00"/>
+                  <local:NumericEditor  Grid.Row="2" Grid.Column="2" x:Name="GForceFixedLatMax" Minimum="0.1" Maximum="10" Interval="0.1" StringFormat="0.00"/>
                   <TextBlock          Grid.Row="2" Grid.Column="3" x:Name="GForceLatLearnedText" TextWrapping="Wrap"/>
                 </Grid>
 
@@ -751,13 +847,13 @@
                   </Grid.RowDefinitions>
 
                   <TextBlock Grid.Row="0" Grid.Column="0" x:Name="GForceLblAccelScale"/>
-                  <mah:NumericUpDown Grid.Row="0" Grid.Column="1" x:Name="GForceAccelScale" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
+                  <local:NumericEditor Grid.Row="0" Grid.Column="1" x:Name="GForceAccelScale" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
 
                   <TextBlock Grid.Row="1" Grid.Column="0" x:Name="GForceLblBrakeScale"/>
-                  <mah:NumericUpDown Grid.Row="1" Grid.Column="1" x:Name="GForceBrakeScale" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
+                  <local:NumericEditor Grid.Row="1" Grid.Column="1" x:Name="GForceBrakeScale" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
 
                   <TextBlock Grid.Row="2" Grid.Column="0" x:Name="GForceLblLateralScale"/>
-                  <mah:NumericUpDown Grid.Row="2" Grid.Column="1" x:Name="GForceLateralScale" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
+                  <local:NumericEditor Grid.Row="2" Grid.Column="1" x:Name="GForceLateralScale" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
                 </Grid>
 
                 <TextBlock x:Name="GForceRecommendedHzText" TextWrapping="Wrap"/>
@@ -778,22 +874,22 @@
                   </Grid.RowDefinitions>
 
                   <TextBlock Grid.Row="0" Grid.Column="0" x:Name="GForceLblBrakeBottomFrontLatSplit"/>
-                  <mah:NumericUpDown Grid.Row="0" Grid.Column="1" x:Name="GForceBrakeBottomFrontLatSplit" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
+                  <local:NumericEditor Grid.Row="0" Grid.Column="1" x:Name="GForceBrakeBottomFrontLatSplit" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
 
                   <TextBlock Grid.Row="1" Grid.Column="0" x:Name="GForceLblBrakeBottomRearLatSplit"/>
-                  <mah:NumericUpDown Grid.Row="1" Grid.Column="1" x:Name="GForceBrakeBottomRearLatSplit" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
+                  <local:NumericEditor Grid.Row="1" Grid.Column="1" x:Name="GForceBrakeBottomRearLatSplit" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
 
                   <TextBlock Grid.Row="2" Grid.Column="0" x:Name="GForceLblBrakeBackLowLatSplit"/>
-                  <mah:NumericUpDown Grid.Row="2" Grid.Column="1" x:Name="GForceBrakeBackLowLatSplit" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
+                  <local:NumericEditor Grid.Row="2" Grid.Column="1" x:Name="GForceBrakeBackLowLatSplit" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
 
                   <TextBlock Grid.Row="3" Grid.Column="0" x:Name="GForceLblAccelBottomRearLatSplit"/>
-                  <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="GForceAccelBottomRearLatSplit" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
+                  <local:NumericEditor Grid.Row="3" Grid.Column="1" x:Name="GForceAccelBottomRearLatSplit" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
 
                   <TextBlock Grid.Row="4" Grid.Column="0" x:Name="GForceLblAccelBackLowLatSplit"/>
-                  <mah:NumericUpDown Grid.Row="4" Grid.Column="1" x:Name="GForceAccelBackLowLatSplit" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
+                  <local:NumericEditor Grid.Row="4" Grid.Column="1" x:Name="GForceAccelBackLowLatSplit" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
 
                   <TextBlock Grid.Row="5" Grid.Column="0" x:Name="GForceLblAccelBackTopLatSplit"/>
-                  <mah:NumericUpDown Grid.Row="5" Grid.Column="1" x:Name="GForceAccelBackTopLatSplit" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
+                  <local:NumericEditor Grid.Row="5" Grid.Column="1" x:Name="GForceAccelBackTopLatSplit" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
                 </Grid>
               </StackPanel>
             </GroupBox>
@@ -810,16 +906,16 @@
                   </Grid.RowDefinitions>
 
                   <TextBlock Grid.Row="0" Grid.Column="0" x:Name="GForceLblBrakeBottomRear"/>
-                  <mah:NumericUpDown Grid.Row="0" Grid.Column="1" x:Name="GForceBrakeBottomRearSustain"/>
+                  <local:NumericEditor Grid.Row="0" Grid.Column="1" x:Name="GForceBrakeBottomRearSustain"/>
 
                   <TextBlock Grid.Row="1" Grid.Column="0" x:Name="GForceLblBrakeBackLow"/>
-                  <mah:NumericUpDown Grid.Row="1" Grid.Column="1" x:Name="GForceBrakeBackLowSustain"/>
+                  <local:NumericEditor Grid.Row="1" Grid.Column="1" x:Name="GForceBrakeBackLowSustain"/>
 
                   <TextBlock Grid.Row="2" Grid.Column="0" x:Name="GForceLblAccelBottomRear"/>
-                  <mah:NumericUpDown Grid.Row="2" Grid.Column="1" x:Name="GForceAccelBottomRearSustain"/>
+                  <local:NumericEditor Grid.Row="2" Grid.Column="1" x:Name="GForceAccelBottomRearSustain"/>
 
                   <TextBlock Grid.Row="3" Grid.Column="0" x:Name="GForceLblAccelBackLow"/>
-                  <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="GForceAccelBackLowSustain"/>
+                  <local:NumericEditor Grid.Row="3" Grid.Column="1" x:Name="GForceAccelBackLowSustain"/>
                 </Grid>
               </StackPanel>
             </GroupBox>
@@ -836,27 +932,27 @@
                   </Grid.RowDefinitions>
 
                   <TextBlock Grid.Row="0" Grid.Column="0" x:Name="GForceLblSustainTau"/>
-                  <mah:NumericUpDown Grid.Row="0" Grid.Column="1" x:Name="GForceSustainTau" Minimum="0.01" Maximum="3" Interval="0.01" StringFormat="0.00"/>
+                  <local:NumericEditor Grid.Row="0" Grid.Column="1" x:Name="GForceSustainTau" Minimum="0.01" Maximum="3" Interval="0.01" StringFormat="0.00"/>
                   <TextBlock Grid.Row="0" Grid.Column="2" x:Name="GForceSustainTauHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0"/>
 
                   <TextBlock Grid.Row="1" Grid.Column="0" x:Name="GForceLblTransientTau"/>
-                  <mah:NumericUpDown Grid.Row="1" Grid.Column="1" x:Name="GForceTransientTau" Minimum="0.01" Maximum="3" Interval="0.01" StringFormat="0.00"/>
+                  <local:NumericEditor Grid.Row="1" Grid.Column="1" x:Name="GForceTransientTau" Minimum="0.01" Maximum="3" Interval="0.01" StringFormat="0.00"/>
                   <TextBlock Grid.Row="1" Grid.Column="2" x:Name="GForceTransientTauHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0"/>
 
                   <TextBlock Grid.Row="2" Grid.Column="0" x:Name="GForceLblTransientGain"/>
-                  <mah:NumericUpDown Grid.Row="2" Grid.Column="1" x:Name="GForceTransientGain" Minimum="0" Maximum="5" Interval="0.1" StringFormat="0.0"/>
+                  <local:NumericEditor Grid.Row="2" Grid.Column="1" x:Name="GForceTransientGain" Minimum="0" Maximum="5" Interval="0.1" StringFormat="0.0"/>
                   <TextBlock Grid.Row="2" Grid.Column="2" x:Name="GForceTransientGainHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0"/>
 
                   <TextBlock Grid.Row="3" Grid.Column="0" x:Name="GForceLblRetriggerStrictness"/>
-                  <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="GForceRetriggerStrictness" Minimum="0.1" Maximum="5" Interval="0.1" StringFormat="0.0"/>
+                  <local:NumericEditor Grid.Row="3" Grid.Column="1" x:Name="GForceRetriggerStrictness" Minimum="0.1" Maximum="5" Interval="0.1" StringFormat="0.0"/>
                   <TextBlock Grid.Row="3" Grid.Column="2" x:Name="GForceRetriggerStrictnessHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0"/>
 
                   <TextBlock Grid.Row="4" Grid.Column="0" x:Name="GForceLblAutoTransitionScale"/>
-                  <mah:NumericUpDown Grid.Row="4" Grid.Column="1" x:Name="GForceAutoTransitionScale" Minimum="0" Maximum="5" Interval="0.1" StringFormat="0.00"/>
+                  <local:NumericEditor Grid.Row="4" Grid.Column="1" x:Name="GForceAutoTransitionScale" Minimum="0" Maximum="5" Interval="0.1" StringFormat="0.00"/>
                   <TextBlock Grid.Row="4" Grid.Column="2" x:Name="GForceAutoTransitionScaleHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0"/>
 
                   <TextBlock Grid.Row="5" Grid.Column="0" x:Name="GForceLblFixedTransitionScale"/>
-                  <mah:NumericUpDown Grid.Row="5" Grid.Column="1" x:Name="GForceFixedTransitionScale" Minimum="0" Maximum="5" Interval="0.1" StringFormat="0.00"/>
+                  <local:NumericEditor Grid.Row="5" Grid.Column="1" x:Name="GForceFixedTransitionScale" Minimum="0" Maximum="5" Interval="0.1" StringFormat="0.00"/>
                   <TextBlock Grid.Row="5" Grid.Column="2" x:Name="GForceFixedTransitionScaleHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0"/>
                 </Grid>
                 <TextBlock x:Name="GForceTransitionScaleNote" TextWrapping="Wrap" FontStyle="Italic"/>
@@ -946,23 +1042,23 @@
 
                       <!-- HOLD first, and hidden entirely for Blending, which pins its own. -->
                       <TextBlock Grid.Row="0" Grid.Column="0" x:Name="GForceLblShakeSustain"/>
-                      <mah:NumericUpDown Grid.Row="0" Grid.Column="1" x:Name="GForceShakeSustain" Minimum="0" Maximum="90" Interval="5" StringFormat="0.#"/>
+                      <local:NumericEditor Grid.Row="0" Grid.Column="1" x:Name="GForceShakeSustain" Minimum="0" Maximum="90" Interval="5" StringFormat="0.#"/>
                       <TextBlock Grid.Row="0" Grid.Column="2" x:Name="GForceShakeSustainHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0" MaxWidth="230"/>
 
                       <TextBlock Grid.Row="1" Grid.Column="0" x:Name="GForceLblShakeFrequency"/>
-                      <mah:NumericUpDown Grid.Row="1" Grid.Column="1" x:Name="GForceShakeFrequency" Minimum="1" Maximum="20" Interval="1" StringFormat="0.#"/>
+                      <local:NumericEditor Grid.Row="1" Grid.Column="1" x:Name="GForceShakeFrequency" Minimum="1" Maximum="20" Interval="1" StringFormat="0.#"/>
                       <TextBlock Grid.Row="1" Grid.Column="2" x:Name="GForceShakeFrequencyHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0" MaxWidth="230"/>
 
                       <TextBlock Grid.Row="2" Grid.Column="0" x:Name="GForceLblShakeTrigger"/>
-                      <mah:NumericUpDown Grid.Row="2" Grid.Column="1" x:Name="GForceShakeTrigger" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
+                      <local:NumericEditor Grid.Row="2" Grid.Column="1" x:Name="GForceShakeTrigger" Minimum="0" Maximum="100" Interval="5" StringFormat="0.#"/>
                       <TextBlock Grid.Row="2" Grid.Column="2" x:Name="GForceShakeTriggerHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0" MaxWidth="230"/>
 
                       <TextBlock Grid.Row="3" Grid.Column="0" x:Name="GForceLblShakeLockScale"/>
-                      <mah:NumericUpDown Grid.Row="3" Grid.Column="1" x:Name="GForceShakeLockScale" Minimum="0" Maximum="10" Interval="0.1" StringFormat="0.0"/>
+                      <local:NumericEditor Grid.Row="3" Grid.Column="1" x:Name="GForceShakeLockScale" Minimum="0" Maximum="10" Interval="0.1" StringFormat="0.0"/>
                       <TextBlock Grid.Row="3" Grid.Column="2" x:Name="GForceShakeLockScaleHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0" MaxWidth="230"/>
 
                       <TextBlock Grid.Row="4" Grid.Column="0" x:Name="GForceLblShakeSlipScale"/>
-                      <mah:NumericUpDown Grid.Row="4" Grid.Column="1" x:Name="GForceShakeSlipScale" Minimum="0" Maximum="10" Interval="0.1" StringFormat="0.0"/>
+                      <local:NumericEditor Grid.Row="4" Grid.Column="1" x:Name="GForceShakeSlipScale" Minimum="0" Maximum="10" Interval="0.1" StringFormat="0.0"/>
                       <TextBlock Grid.Row="4" Grid.Column="2" x:Name="GForceShakeSlipScaleHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0" MaxWidth="230"/>
                     </Grid>
                   </StackPanel>
@@ -995,7 +1091,7 @@
                       <ColumnDefinition Width="Auto" SharedSizeGroup="GForceAlign"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" x:Name="GForceLblTestRate"/>
-                    <mah:NumericUpDown Grid.Column="1" x:Name="GForceTestRate" Minimum="1" Maximum="240" Interval="10" StringFormat="0"/>
+                    <local:NumericEditor Grid.Column="1" x:Name="GForceTestRate" Minimum="1" Maximum="240" Interval="10" StringFormat="0"/>
                     <TextBlock Grid.Column="2" x:Name="GForceTestRateHint" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0"/>
                   </Grid>
 

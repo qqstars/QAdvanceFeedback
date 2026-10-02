@@ -69,11 +69,18 @@ namespace QAdvanceFeedback.Tests
             ColdStartTier tier = engine.LockScaleLearner.ResolveTier(Game, "CarB", ShakeIt);
 
             Assert.Equal(ColdStartTier.Tier3, tier);
-            // CarA's own ceiling is exactly 90 (raw 90 taught as "at the limit"), so Tier 3's full-strength
-            // borrow (no cap - see KeyedScaleLearner's own remarks on why Tier 3 deliberately drops the old
-            // never-amplify gate) maps CarB's raw 90 exactly onto the canonical at-limit anchor, 80 - not
-            // the raw, uncalibrated 90 a true Tier 1 identity read would have given.
-            Assert.Equal(80.0, carBOutput, 1);
+            // RE-BASELINED FOR THE v1.1.0 WALK-BACK, and the reason matters. CarA's ceiling used to be
+            // exactly 90, because SMax was snapshotted at the crossing DETECTION frame - the same raw 90
+            // this query uses - so the two coincided and the borrow landed exactly on the canonical
+            // at-limit anchor, 80.
+            //
+            // SMax is now read at the grip PEAK instead (see LockCrossingGate.DefaultWalkBackGBandFraction),
+            // which on this helper's ramp is 90 * 0.9 = 81. So raw 90 is no longer "at the limit" for CarA
+            // at all - it is 11% PAST it, and 90 * 80/81 = 88.9 is the correct answer for a reading past
+            // the limit. What this test still proves is unchanged and is the point of it: the Tier 3 borrow
+            // reaches a brand-new car at FULL strength, so CarB reads CarA's calibration rather than the
+            // raw, uncalibrated 90 a true Tier 1 identity read would have given.
+            Assert.Equal(88.9, carBOutput, 1);
         }
 
         /// <summary>

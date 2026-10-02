@@ -41,6 +41,53 @@ namespace QAdvanceFeedback
         private const string LegacyParametersFileName = "plugin.QAdvanceFeedback.runtime.json";
 
         private string _configPath;
+        private string _viperPath;
+
+        /// <summary>The supported-game list for viper4gh's plugin - see
+        /// <see cref="Core.Viper.ViperSupportedGames"/>. Loaded once at Init and replaced only by an
+        /// explicit Apply from the settings page, never per frame.</summary>
+        private Core.Viper.ViperDocument _viperDocument = Core.Viper.ViperSupportedGames.CreateShippedDocument();
+
+        /// <summary>The Viper document the settings page reads and writes. Never null.</summary>
+        public Core.Viper.ViperDocument ViperDocument
+        {
+            get { return _viperDocument; }
+            set { if (value != null) _viperDocument = value; }
+        }
+
+        /// <summary>Persists <see cref="ViperDocument"/> - called from the settings page's Apply, the
+        /// only thing that writes this file.</summary>
+        public bool SaveViperDocument()
+            => ViperStore.Save(_viperPath, _viperDocument, LogWarning);
+
+        /// <summary>
+        /// Whether a channel configured for the Viper source can actually read it right now: the Viper
+        /// plugin only computes for the games in <see cref="ViperDocument"/>, and on any other title it
+        /// returns before writing, leaving its four properties at the 0 it declared them with. A channel
+        /// in that state reads its own Layer-3 Raw instead - see <see cref="RawSourceFallback"/>.
+        /// <para/>
+        /// NO GAME IS NOT AN UNSUPPORTED GAME, and conflating the two was a serious defect (owner-
+        /// reported, 2026-09-30: "Viper support warning will always be displayed, and always use Raw").
+        /// <para/>
+        /// <see cref="DataUpdate"/> returns early unless <c>GameRunning &amp;&amp; !GamePaused &amp;&amp;
+        /// !GameInMenu</c>, so <c>PushLearnedKeyDataPointsToSettingsUi</c> never runs at the SimHub
+        /// menu - which is exactly where a driver configures a plugin. The settings page's
+        /// <c>_currentGameId</c> therefore stayed EMPTY, <c>IsSupported("")</c> is false, and the whole
+        /// Viper channel presented as permanently unsupported: amber warning, source rows disabled
+        /// showing Raw, and - the damaging part - the page re-keyed its key data points to RAW's
+        /// identity. Every number typed while configuring was filed under Raw. Start the game, Viper
+        /// becomes supported, the identity flips to Viper, and its slot is empty: "everytime restarted
+        /// will always go back to default".
+        /// <para/>
+        /// With no game there is nothing to block: no telemetry is flowing, so forcing Raw buys nothing,
+        /// while claiming the title is unsupported is a statement this code cannot possibly know to be
+        /// true. Blocking resumes the moment a real game id arrives and turns out not to be supported.
+        /// </summary>
+        public bool ViperSourceBlocked(WheelChannelSettings channel, string gameId)
+            => channel != null
+               && channel.SourceMode == SourceMode.Viper
+               && !string.IsNullOrWhiteSpace(gameId)
+               && !Core.Viper.ViperSupportedGames.IsSupported(gameId, _viperDocument.SupportedGames);
 
         private QAdvanceFeedbackSettings _settings;
 
@@ -87,7 +134,7 @@ namespace QAdvanceFeedback
             KeyDataPointSettings keyData, string gameId, string sourceIdentity, bool isLockChannel,
             NormalizePattern pattern, KeyDataPointDefaults defaults)
         {
-            if (keyData == null || keyData.AutoGenerate) return ManualAnchors.None;
+            if (keyData == null || keyData.GetAutoGenerate(sourceIdentity)) return ManualAnchors.None;
 
             double sMax, s90, s75;
             if (!keyData.TryGetManual(gameId, sourceIdentity, out sMax, out s90, out s75))
@@ -122,6 +169,29 @@ namespace QAdvanceFeedback
         private const double KeyDataPushIntervalSeconds = 1.0;
 
         private double _secondsSinceKeyDataPush;
+
+        /// <summary>The last game id handed to the settings page, so the dispatcher is touched only when
+        /// it actually changes. Cleared when a new page is created, so a freshly opened page is told
+        /// immediately rather than waiting for a game switch that may never come.</summary>
+        private string _lastGameIdPushedToUi;
+
+        /// <summary>
+        /// Tell the settings page which game is running, regardless of whether it is being DRIVEN.
+        /// <para/>
+        /// Called above <see cref="DataUpdate"/>'s learning gate - see the remarks there for why. Sends
+        /// nothing but the id: the learned values still ride the 1 Hz push, which is correctly gated,
+        /// because a paused game has nothing new to teach.
+        /// </summary>
+        private void PushCurrentGameToSettingsUi(string gameId)
+        {
+            if (string.Equals(gameId, _lastGameIdPushedToUi, StringComparison.Ordinal)) return;
+
+            Settings.SettingsControl control;
+            if (_settingsControl == null || !_settingsControl.TryGetTarget(out control) || control == null) return;
+
+            _lastGameIdPushedToUi = gameId;
+            control.Dispatcher.BeginInvoke((Action)(() => control.UpdateCurrentGame(gameId)));
+        }
 
         private void PushLearnedKeyDataPointsToSettingsUi(
             string gameId, string carId, string lockSourceIdentity, string slipSourceIdentity, double dtSeconds)
@@ -204,9 +274,9 @@ namespace QAdvanceFeedback
         private bool TrySeedKeyDataSlot(KeyDataPointSettings keyData, string gameId, string sourceIdentity,
             bool gateReady, NormalizePattern pattern, bool isLockChannel)
         {
-            if (keyData == null || keyData.AutoGenerate) return false;
+            if (keyData == null || keyData.GetAutoGenerate(sourceIdentity)) return false;
             if (!gateReady) return false;
-            if (keyData.PerGame && string.IsNullOrEmpty(gameId)) return false;
+            if (keyData.GetPerGame(sourceIdentity) && string.IsNullOrEmpty(gameId)) return false;
             if (keyData.IsSeeded(gameId, sourceIdentity)) return false;
 
             bool ignored;
@@ -380,9 +450,29 @@ namespace QAdvanceFeedback
 
         private void InitCore(PluginManager pluginManager)
         {
+            _viperPath = pluginManager.GetCommonStoragePath(ViperStore.FileName);
+            _viperDocument = ViperStore.Load(_viperPath, LogWarning);
+
             _configPath = pluginManager.GetCommonStoragePath(ConfigFileName);
             string legacyConfigPath = pluginManager.GetCommonStoragePath(LegacyConfigFileName);
             _settings = ConfigStore.Load(_configPath, LogWarning, legacyPath: legacyConfigPath);
+
+            // REPAIR A CONFIG DAMAGED BY v1.1.0's SHADOW BUG, once, at load - see
+            // WheelChannelSettings.RepairPresetSourcesIfStale for the full account. A channel saved as
+            // "Viper" over four RAW property names is repaired back to Viper's own scripts here, which
+            // fixes the engine on this very frame and the settings page the moment it opens. Saved
+            // immediately so the repair is not re-done every start, and logged because silently
+            // rewriting a driver's stored configuration is not something to do without a trace.
+            bool repairedLock = _settings.Lock?.RepairPresetSourcesIfStale(true) ?? false;
+            bool repairedSlip = _settings.Slip?.RepairPresetSourcesIfStale(false) ?? false;
+            if (repairedLock || repairedSlip)
+            {
+                ConfigStore.Save(_configPath, _settings, LogWarning);
+                LogWarning("QAdvanceFeedback: repaired stored source configuration for "
+                    + (repairedLock && repairedSlip ? "both channels"
+                        : repairedLock ? "Wheel Lock" : "Wheel Slip")
+                    + " - the saved text did not match the selected source mode.");
+            }
 
             string parametersPath = pluginManager.GetCommonStoragePath(ParametersFileName);
             string legacyParametersPath = pluginManager.GetCommonStoragePath(LegacyParametersFileName);
@@ -505,7 +595,26 @@ namespace QAdvanceFeedback
                 // learners - this is the SimHub-specific half of that gate (see
                 // Core.TelemetryLearningGate's own remarks for why "game running/paused/menu" is
                 // deliberately NOT re-checked a second time down in Core).
-                if (data == null || !data.GameRunning || data.GamePaused || data.GameInMenu
+                if (data == null) return;
+
+                // THE GAME'S IDENTITY IS NOT TELEMETRY, so it is read BEFORE the gate (owner-reported,
+                // 2026-09-30: "gameInMenu or GamePaused ... is the very typical scenario when the user
+                // adjust the parameters").
+                //
+                // The gate below is a LEARNING gate and must stay exactly as strict - a paused game or
+                // a menu screen must not reach Core. But it was also starving the settings page of the
+                // one fact it cannot get anywhere else: which game is running. That page needs it for
+                // two things that have nothing to do with learning - the Per-Game key data slot, and
+                // whether the Viper source is supported on this title. A driver who pauses, alt-tabs to
+                // SimHub and edits - the normal way this plugin is configured - was therefore editing a
+                // page that believed no game existed: Per-Game edits had no slot to go to, and a
+                // perfectly supported title was reported as unsupported.
+                //
+                // Cheap: a string compare per frame, and the dispatcher is only touched when the answer
+                // actually changes.
+                PushCurrentGameToSettingsUi(data.GameName ?? string.Empty);
+
+                if (!data.GameRunning || data.GamePaused || data.GameInMenu
                     || data.NewData == null || data.OldData == null)
                 {
                     return;
@@ -571,17 +680,25 @@ namespace QAdvanceFeedback
                 // the shipped default (a plain reference back to Layer 3's own Raw property) or
                 // whatever the driver configured instead - see WheelSourceResolver's remarks. Falls
                 // back to Layer 3's own value for that wheel on any resolution failure.
+                // VIPER ON AN UNSUPPORTED TITLE READS RAW INSTEAD (v1.1.0). Decided per CHANNEL rather
+                // than per wheel, because this is not a wheel going quiet - viper4gh's plugin returns
+                // before computing anything on a game it does not handle, so all four of its properties
+                // sit at the 0 it declared them with for the entire session. Evaluated every frame so a
+                // game switch takes effect immediately, but it is two list lookups, not per-wheel work.
+                bool lockForceRaw = ViperSourceBlocked(_settings.Lock, gameId);
+                bool slipForceRaw = ViperSourceBlocked(_settings.Slip, gameId);
+
                 Corners lockSources = new Corners(
-                    _sourceResolver.Resolve(pluginManager, _settings.Lock.SourceFrontLeft, _settings.Lock.ScriptTypeFrontLeft, legacy.LockWheels.FrontLeft),
-                    _sourceResolver.Resolve(pluginManager, _settings.Lock.SourceFrontRight, _settings.Lock.ScriptTypeFrontRight, legacy.LockWheels.FrontRight),
-                    _sourceResolver.Resolve(pluginManager, _settings.Lock.SourceRearLeft, _settings.Lock.ScriptTypeRearLeft, legacy.LockWheels.RearLeft),
-                    _sourceResolver.Resolve(pluginManager, _settings.Lock.SourceRearRight, _settings.Lock.ScriptTypeRearRight, legacy.LockWheels.RearRight));
+                    ResolveWheel(pluginManager, _settings.Lock, lockForceRaw, true, 0, legacy.LockWheels.FrontLeft),
+                    ResolveWheel(pluginManager, _settings.Lock, lockForceRaw, true, 1, legacy.LockWheels.FrontRight),
+                    ResolveWheel(pluginManager, _settings.Lock, lockForceRaw, true, 2, legacy.LockWheels.RearLeft),
+                    ResolveWheel(pluginManager, _settings.Lock, lockForceRaw, true, 3, legacy.LockWheels.RearRight));
 
                 Corners slipSources = new Corners(
-                    _sourceResolver.Resolve(pluginManager, _settings.Slip.SourceFrontLeft, _settings.Slip.ScriptTypeFrontLeft, legacy.SlipWheels.FrontLeft),
-                    _sourceResolver.Resolve(pluginManager, _settings.Slip.SourceFrontRight, _settings.Slip.ScriptTypeFrontRight, legacy.SlipWheels.FrontRight),
-                    _sourceResolver.Resolve(pluginManager, _settings.Slip.SourceRearLeft, _settings.Slip.ScriptTypeRearLeft, legacy.SlipWheels.RearLeft),
-                    _sourceResolver.Resolve(pluginManager, _settings.Slip.SourceRearRight, _settings.Slip.ScriptTypeRearRight, legacy.SlipWheels.RearRight));
+                    ResolveWheel(pluginManager, _settings.Slip, slipForceRaw, false, 0, legacy.SlipWheels.FrontLeft),
+                    ResolveWheel(pluginManager, _settings.Slip, slipForceRaw, false, 1, legacy.SlipWheels.FrontRight),
+                    ResolveWheel(pluginManager, _settings.Slip, slipForceRaw, false, 2, legacy.SlipWheels.RearLeft),
+                    ResolveWheel(pluginManager, _settings.Slip, slipForceRaw, false, 3, legacy.SlipWheels.RearRight));
 
                 // Diag.Source.* (docs\raw-gap-and-pad-balance-report.md): publish exactly what Layer 4
                 // is about to consume, BEFORE calling it - so a future "does our Raw match the
@@ -596,16 +713,38 @@ namespace QAdvanceFeedback
                 // expression hashed) so KeyedGripLearner isolates a genuinely different signal's own
                 // learning session rather than silently reusing whatever was learned for a previous,
                 // differently-scaled source under the same (game,car).
-                string lockSourceIdentity = SourceIdentity.Compute(
-                    _settings.Lock.SourceFrontLeft, _settings.Lock.ScriptTypeFrontLeft.ToString(),
-                    _settings.Lock.SourceFrontRight, _settings.Lock.ScriptTypeFrontRight.ToString(),
-                    _settings.Lock.SourceRearLeft, _settings.Lock.ScriptTypeRearLeft.ToString(),
-                    _settings.Lock.SourceRearRight, _settings.Lock.ScriptTypeRearRight.ToString());
-                string slipSourceIdentity = SourceIdentity.Compute(
-                    _settings.Slip.SourceFrontLeft, _settings.Slip.ScriptTypeFrontLeft.ToString(),
-                    _settings.Slip.SourceFrontRight, _settings.Slip.ScriptTypeFrontRight.ToString(),
-                    _settings.Slip.SourceRearLeft, _settings.Slip.ScriptTypeRearLeft.ToString(),
-                    _settings.Slip.SourceRearRight, _settings.Slip.ScriptTypeRearRight.ToString());
+                // THE IDENTITY MOVES WITH THE VALUES. A channel that fell back above is reading Raw, so
+                // it must LEARN as Raw too - otherwise its evidence would pile up under the Viper key
+                // while the numbers came from somewhere else, and returning to a supported game would
+                // inherit a calibration built from the wrong signal.
+                string lockSourceIdentity = lockForceRaw
+                    ? RawSourceFallback.RawIdentity(true)
+                    : SourceIdentity.Compute(
+                        _settings.Lock.SourceFrontLeft, _settings.Lock.ScriptTypeFrontLeft.ToString(),
+                        _settings.Lock.SourceFrontRight, _settings.Lock.ScriptTypeFrontRight.ToString(),
+                        _settings.Lock.SourceRearLeft, _settings.Lock.ScriptTypeRearLeft.ToString(),
+                        _settings.Lock.SourceRearRight, _settings.Lock.ScriptTypeRearRight.ToString());
+                string slipSourceIdentity = slipForceRaw
+                    ? RawSourceFallback.RawIdentity(false)
+                    : SourceIdentity.Compute(
+                        _settings.Slip.SourceFrontLeft, _settings.Slip.ScriptTypeFrontLeft.ToString(),
+                        _settings.Slip.SourceFrontRight, _settings.Slip.ScriptTypeFrontRight.ToString(),
+                        _settings.Slip.SourceRearLeft, _settings.Slip.ScriptTypeRearLeft.ToString(),
+                        _settings.Slip.SourceRearRight, _settings.Slip.ScriptTypeRearRight.ToString());
+
+                // A CUSTOM SOURCE'S COLD-START REFERENCE (v1.1.0). KnownSourceColdStartReference works
+                // by identity and cannot classify a source the driver wrote, so it has no number to
+                // offer for one - the driver configures it instead, seeded from whichever preset they
+                // edited their way in from. This is how that value reaches the LIVE calibration rather
+                // than only the settings page.
+                //
+                // Pushed every frame, like the thresholds below, so an Apply takes effect on the next
+                // frame with no engine rebuild. Guarded by the identity inside the learner, so a source
+                // switch - or a channel falling back to Raw just above - stops using it automatically.
+                ApplyCustomColdStart(_normalizedEngine.LockScaleLearner, _settings.Lock, lockForceRaw,
+                    lockSourceIdentity, _settings.KeyDataPointDefaults?.LockCustom);
+                ApplyCustomColdStart(_normalizedEngine.SlipScaleLearner, _settings.Slip, slipForceRaw,
+                    slipSourceIdentity, _settings.KeyDataPointDefaults?.SlipCustom);
 
                 // TRIGGER THRESHOLD (owner-requested restructure - docs\lock-and-animation-report.md):
                 // the SAME thresholds gate Layer 3's Raw (above) AND Layer 4's Normalized (here) - the
@@ -814,6 +953,52 @@ namespace QAdvanceFeedback
         /// the entire point of that per-car keying. This is a judgment call on the brief's literal
         /// "session/vehicle-change reset" wording, flagged rather than assumed - the safer, less
         /// destructive reading is applied.</summary>
+        /// <summary>
+        /// One wheel's Layer-4 reading: the configured source normally, or this channel's own Raw
+        /// property when <paramref name="forceRaw"/> - see <see cref="RawSourceFallback"/>.
+        /// <para/>
+        /// <paramref name="wheelIndex"/> is the canonical corner order (0 FL, 1 FR, 2 RL, 3 RR).
+        /// </summary>
+        private double ResolveWheel(PluginManager pluginManager, WheelChannelSettings channel,
+            bool forceRaw, bool isLockChannel, int wheelIndex, double layer3Raw)
+        {
+            if (forceRaw)
+                return _sourceResolver.Resolve(pluginManager,
+                    RawSourceFallback.PropertyName(isLockChannel, wheelIndex),
+                    RawSourceFallback.RawScriptType, layer3Raw);
+
+            switch (wheelIndex)
+            {
+                case 0: return _sourceResolver.Resolve(pluginManager, channel.SourceFrontLeft, channel.ScriptTypeFrontLeft, layer3Raw);
+                case 1: return _sourceResolver.Resolve(pluginManager, channel.SourceFrontRight, channel.ScriptTypeFrontRight, layer3Raw);
+                case 2: return _sourceResolver.Resolve(pluginManager, channel.SourceRearLeft, channel.ScriptTypeRearLeft, layer3Raw);
+                default: return _sourceResolver.Resolve(pluginManager, channel.SourceRearRight, channel.ScriptTypeRearRight, layer3Raw);
+            }
+        }
+
+        /// <summary>
+        /// Point one channel's scale learner at the driver-configured cold-start SMax, when that is
+        /// what applies - see <c>KeyedScaleLearner.ConfiguredColdStartIdentity</c>.
+        /// <para/>
+        /// Only a channel actually ON the Custom source, and not currently fallen back to Raw, gets an
+        /// override; every other case is cleared, so a learner can never keep a number belonging to a
+        /// source it is no longer reading.
+        /// </summary>
+        private static void ApplyCustomColdStart(Core.Normalized.KeyedScaleLearner learner,
+            WheelChannelSettings channel, bool forceRaw, string sourceIdentity, KeyDataPointDefaultSet custom)
+        {
+            if (learner == null) return;
+
+            bool applies = channel != null
+                           && !forceRaw
+                           && channel.SourceMode == SourceMode.Custom
+                           && custom != null
+                           && custom.IsUsable();
+
+            learner.ConfiguredColdStartIdentity = applies ? sourceIdentity : null;
+            learner.ConfiguredColdStartSMax = applies ? custom.SMax : 0.0;
+        }
+
         private void ResetOnGameSwitch(string gameId)
         {
             if (string.IsNullOrEmpty(gameId)) return;
@@ -924,6 +1109,10 @@ namespace QAdvanceFeedback
             try
             {
                 var control = new Settings.SettingsControl(this, pluginManager);
+                // A NEW PAGE KNOWS NOTHING, so re-arm the game push for it - otherwise a page opened
+                // mid-session would wait for a game CHANGE to be told which game is running, and while
+                // paused in one title that change never comes.
+                _lastGameIdPushedToUi = null;
                 // WEAK, deliberately: SimHub owns this control's lifetime and may discard it whenever the
                 // settings page closes. A strong field here would keep a dead WPF tree alive for the rest
                 // of the session, and would be a leak every time the page is reopened.

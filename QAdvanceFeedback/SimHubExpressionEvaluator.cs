@@ -88,8 +88,24 @@ namespace QAdvanceFeedback
             }
             catch (Exception e)
             {
-                _available = false;
-                LogOnce("expression evaluation failed, configured sources will fall back to plain property names - " + e.Message);
+                // THIS EXPRESSION FAILED - THE ENGINE IS STILL FINE (v1.1.0). This used to set
+                // _available = false, which short-circuits EVERY later call for the rest of the session
+                // (see the guard at the top of this method). That conflates two unrelated failures:
+                // "the SimHub types could not be resolved", which really is permanent and is handled in
+                // EnsureResolved, and "this one expression threw", which is per-call and routine.
+                //
+                // WHY IT MATTERS NOW RATHER THAN BEFORE. A dead property reference does NOT evaluate to
+                // 0 - SimHub's own EvaluateParameter leaves the result null and only forces HasResult -
+                // and NCalc's arithmetic dereferences its operands (Numbers.Soustract does
+                // a.GetType()), so a null reference THROWS. That is the mechanism the Raw fallback is
+                // meant to run on. With the old behaviour, one frame of a source whose plugin is not
+                // publishing would have disabled scripted evaluation for both channels until SimHub was
+                // restarted - taking a perfectly good source on the other channel down with it.
+                //
+                // Throttled to one log line per instance either way; the health report still fires so a
+                // persistently failing expression is visible rather than silent.
+                LogOnce("expression evaluation failed for a configured source; that source falls back to "
+                    + "its Raw value for this frame - " + e.Message);
                 HealthRegistry.Report(HealthSubsystems.ExpressionEvaluator, HealthSeverity.Degraded,
                     "Health.Impact.ExpressionEvaluator", e.ToString());
                 return false;

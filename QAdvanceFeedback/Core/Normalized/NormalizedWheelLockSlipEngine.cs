@@ -852,6 +852,25 @@ namespace QAdvanceFeedback.Core.Normalized
         }
 
         /// <summary>
+        /// THE WALK-BACK KILL SWITCHES, one per channel. Set either to 0 to return THAT channel's SMax
+        /// teaching to snapshotting the detection frame, exactly as before v1.1.0 - see
+        /// <see cref="LockCrossingGate.DefaultWalkBackGBandFraction"/> for what the walk-back does, what
+        /// it costs at the canonical at-limit anchor, and why the two channels stay independent.
+        /// </summary>
+        public double LockWalkBackGBandFraction
+        {
+            get { return _lockCrossingGate.WalkBackGBandFraction; }
+            set { _lockCrossingGate.WalkBackGBandFraction = value; }
+        }
+
+        /// <summary>See <see cref="LockWalkBackGBandFraction"/> - Slip's own, independent switch.</summary>
+        public double SlipWalkBackGBandFraction
+        {
+            get { return _slipCrossingGate.WalkBackGBandFraction; }
+            set { _slipCrossingGate.WalkBackGBandFraction = value; }
+        }
+
+        /// <summary>
         /// THE SLIP KILL SWITCH. When false, Slip's SMax teaching returns exactly to its pre-gate
         /// behaviour: every at-limit frame teaches its own live reading at full weight, and the Tier-1
         /// hand-over to the general percentile is no longer held back. Independent of
@@ -1503,6 +1522,19 @@ namespace QAdvanceFeedback.Core.Normalized
             // so the units stay consistent end to end and the configured-vs-fallback divergence test
             // further down keeps comparing two quantities on one scale. The aggregated branch (Lock) is
             // untouched and never evaluates this.
+            // THE SATURATED-WHEEL COUNT (v1.1.0) - how many of the four CONFIGURED readings this frame
+            // are pegged at the source's own ceiling. Fed to whichever crossing gate is active so it can
+            // reject a "crossing" detected after part of the car has already let go - see
+            // LockCrossingGate.DefaultMinSaturatedWheelsForRejection for the measurement. Counted from
+            // w0-w3 rather than from the aggregate because the aggregate cannot distinguish "one wheel
+            // fully locked" from "all four half locked", which is the whole distinction the guard needs.
+            // Free to compute and needed on every engaged frame, so it is not hidden behind a flag.
+            int saturatedWheelCount =
+                (w0 >= LockCrossingGate.SaturatedWheelThreshold ? 1 : 0)
+                + (w1 >= LockCrossingGate.SaturatedWheelThreshold ? 1 : 0)
+                + (w2 >= LockCrossingGate.SaturatedWheelThreshold ? 1 : 0)
+                + (w3 >= LockCrossingGate.SaturatedWheelThreshold ? 1 : 0);
+
             double calibrationBasisConfigured = useAggregatedAllScale
                 ? aggregatedNativeConfigured
                 : ContributionWeightedMean(w0, w1, w2, w3);
@@ -1795,7 +1827,7 @@ namespace QAdvanceFeedback.Core.Normalized
             {
                 bool qualified = lockCrossingGate.Observe(
                     calibrationBasisConfigured, calibrationBasisFallback, motion.MagnitudeG,
-                    atLimitWeight > 0.0, dtSeconds);
+                    atLimitWeight > 0.0, dtSeconds, saturatedWheelCount);
 
                 if (atLimitWeight > 0.0)
                 {
@@ -1813,7 +1845,7 @@ namespace QAdvanceFeedback.Core.Normalized
             {
                 bool qualified = slipCrossingGate.Observe(
                     calibrationBasisConfigured, calibrationBasisFallback, motion.MagnitudeG,
-                    physicallyAtLimit, dtSeconds);
+                    physicallyAtLimit, dtSeconds, saturatedWheelCount);
                 if (physicallyAtLimit)
                 {
                     smaxTeachingWeight = slipCrossingGate.TeachingWeight;
@@ -1825,7 +1857,14 @@ namespace QAdvanceFeedback.Core.Normalized
                 }
             }
 
-            if (calibrationBasisConfigured >= MinRawForCalibrationObservation)
+            // PER-SOURCE FLOOR (see KeyedScaleLearner.CalibrationObservationFloor). The absolute
+            // constant below was calibrated for a source reading ~70-85 at its limit; on a slip-ratio
+            // source whose limit is ~10-20 it discarded almost the entire signal. Returns the absolute
+            // floor unchanged for Raw and ShakeIt.
+            double observationFloor =
+                scaleLearner.CalibrationObservationFloor(sourceIdentity, MinRawForCalibrationObservation);
+
+            if (calibrationBasisConfigured >= observationFloor)
             {
                 if (slipZeroWeightFold || lockZeroWeightFold)
                 {
@@ -1843,7 +1882,7 @@ namespace QAdvanceFeedback.Core.Normalized
                 // test a snapshot under MinRawForCalibrationObservation would be calibrated from anyway,
                 // which is exactly the noise that threshold exists to keep out. Byte-identical for Lock,
                 // where smaxTeachingBasis IS calibrationBasisConfigured.
-                else if (smaxTeachingWeight > 0.0 && smaxTeachingBasis >= MinRawForCalibrationObservation)
+                else if (smaxTeachingWeight > 0.0 && smaxTeachingBasis >= observationFloor)
                 {
                     // The DEFAULT (unsurfaced) key - still the one and only key the live severity reads.
                     scaleLearner.ObserveAtPhysicalLimit(gameId, carId, sourceIdentity, smaxTeachingBasis, smaxTeachingWeight);
@@ -1895,18 +1934,42 @@ namespace QAdvanceFeedback.Core.Normalized
             // only decides which SMax is APPLIED to the published output, which is why the learned value
             // stays live and correct for the UI to display, and why toggling back to Auto is instant.
             //
-            // THE GATE. A manual value is withheld until this exact context has BOTH finished cold start
-            // AND accumulated ManualOverrideGate.MinimumInGameSeconds of real driving (the owner's
-            // "whichever is longer"). Before that the learned value is published - a manual number
-            // configured elsewhere is not necessarily meaningful the instant a new session starts, and
-            // the driver has had no chance to see what this one reads.
-            bool manualAnchorsApplied = false;
+            // A CONFIGURED VALUE IS APPLIED UNCONDITIONALLY (v1.1.0 - the owner's own correction of what
+            // this was doing). If the driver has turned Auto off and a real number is in the box, that
+            // number IS the scale, from the very first frame. No warm-up, no confidence bar, no
+            // "whichever is longer".
+            //
+            // WHAT THIS REPLACED, AND WHY IT WAS WRONG. The maturity test that used to sit here
+            // (ManualOverrideGate: cold start complete AND 30s of driving) belongs to the SETTINGS PAGE,
+            // not to the engine - it governs WHICH NUMBER IS SHOWN when the driver toggles Auto to
+            // Manual (mature -> the learned value; not mature but a known source -> that source's
+            // reference; not mature and unknown -> "---"), never whether an already-configured value
+            // reaches the output.
+            //
+            // THE DEFECT IT CAUSED, from the owner's own capture (session-20260925-214840, Viper source,
+            // manual 10/6.5/3): the gate needs CeilingHandoverConfidence >= 0.95, and that method
+            // early-returns 0.0 whenever the primary at-limit distribution is empty. That session taught
+            // ZERO at-limit samples on both channels, so the confidence was pinned at 0 and the manual
+            // value could never be applied - not "eventually", never. The channel silently ran on the
+            // decaying cold-start reference (100 -> 67.5) instead, and nothing in the UI or the log said
+            // the driver's number was being withheld. A gate whose failure mode is silent, on the one
+            // control that exists to override a learner that is getting it wrong, is the wrong shape.
+            //
+            // THE GATE OBJECT IS STILL FED. ManualOverrideGate.Observe keeps accumulating driving time
+            // and ManualGateReady/ManualGateElapsedSeconds still answer, because the settings page reads
+            // them to decide what to DISPLAY. Only the decision to apply has moved.
+            //
+            // LEARNING IS UNAFFECTED EITHER WAY - see the note just above: every Observe call has already
+            // run, so the learned value stays live for the UI, keeps being persisted, and toggling back
+            // to Auto is instant.
             string manualGateKey = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty);
             if (manualGate != null)
                 manualGate.Observe(manualGateKey, dtSeconds, advancing: engaged && speedKmh.HasValue && speedKmh.Value > 0.0);
-            bool manualReady = manualAnchors.Active && manualGate != null
-                && manualGate.IsReady(manualGateKey, scaleLearner.CeilingHandoverConfidence(gameId, carId, sourceIdentity));
-            manualAnchorsApplied = manualReady;
+
+            // `SMax > 0` is the whole test: a blank box ("---") never reaches here as Active, and a zero
+            // or negative ceiling would divide the rescale by nothing.
+            bool manualReady = manualAnchors.Active && manualAnchors.SMax > 0.0;
+            bool manualAnchorsApplied = manualReady;
 
             if (reportManualApplied != null) reportManualApplied(manualAnchorsApplied);
 

@@ -1,0 +1,9 @@
+﻿<UserControl x:Class="QAdvanceFeedbackControls.NumericEditor"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mah="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro">
+  <!-- ONE child, deliberately: the whole point of this control is that "disabled" means the text box
+       and the +/- buttons together, and WPF coerces IsEnabled down the visual tree. Nothing here may
+       set IsEnabled on the inner control - doing so would decouple the two again. -->
+  <mah:NumericUpDown x:Name="Inner" HorizontalAlignment="Stretch"/>
+</UserControl>
