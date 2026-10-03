@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
@@ -56,6 +56,18 @@ namespace QAdvanceFeedback
         private readonly RuntimeCache _cache = new RuntimeCache();
         private readonly object _fileLock = new object();
         private readonly Timer _timer;
+
+        /// <summary>0 = no background write outstanding, 1 = one is queued or running. Claimed with
+        /// Interlocked so the timer thread can never start a second - see <see cref="FlushTick"/>.</summary>
+        private int _backgroundWriteInFlight;
+
+        /// <summary>The most recently started background write, so <see cref="Flush"/> and
+        /// <see cref="Dispose"/> can wait for it instead of racing it.</summary>
+        private volatile Task _backgroundWrite;
+
+        /// <summary>How long <see cref="WaitForBackgroundWrite"/> will wait. Generous enough for a
+        /// multi-megabyte write to a busy disk, short enough that a wedged one cannot hang shutdown.</summary>
+        private static readonly TimeSpan BackgroundWriteWaitTimeout = TimeSpan.FromSeconds(10);
         private bool _disposed;
         private string _loggedFlushTickFault;
 
@@ -202,9 +214,40 @@ namespace QAdvanceFeedback
         /// its "flush once more before exit" guarantee.</summary>
         public void Flush()
         {
+            // LET ANY BACKGROUND WRITE FINISH FIRST, so this one is unambiguously last.
+            //
+            // Without this, a snapshot queued by FlushTick a moment earlier could still be sitting in
+            // the thread pool when Flush ran. Flush would take _fileLock, write the newest state, and
+            // then the older queued snapshot would get the lock and write ITSELF over the top -
+            // silently reverting the final seconds of a session with no crash and no error. Plug.End
+            // calls Flush on the way down, which is exactly when that matters most.
+            WaitForBackgroundWrite();
+
             RuntimeDocument snapshot = _cache.SnapshotIfDirty();
             if (snapshot == null) return;
             WriteAtomic(snapshot);
+        }
+
+        /// <summary>
+        /// Block until the background write started by <see cref="FlushTick"/> has finished, or the
+        /// wait budget runs out.
+        /// <para/>
+        /// SAFE TO BLOCK ON: the task only ever takes <c>_fileLock</c> (and
+        /// <see cref="HealthRegistry"/>'s own gate inside a catch), and no caller of this method holds
+        /// either, so there is no cycle to deadlock on. The timeout exists so a wedged disk degrades
+        /// into "we gave up waiting" rather than hanging the host's shutdown.
+        /// </summary>
+        private void WaitForBackgroundWrite()
+        {
+            Task inFlight = _backgroundWrite;
+            if (inFlight == null || inFlight.IsCompleted) return;
+
+            try { inFlight.Wait(BackgroundWriteWaitTimeout); }
+            catch (AggregateException)
+            {
+                // WriteAtomic already logged and reported whatever went wrong; a faulted write must
+                // not take the caller down with it.
+            }
         }
 
         /// <summary>Discards all learned data, in memory and on disk.</summary>
@@ -236,9 +279,33 @@ namespace QAdvanceFeedback
         {
             try
             {
+                // ONE BACKGROUND WRITE AT A TIME, AND THE CLAIM IS TAKEN FIRST.
+                //
+                // This used to fire Task.Run unconditionally every interval with nothing to stop them
+                // overlapping. Each queued task pins its own full document clone AND the multi-megabyte
+                // JSON string serialised from it - the owner's real parameters file is 3.25 MB - and
+                // they then queue behind each other on _fileLock. If one write ever takes longer than
+                // the interval, which a multi-megabyte file being scanned by antivirus on every write
+                // comfortably can, the queue grows without bound and so does memory. That is the only
+                // mechanism in this plugin capable of taking a whole machine down, and it matches the
+                // owner's report of exactly that.
+                //
+                // Skipping a tick loses nothing: the claim is taken BEFORE SnapshotIfDirty, so when we
+                // skip we never clear the dirty flag and the next tick writes the newer state.
+                if (Interlocked.CompareExchange(ref _backgroundWriteInFlight, 1, 0) != 0) return;
+
                 RuntimeDocument snapshot = _cache.SnapshotIfDirty();
-                if (snapshot == null) return;
-                Task.Run(() => WriteAtomic(snapshot));
+                if (snapshot == null)
+                {
+                    Interlocked.Exchange(ref _backgroundWriteInFlight, 0);
+                    return;
+                }
+
+                _backgroundWrite = Task.Run(() =>
+                {
+                    try { WriteAtomic(snapshot); }
+                    finally { Interlocked.Exchange(ref _backgroundWriteInFlight, 0); }
+                });
             }
             catch (Exception e)
             {
@@ -263,17 +330,11 @@ namespace QAdvanceFeedback
                 // same settings or every calibration reads back empty.
                 string json = JsonConvert.SerializeObject(
                     snapshot, ShakeItCalibrationContractResolver.Settings(Formatting.Indented));
-                lock (_fileLock)
-                {
-                    string directory = Path.GetDirectoryName(_path);
-                    if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-                        Directory.CreateDirectory(directory);
 
-                    string temporary = _path + ".tmp";
-                    File.WriteAllText(temporary, json);
-                    if (File.Exists(_path)) File.Delete(_path);
-                    File.Move(temporary, _path);
-                }
+                // ATOMIC AND DURABLE - see Core.Runtime.AtomicFile. This file is rewritten every few
+                // seconds for a whole session, so the delete-then-move window it replaces was being
+                // entered constantly; a forced restart landing in one lost the entire learning history.
+                lock (_fileLock) AtomicFile.WriteAllText(_path, json);
             }
             catch (IOException e)
             {
@@ -395,6 +456,11 @@ namespace QAdvanceFeedback
             if (_disposed) return;
             _disposed = true;
             _timer?.Dispose();
+
+            // Stop the timer FIRST so nothing new can start, then let any write already in flight
+            // finish. Disposing while one is mid-write would otherwise let it complete after the
+            // caller believes shutdown is done - and, worse, after their final Flush.
+            WaitForBackgroundWrite();
         }
     }
 }

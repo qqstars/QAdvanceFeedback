@@ -1,7 +1,8 @@
-using System;
+﻿using System;
 using System.IO;
 using Newtonsoft.Json;
 using QAdvanceFeedback.Core.Health;
+using QAdvanceFeedback.Core.Runtime;
 using QAdvanceFeedback.Settings;
 
 namespace QAdvanceFeedback
@@ -82,15 +83,11 @@ namespace QAdvanceFeedback
 
             try
             {
-                string directory = Path.GetDirectoryName(path);
-                if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-                    Directory.CreateDirectory(directory);
-
+                // ATOMIC AND DURABLE - see Core.Runtime.AtomicFile. The delete-then-move this
+                // replaces left the settings file ABSENT for a moment on every single save, which is
+                // how a forced restart lost it outright.
                 string json = JsonConvert.SerializeObject(settings, Formatting.Indented);
-                string temporary = path + ".tmp";
-                File.WriteAllText(temporary, json);
-                if (File.Exists(path)) File.Delete(path);
-                File.Move(temporary, path);
+                AtomicFile.WriteAllText(path, json);
             }
             catch (IOException e)
             {

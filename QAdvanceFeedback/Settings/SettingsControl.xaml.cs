@@ -929,9 +929,40 @@ namespace QAdvanceFeedback.Settings
             }
             RefreshSourceAvailability();
 
-            _lockLearnedSMax = lockSMax; _lockLearnedS90 = lockS90; _lockLearnedS75 = lockS75;
-            _slipLearnedSMax = slipSMax; _slipLearnedS90 = slipS90; _slipLearnedS75 = slipS75;
-            _lockManualLive = lockManualLive; _slipManualLive = slipManualLive;
+            // THE LEARNED VALUES BELONG TO THE SOURCE THEY WERE LEARNED FOR, AND ONLY THAT ONE
+            // (owner-reported, 2026-10-02: Viper learns 13.5/11.5, switch to Raw, drive, switch back to
+            // Viper and the page shows ~50/45).
+            //
+            // The identities in this push come from the APPLIED settings, because that is what the
+            // engine is actually reading. The page's own _current*Source can legitimately differ - the
+            // driver may have changed the dropdown without pressing Apply, which the comment above
+            // deliberately preserves. The numbers were being taken regardless, so during that window
+            // the page displayed RAW's learned ceiling labelled as Viper's: Raw sits around 50-85 by
+            // nature, which is exactly the number reported.
+            //
+            // Nothing is corrected here and nothing is guessed - a value for a source the page is not
+            // showing is simply not this source's evidence, so it is dropped. SeedChannel then falls
+            // back to that source's shipped reference (15/13.5/10.5 for Viper Lock), which is the
+            // honest answer to "what does this source read at the limit" until the switch is applied
+            // and a real push for it arrives.
+            //
+            // DISPLAY ONLY. These four fields feed the "[Learned Value: x]" hint, the Auto readout in
+            // the boxes, and the curve plot. No engine path reads them, so this cannot affect learning
+            // or output.
+            bool lockMatches = string.Equals(lockSourceIdentity, _currentLockSource, StringComparison.Ordinal);
+            bool slipMatches = string.Equals(slipSourceIdentity, _currentSlipSource, StringComparison.Ordinal);
+
+            _lockLearnedSMax = lockMatches ? lockSMax : null;
+            _lockLearnedS90 = lockMatches ? lockS90 : null;
+            _lockLearnedS75 = lockMatches ? lockS75 : null;
+            _slipLearnedSMax = slipMatches ? slipSMax : null;
+            _slipLearnedS90 = slipMatches ? slipS90 : null;
+            _slipLearnedS75 = slipMatches ? slipS75 : null;
+
+            // The manual gate is per source too - "this source has learned enough to seed a manual
+            // value" says nothing about a source the page is not showing.
+            _lockManualLive = lockMatches && lockManualLive;
+            _slipManualLive = slipMatches && slipManualLive;
 
             // UNCONDITIONAL (v1.1.0 - owner-reported: "set the numbers, start the game, they go back to
             // ---"). This used to run only when at least one channel was on AUTO, which made the boxes

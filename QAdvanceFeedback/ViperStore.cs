@@ -1,7 +1,8 @@
-using System;
+﻿using System;
 using System.IO;
 using Newtonsoft.Json;
 using QAdvanceFeedback.Core.Health;
+using QAdvanceFeedback.Core.Runtime;
 using QAdvanceFeedback.Core.Viper;
 
 namespace QAdvanceFeedback
@@ -62,15 +63,9 @@ namespace QAdvanceFeedback
 
             try
             {
-                string directory = Path.GetDirectoryName(path);
-                if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
-
+                // ATOMIC AND DURABLE - see Core.Runtime.AtomicFile.
                 string json = JsonConvert.SerializeObject(ViperDocument.Sanitise(document), Formatting.Indented);
-                string temp = path + ".tmp";
-                File.WriteAllText(temp, json);
-
-                if (File.Exists(path)) File.Delete(path);
-                File.Move(temp, path);
+                AtomicFile.WriteAllText(path, json);
                 return true;
             }
             catch (Exception e) when (e is IOException || e is JsonException || e is UnauthorizedAccessException)
