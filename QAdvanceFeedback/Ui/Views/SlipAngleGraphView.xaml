@@ -1,0 +1,63 @@
+<UserControl x:Class="QAdvanceFeedbackViews.SlipAngleGraphView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mah="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro"
+             xmlns:v="clr-namespace:QAdvanceFeedbackViews"
+             v:EventCommand.Loaded="{Binding RedrawGraphCommand}"
+             Grid.IsSharedSizeScope="True">
+  <!-- The read-only "Source (Raw.All, 0° -> End) -> Projected" graph in the Slip Angle effect's curve slot,
+       bound to the effect's SlipAngleEffectViewModel (its Graph), with the Slip Angle Test Effect's orange
+       dot - and, below it, the Test Effect itself (docs\slip-angle-design.md 9.11): one Raw.All slider (264 px,
+       sized to fit the ShakeIt panel), 0 to 300% of Max, with the "100%" tick (End) crossing
+       its middle. The label column is kept as wide as the panel's above (LabelColumnSync on the shared view
+       model). -->
+  <UserControl.Resources>
+    <v:VisibleWhenConverter x:Key="VisibleWhen"/>
+    <Style x:Key="RowGrid" TargetType="Grid">
+      <Setter Property="Margin" Value="0,0,0,6"/>
+    </Style>
+    <Style x:Key="RowLabel" TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+      <Setter Property="MaxWidth" Value="220"/>
+      <Setter Property="Margin" Value="0,0,8,0"/>
+    </Style>
+  </UserControl.Resources>
+  <StackPanel Margin="0,4,0,4" HorizontalAlignment="Left" v:LabelColumnSync.Group="{Binding}">
+    <Border BorderBrush="Gray" BorderThickness="1" HorizontalAlignment="Left">
+      <v:SourceProjectedGraph Curve="{Binding Graph.Curve}" Balls="{Binding Test.Balls}"/>
+    </Border>
+    <TextBlock Text="{Binding Graph.Caption}" FontStyle="Italic" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+    <TextBlock Text="{Binding Graph.Note}" TextWrapping="Wrap" Opacity="0.7" MaxWidth="420" Margin="0,2,0,0"/>
+
+    <!-- Test Effect: one Raw.All slider (degrees), below the graph. -->
+    <StackPanel DataContext="{Binding Test}" Margin="0,10,0,0"
+                Visibility="{Binding Converter={StaticResource VisibleWhen}}">
+      <TextBlock Text="{v:Loc ShakeItPanel.Test.Header}" FontWeight="Bold" Margin="0,0,0,4"/>
+      <Grid Style="{StaticResource RowGrid}">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <TextBlock Text="{v:Loc ShakeItPanel.Test.Label}" Style="{StaticResource RowLabel}"/>
+        <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding IsTestEnabled}" HorizontalAlignment="Left" VerticalAlignment="Center"
+                          OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
+      </Grid>
+      <StackPanel Visibility="{Binding IsTestEnabled, Converter={StaticResource VisibleWhen}}">
+        <Grid Style="{StaticResource RowGrid}">
+          <!-- 264 = 60% of the earlier 440 (owner, 2026-11-20): 440 was cut off in the ShakeIt panel. -->
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="264"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+          <TextBlock Grid.Row="1" Text="{v:Loc ShakeItPanel.SlipAngle.Test.Slider}" Style="{StaticResource RowLabel}"/>
+          <!-- "100%" above the tick; the tick crosses the slider at its middle (= End, normalized 100). -->
+          <TextBlock Grid.Row="0" Grid.Column="1" Text="{v:Loc ShakeItPanel.SlipAngle.Test.Tick}" FontSize="10"
+                     HorizontalAlignment="Center" Margin="0,0,0,1"/>
+          <Slider Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="{Binding SliderMaximum}" Value="{Binding SourceDeg}"
+                  VerticalAlignment="Center"/>
+          <Rectangle Grid.Row="1" Grid.Column="1" Width="2" Height="20" Fill="DarkOrange"
+                     HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
+          <TextBlock Grid.Row="1" Grid.Column="2" Text="{Binding SourceDeg, StringFormat={}{0:0.0}°}" Width="44"
+                     TextAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+        <TextBlock Text="{v:Loc ShakeItPanel.SlipAngle.Test.Note}" TextWrapping="Wrap" Opacity="0.7" MaxWidth="420" HorizontalAlignment="Left"/>
+      </StackPanel>
+    </StackPanel>
+  </StackPanel>
+</UserControl>

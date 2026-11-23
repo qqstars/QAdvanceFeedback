@@ -28,7 +28,7 @@ much as it did to this one.
 
 ```bash
 dotnet tool install -g ilspycmd   # if not already installed
-bash tools/fetch-simhub-refs.sh 9.11.22   # if lib/ does not exist yet
+bash tools/fetch-simhub-refs.sh 9.13.2    # if lib/ does not exist yet
 ilspycmd -t "<FullTypeName>" lib/SimHub.Plugins.dll > /tmp/whatever-you-are-checking.cs
 ```
 

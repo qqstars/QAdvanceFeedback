@@ -1,0 +1,109 @@
+<UserControl x:Class="QAdvanceFeedbackViews.GraphView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mah="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro"
+             xmlns:v="clr-namespace:QAdvanceFeedbackViews"
+             v:EventCommand.Loaded="{Binding RefreshCommand}"
+             Grid.IsSharedSizeScope="True">
+  <!-- The read-only "Source value -> Projected value" graph in a WheelLock/WheelSlip effect's curve
+       slot, bound to a GraphViewModel: the curve and the Test Effect balls - and, below it (owner), the
+       effect's Test Effect. The test's sliders and note show only while it is on. Its label column is kept
+       as wide as the panel's above (LabelColumnSync on the shared Test view model), so its toggle and
+       sliders start where the panel's controls start. -->
+  <UserControl.Resources>
+    <v:VisibleWhenConverter x:Key="VisibleWhen"/>
+    <Style x:Key="RowGrid" TargetType="Grid">
+      <Setter Property="Margin" Value="0,0,0,6"/>
+    </Style>
+    <Style x:Key="RowLabel" TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+      <Setter Property="MaxWidth" Value="220"/>
+      <Setter Property="Margin" Value="0,0,8,0"/>
+    </Style>
+  </UserControl.Resources>
+  <StackPanel Margin="0,4,0,4" HorizontalAlignment="Left" v:LabelColumnSync.Group="{Binding Test}">
+    <Border BorderBrush="Gray" BorderThickness="1" HorizontalAlignment="Left">
+      <v:SourceProjectedGraph Curve="{Binding Curve}" Balls="{Binding Balls}"/>
+    </Border>
+    <TextBlock Text="{Binding Caption}" FontStyle="Italic" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+    <TextBlock Text="{Binding Note}" TextWrapping="Wrap" Opacity="0.7" MaxWidth="420" Margin="0,2,0,0"/>
+
+    <!-- Test Effect: four per-wheel source sliders, below the graph. -->
+    <StackPanel DataContext="{Binding Test}" Margin="0,10,0,0"
+                Visibility="{Binding Converter={StaticResource VisibleWhen}}">
+      <TextBlock Text="{v:Loc ShakeItPanel.Test.Header}" FontWeight="Bold" Margin="0,0,0,4"/>
+      <Grid Style="{StaticResource RowGrid}">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <TextBlock Text="{v:Loc ShakeItPanel.Test.Label}" Style="{StaticResource RowLabel}"/>
+        <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding IsTestEnabled}" HorizontalAlignment="Left" VerticalAlignment="Center"
+                          OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
+      </Grid>
+      <StackPanel Visibility="{Binding IsTestEnabled, Converter={StaticResource VisibleWhen}}">
+        <StackPanel Visibility="{Binding ShowSingle, Converter={StaticResource VisibleWhen}}">
+        <Grid Style="{StaticResource RowGrid}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="220"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{v:Loc Test.Slider.Single}" Style="{StaticResource RowLabel}"/>
+          <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding SingleChannel}" VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="2" Text="{Binding SingleChannel, StringFormat={}{0:0}}" Width="32" TextAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+        </StackPanel>
+        <StackPanel Visibility="{Binding ShowFrontRear, Converter={StaticResource VisibleWhen}}">
+        <Grid Style="{StaticResource RowGrid}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="220"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{v:Loc Test.Slider.Front}" Style="{StaticResource RowLabel}"/>
+          <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding FrontChannel}" VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="2" Text="{Binding FrontChannel, StringFormat={}{0:0}}" Width="32" TextAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+        <Grid Style="{StaticResource RowGrid}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="220"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{v:Loc Test.Slider.Rear}" Style="{StaticResource RowLabel}"/>
+          <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding RearChannel}" VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="2" Text="{Binding RearChannel, StringFormat={}{0:0}}" Width="32" TextAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+        </StackPanel>
+        <StackPanel Visibility="{Binding ShowLeftRight, Converter={StaticResource VisibleWhen}}">
+        <Grid Style="{StaticResource RowGrid}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="220"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{v:Loc Test.Slider.Left}" Style="{StaticResource RowLabel}"/>
+          <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding LeftChannel}" VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="2" Text="{Binding LeftChannel, StringFormat={}{0:0}}" Width="32" TextAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+        <Grid Style="{StaticResource RowGrid}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="220"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{v:Loc Test.Slider.Right}" Style="{StaticResource RowLabel}"/>
+          <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding RightChannel}" VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="2" Text="{Binding RightChannel, StringFormat={}{0:0}}" Width="32" TextAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+        </StackPanel>
+        <Grid Style="{StaticResource RowGrid}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="220"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{v:Loc ShakeItPanel.Test.FL}" Style="{StaticResource RowLabel}"/>
+          <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding FrontLeft}" VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="2" Text="{Binding FrontLeft, StringFormat={}{0:0}}" Width="32" TextAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+        <Grid Style="{StaticResource RowGrid}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="220"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{v:Loc ShakeItPanel.Test.FR}" Style="{StaticResource RowLabel}"/>
+          <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding FrontRight}" VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="2" Text="{Binding FrontRight, StringFormat={}{0:0}}" Width="32" TextAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+        <Grid Style="{StaticResource RowGrid}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="220"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{v:Loc ShakeItPanel.Test.RL}" Style="{StaticResource RowLabel}"/>
+          <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding RearLeft}" VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="2" Text="{Binding RearLeft, StringFormat={}{0:0}}" Width="32" TextAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+        <Grid Style="{StaticResource RowGrid}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="220"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{v:Loc ShakeItPanel.Test.RR}" Style="{StaticResource RowLabel}"/>
+          <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding RearRight}" VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="2" Text="{Binding RearRight, StringFormat={}{0:0}}" Width="32" TextAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+        <TextBlock Text="{v:Loc ShakeItPanel.Test.Note}" TextWrapping="Wrap" Opacity="0.7" MaxWidth="420" HorizontalAlignment="Left"/>
+        <TextBlock Text="{v:Loc Test.Slider.GroupNote}" TextWrapping="Wrap" Opacity="0.7" MaxWidth="420" HorizontalAlignment="Left" Margin="0,4,0,0"
+                   Visibility="{Binding ShowAnyGroup, Converter={StaticResource VisibleWhen}}"/>
+      </StackPanel>
+    </StackPanel>
+  </StackPanel>
+</UserControl>

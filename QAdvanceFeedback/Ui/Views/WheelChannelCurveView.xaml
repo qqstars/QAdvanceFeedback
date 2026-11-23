@@ -1,0 +1,108 @@
+<UserControl x:Class="QAdvanceFeedbackViews.WheelChannelCurveView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:QAdvanceFeedbackControls"
+             xmlns:v="clr-namespace:QAdvanceFeedbackViews">
+  <!-- "Output data and shaping" of a Wheel Lock / Wheel Slip tab, bound to a CurveEditorViewModel: the
+       old LockCurveGroup / SlipCurveGroup, same layout. Every edit is a draft edit (Apply). Column 0 joins
+       the tab's shared label group (LockAlign / SlipAlign, bound - one view serves both tabs). -->
+  <GroupBox Header="{v:Loc Group.Curve}">
+    <StackPanel>
+      <!-- ONE GRID so the two dropdowns line up (owner: "vertical align the DropDown of Normalize Pattern
+           and Preset") - separate StackPanels sized their labels independently. Slip's selector names its
+           two entries for what Slip measures (Perfect Point Only / Perfect-Great-Good); it stays enabled
+           under Auto too (owner's change of mind, see the old EnforceSlipPatternForAutoMode). -->
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" SharedSizeGroup="ChannelAlign"/>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Grid.Column="0" Text="{v:Loc Curve.NormalizePattern.Label}"/>
+        <ComboBox  Grid.Row="0" Grid.Column="1" HorizontalAlignment="Left"
+                   ItemsSource="{Binding PatternChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Pattern}"/>
+        <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding PatternDescription}" TextWrapping="Wrap" FontStyle="Italic" Margin="0,0,0,8"/>
+
+        <TextBlock Grid.Row="2" Grid.Column="0" Text="{v:Loc Curve.Preset.Label}"/>
+        <ComboBox  Grid.Row="2" Grid.Column="1" HorizontalAlignment="Left"
+                   ItemsSource="{Binding Editor.PresetChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Editor.Preset}"/>
+      </Grid>
+
+      <TextBlock Text="{Binding AnchorNote}" TextWrapping="Wrap" FontStyle="Italic"/>
+
+      <Grid Margin="0,8,0,0">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" SharedSizeGroup="ChannelAlign"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+          <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+          <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+          <RowDefinition/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Grid.Column="1" Text="{v:Loc Curve.Column.RawValue}" HorizontalAlignment="Center" FontWeight="Bold"/>
+        <TextBlock Grid.Row="0" Grid.Column="2" Text="{v:Loc Curve.Column.OutputValue}" HorizontalAlignment="Center" FontWeight="Bold"/>
+        <TextBlock Grid.Row="0" Grid.Column="3" Text="{v:Loc Curve.Column.FlattenRange}" ToolTip="{v:Loc Curve.Column.FlattenRange.Note}" HorizontalAlignment="Center" FontWeight="Bold"/>
+
+        <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding Editor.Start.Label}" FontWeight="Bold"/>
+        <local:NumericEditor Grid.Row="1" Grid.Column="1" Value="{Binding Editor.Start.Raw}"/>
+        <local:NumericEditor Grid.Row="1" Grid.Column="2" Value="{Binding Editor.Start.Output}" ToolTip="{Binding Editor.Start.OutputHelp}" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
+        <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="5" Text="{Binding Editor.Start.Description}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+
+        <!-- Lock's Slightly / Ideal label and description live-switch with the Normalize Pattern. -->
+        <TextBlock Grid.Row="3" Grid.Column="0" Text="{Binding SlightlyLabel}" FontWeight="Bold"/>
+        <local:NumericEditor Grid.Row="3" Grid.Column="1" Value="{Binding Editor.Slightly.Raw}"/>
+        <local:NumericEditor Grid.Row="3" Grid.Column="2" Value="{Binding Editor.Slightly.Output}"/>
+        <local:NumericEditor Grid.Row="3" Grid.Column="3" Value="{Binding Editor.Slightly.FlattenRange}" ToolTip="{v:Loc Curve.Column.FlattenRange.Note}" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+        <TextBlock Grid.Row="3" Grid.Column="4" Text="{Binding Editor.Slightly.DefaultText}" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
+        <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5" Text="{Binding SlightlyDescription}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+
+        <TextBlock Grid.Row="5" Grid.Column="0" Text="{Binding ModerateLabel}" FontWeight="Bold"/>
+        <local:NumericEditor Grid.Row="5" Grid.Column="1" Value="{Binding Editor.Moderate.Raw}"/>
+        <local:NumericEditor Grid.Row="5" Grid.Column="2" Value="{Binding Editor.Moderate.Output}"/>
+        <local:NumericEditor Grid.Row="5" Grid.Column="3" Value="{Binding Editor.Moderate.FlattenRange}" ToolTip="{v:Loc Curve.Column.FlattenRange.Note}" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+        <TextBlock Grid.Row="5" Grid.Column="4" Text="{Binding Editor.Moderate.DefaultText}" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
+        <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="5" Text="{Binding ModerateDescription}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+
+        <TextBlock Grid.Row="7" Grid.Column="0" Text="{Binding CriticalLabel}" FontWeight="Bold"/>
+        <local:NumericEditor Grid.Row="7" Grid.Column="1" Value="{Binding Editor.Critical.Raw}"/>
+        <local:NumericEditor Grid.Row="7" Grid.Column="2" Value="{Binding Editor.Critical.Output}"/>
+        <local:NumericEditor Grid.Row="7" Grid.Column="3" Value="{Binding Editor.Critical.FlattenRange}" ToolTip="{v:Loc Curve.Column.FlattenRange.Note}" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+        <TextBlock Grid.Row="7" Grid.Column="4" Text="{Binding Editor.Critical.DefaultText}" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
+        <TextBlock Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="5" Text="{Binding CriticalDescription}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+
+        <TextBlock Grid.Row="9" Grid.Column="0" Text="{Binding Editor.End.Label}" FontWeight="Bold"/>
+        <local:NumericEditor Grid.Row="9" Grid.Column="1" Value="{Binding Editor.End.Raw}"/>
+        <local:NumericEditor Grid.Row="9" Grid.Column="2" Value="{Binding Editor.End.Output}" ToolTip="{Binding Editor.End.OutputHelp}" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
+        <TextBlock Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="5" Text="{Binding Editor.End.Description}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+      </Grid>
+
+      <!-- TWO GRAPHS SIDE BY SIDE (1.0.7.0). Left: what the curve rows above configure (normalized value ->
+           final projected), dashed markers at the key data points' canonical positions. Right: the whole
+           chain a driver actually feels, source value -> projected, sampled every 5 and joined - there is
+           no single closed form for it, since the key data points and the curve compose. Both are bound
+           controls (grid, ticks, markers drawn by the control from the bound values). -->
+      <StackPanel Orientation="Horizontal" Margin="4,8,4,0">
+        <StackPanel>
+          <Border BorderBrush="Gray" BorderThickness="1" HorizontalAlignment="Left">
+            <v:NormalizedCurveGraph Curve="{Binding Editor.Curve}" Anchors="{Binding Editor.Anchors}" Markers="{Binding Markers}"/>
+          </Border>
+          <TextBlock Text="{v:Loc Curve.Graph.Normalized}" HorizontalAlignment="Center" FontStyle="Italic" Margin="0,2,0,0"/>
+        </StackPanel>
+
+        <StackPanel Margin="12,0,0,0">
+          <Border BorderBrush="Gray" BorderThickness="1" HorizontalAlignment="Left">
+            <v:SourceProjectedGraph Curve="{Binding SourceGraphCurve}"/>
+          </Border>
+          <TextBlock Text="{v:Loc Curve.Graph.Source}" HorizontalAlignment="Center" FontStyle="Italic" Margin="0,2,0,0"/>
+        </StackPanel>
+      </StackPanel>
+    </StackPanel>
+  </GroupBox>
+</UserControl>

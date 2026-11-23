@@ -1,5 +1,22 @@
 # Exposing SimHub's own ShakeIt wheel lock/slip as properties
 
+> **Retired 2026-11-19. Kept for history only.** QAdvanceFeedback no longer reads the
+> `ShakeITMotorsV3Plugin.Export.WheelLock/WheelSlip.IRacing.*` properties this guide sets up.
+>
+> **Why:** the export profile was a workaround for reading ShakeIt's calculation, and our native effect
+> made it unnecessary. It also caused problems. The silent per-wheel fallback behind it taught Raw-scaled
+> values to the ShakeIt learning key, and the page reported the ShakeIt source "unsupported" at the menu
+> unless the export profile was imported. ShakeIt's own algorithm settings were also hard-coded. See
+> `docs\shakeit-source-design.md`.
+>
+> **What to do instead:** add any QAdvanceFeedback effect to the active ShakeIt profile (ShakeIt Motors
+> or Bass Shakers). Then pick **ShakeIt Built-in** as the Wheel Lock / Wheel Slip source, and set
+> ShakeIt's algorithm options in the "ShakeIt algorithm" block that appears. ShakeIt's own
+> "Wheels lock" / "Wheels slip" effects and their "Export output value as a property" option are not
+> needed. If the effect is not set up, or the game is not supported, the channel uses Raw (values and
+> learning key) and the page says so. What was learned under the ShakeIt key is kept: the key is
+> still the legacy export property names, unchanged at the default algorithm settings.
+
 This is a corrected, decompilation-verified walkthrough. An earlier note from the owner said
 "ShakeIt publishes nothing" - that was **wrong**, and has been corrected here. ShakeIt DOES have an
 opt-in, per-effect "export output value as a property" feature. Everything below was confirmed by

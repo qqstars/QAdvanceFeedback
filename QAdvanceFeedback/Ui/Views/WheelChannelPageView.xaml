@@ -1,0 +1,328 @@
+<UserControl x:Class="QAdvanceFeedbackViews.WheelChannelPageView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mah="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro"
+             xmlns:c="clr-namespace:QAdvanceFeedbackControls"
+             xmlns:v="clr-namespace:QAdvanceFeedbackViews"
+             v:ViewModelLifetime.Activate="True">
+  <!-- The plugin page's Wheel Lock OR Wheel Slip tab body, bound to a WheelChannelPageViewModel (IsLock picks
+       the channel; this one view is used for both tabs, every Lock / Slip difference is a bound property or
+       visibility). Laid out exactly as the old Settings\SettingsControl.xaml WheelLockTab / WheelSlipTab:
+       Trigger threshold, Sources (rows, then the key data, then the Custom cold-start reference), Wheel
+       combination, Output data and shaping, Pulse. The page shell's implicit styles (TextBlock / TextBox /
+       ComboBox / GroupBox / CheckBox / Button / NumericUpDown) reach in here on purpose.
+       ONE shared label column ("ChannelAlign") and one shared editor column ("ChannelEditor") across the
+       whole tab - the old LockAlign / LockEditor (Slip: SlipAlign / SlipEditor). The scope is set at the tab
+       level (on this view, by SettingsPageView, inside the tab's one ScrollViewer), so the key data / curve / pulse views share the same columns. The
+       Custom reference joins BOTH groups: a fixed-width editor is centred in a column wider than itself, so
+       sharing only the label column left these editors 7px left of the key data ones (measured). Both sets are
+       now pinned left in that column (owner, 2026-11-20), so they also start with the other sections' editors. -->
+  <UserControl.Resources>
+    <v:VisibleWhenConverter x:Key="VisibleWhen"/>
+    <LinearGradientBrush x:Key="ScriptPlainBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#FF9E9E9E" Offset="0"/><GradientStop Color="#FF424242" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="ScriptJavaScriptBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#FF66BB6A" Offset="0"/><GradientStop Color="#FF1B5E20" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="ScriptNCalcBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#FF42A5F5" Offset="0"/><GradientStop Color="#FF0D47A1" Offset="1"/>
+    </LinearGradientBrush>
+    <!-- Per-source script-type indicator/toggle (grey P / green J / blue N), its fill bound to the row's
+         script type. A real Button, so it is keyboard-focusable and activates on Space/Enter. -->
+    <Style x:Key="ScriptTypeToggleButtonStyle" TargetType="Button">
+      <Setter Property="Width" Value="28"/>
+      <Setter Property="Height" Value="24"/>
+      <Setter Property="Margin" Value="4,4,0,4"/>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Background" Value="{StaticResource ScriptPlainBrush}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="ScriptTypeBorder" CornerRadius="6" Background="{TemplateBinding Background}"
+                    BorderBrush="#55000000" BorderThickness="1">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ScriptTypeBorder" Property="Opacity" Value="0.85"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="ScriptTypeBorder" Property="Opacity" Value="0.7"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="ScriptTypeBorder" Property="BorderBrush" Value="Black"/>
+                <Setter TargetName="ScriptTypeBorder" Property="BorderThickness" Value="2"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding ScriptLetter}" Value="J">
+          <Setter Property="Background" Value="{StaticResource ScriptJavaScriptBrush}"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding ScriptLetter}" Value="N">
+          <Setter Property="Background" Value="{StaticResource ScriptNCalcBrush}"/>
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+  </UserControl.Resources>
+
+    <StackPanel>
+
+      <!-- TRIGGER THRESHOLD - its own section ABOVE Sources (owner restructure, docs\lock-and-animation-report.md).
+           Gates the WHOLE channel. Lock: brake + Lock sensibility (SimHub's own WheelsLockContainer.LockSensibility,
+           0-100, default 50); Slip: brake + throttle. -->
+      <GroupBox x:Name="TriggerThresholdGroup" DataContext="{Binding Trigger}" Header="{Binding Header}">
+        <StackPanel>
+          <!-- Rows in the tab's shared label column, so the editors start with every other section's
+               (owner, 2026-11-20); Slip's throttle gets its own row under the brake. -->
+          <Grid x:Name="TriggerRows">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" SharedSizeGroup="ChannelAlign"/><ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding BrakeLabel}" ToolTip="{Binding BrakeTooltip}"/>
+            <c:NumericEditor Grid.Row="0" Grid.Column="1" Value="{Binding BrakeThreshold}" StringFormat="0" ToolTip="{Binding BrakeTooltip}"/>
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding ThrottleLabel}" ToolTip="{Binding Note}"
+                       Visibility="{Binding ShowThrottle, Converter={StaticResource VisibleWhen}}"/>
+            <c:NumericEditor Grid.Row="1" Grid.Column="1" Value="{Binding ThrottleThreshold}" StringFormat="0" ToolTip="{Binding Note}"
+                             Visibility="{Binding ShowThrottle, Converter={StaticResource VisibleWhen}}"/>
+          </Grid>
+          <TextBlock Text="{Binding Note}" TextWrapping="Wrap" FontStyle="Italic"/>
+
+          <Grid x:Name="SensibilityRow" Visibility="{Binding ShowSensibility, Converter={StaticResource VisibleWhen}}">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" SharedSizeGroup="ChannelAlign"/><ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="{Binding SensibilityLabel}" ToolTip="{Binding SensibilityNote}"/>
+            <c:NumericEditor Grid.Column="1" Value="{Binding LockSensibility}" StringFormat="0" ToolTip="{Binding SensibilityNote}"/>
+          </Grid>
+          <TextBlock Text="{Binding SensibilityNote}" TextWrapping="Wrap" FontStyle="Italic"
+                     Visibility="{Binding ShowSensibility, Converter={StaticResource VisibleWhen}}"/>
+        </StackPanel>
+      </GroupBox>
+
+      <GroupBox x:Name="SourcesGroup" Header="{Binding Sources.Header}">
+        <StackPanel>
+          <StackPanel DataContext="{Binding Sources}">
+            <!-- Fallback estimate warning (the APPLIED source is Plugin Internal on an estimate branch). -->
+            <TextBlock DataContext="{Binding FallbackWarning}" TextWrapping="Wrap" FontWeight="Bold" Foreground="DarkOrange" Margin="4,0,4,4"
+                       Text="{Binding Text}" Visibility="{Binding ShowWarning, Converter={StaticResource VisibleWhen}}"/>
+            <!-- Source mode toggle - ALWAYS at the top of this section, ALWAYS visible and switchable. A Grid so
+                 the Add/Remove-game button below is flush with "Source:" on its left and with the dropdown on
+                 its right (owner, 2026-09-29): column 1 is star-sized and the ComboBox stretches into it. -->
+            <Grid x:Name="SourceModePanel" HorizontalAlignment="Left">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" SharedSizeGroup="ChannelAlign"/><ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+              </Grid.RowDefinitions>
+              <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding ModeLabel}"/>
+              <ComboBox Grid.Row="0" Grid.Column="1" x:Name="SourceModeCombo" HorizontalAlignment="Stretch"
+                        SelectedValuePath="Tag" SelectedValue="{Binding ModeTag}"
+                        v:EventCommand.DropDownOpened="{Binding RefreshCommand}">
+                <ComboBoxItem Tag="Manual" Content="{Binding ManualLabel}"/>
+                <!-- Hidden while the ShakeIt source is not set up, unless it is the shown or saved source - then
+                     marked "(not set up)". A hidden option is also disabled, so the keyboard cannot reach it. -->
+                <ComboBoxItem Tag="ShakeIt" DataContext="{Binding ShakeItStatus}" Content="{Binding ShakeItOptionLabel}"
+                              IsEnabled="{Binding ShowShakeItOption}" Visibility="{Binding ShowShakeItOption, Converter={StaticResource VisibleWhen}}"/>
+                <ComboBoxItem Tag="Viper" Content="{Binding ViperLabel}"/>
+                <ComboBoxItem Tag="Custom" Content="{Binding CustomLabel}"/>
+              </ComboBox>
+              <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                          Visibility="{Binding ShowViperGameButton, Converter={StaticResource VisibleWhen}}">
+                <Button Padding="10,2" Margin="4" HorizontalAlignment="Stretch"
+                        Content="{Binding ViperGameButtonLabel}" Command="{Binding ToggleViperGameCommand}"/>
+              </StackPanel>
+            </Grid>
+            <!-- ShakeIt Built-in state note (NotSetUp / NotSupported), only while the combo shows ShakeIt. -->
+            <TextBlock DataContext="{Binding ShakeItStatus}" TextWrapping="Wrap" FontWeight="Bold" Foreground="#FFCC4400"
+                       Text="{Binding Note}" Visibility="{Binding ShowNote, Converter={StaticResource VisibleWhen}}"/>
+            <!-- ShakeIt algorithm block (docs\shakeit-source-design.md §6): only while the combo shows ShakeIt
+                 Built-in. Lock: legacy / sensibility / lock-only; Slip: legacy / mute. -->
+            <StackPanel DataContext="{Binding Algorithm}" Margin="0,4,0,4"
+                        Visibility="{Binding IsVisible, Converter={StaticResource VisibleWhen}}">
+              <TextBlock Text="{Binding Header}" FontWeight="Bold"/>
+              <Grid x:Name="AlgorithmRows">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" SharedSizeGroup="ChannelAlign"/><ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding LegacyLabel}"/>
+                <mah:ToggleSwitch Grid.Row="0" Grid.Column="1" HorizontalAlignment="Left" Margin="4"
+                                  IsChecked="{Binding UseLegacyIracingAlgorithm}" OnLabel="{Binding OnLabel}" OffLabel="{Binding OffLabel}"/>
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding SensibilityLabel}"
+                           Visibility="{Binding IsLock, Converter={StaticResource VisibleWhen}}"/>
+                <c:NumericEditor Grid.Row="1" Grid.Column="1" HorizontalAlignment="Left" Value="{Binding LockSensibility}"
+                                 Minimum="0" Maximum="100" Interval="5" StringFormat="0"
+                                 Visibility="{Binding IsLock, Converter={StaticResource VisibleWhen}}"/>
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding LockOnlyLabel}"
+                           Visibility="{Binding IsLock, Converter={StaticResource VisibleWhen}}"/>
+                <mah:ToggleSwitch Grid.Row="2" Grid.Column="1" HorizontalAlignment="Left" Margin="4"
+                                  IsChecked="{Binding LockOnly}" OnLabel="{Binding OnLabel}" OffLabel="{Binding OffLabel}"
+                                  Visibility="{Binding IsLock, Converter={StaticResource VisibleWhen}}"/>
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="{Binding MuteLabel}"
+                           Visibility="{Binding IsSlip, Converter={StaticResource VisibleWhen}}"/>
+                <mah:ToggleSwitch Grid.Row="3" Grid.Column="1" HorizontalAlignment="Left" Margin="4"
+                                  IsChecked="{Binding MuteWhileLockActive}" OnLabel="{Binding OnLabel}" OffLabel="{Binding OffLabel}"
+                                  Visibility="{Binding IsSlip, Converter={StaticResource VisibleWhen}}"/>
+              </Grid>
+              <TextBlock Text="{Binding Note}" TextWrapping="Wrap" FontStyle="Italic"/>
+            </StackPanel>
+            <TextBlock Text="{Binding ViperUnsupportedNote}" TextWrapping="Wrap" FontWeight="Bold" Foreground="#FFCC4400"
+                       Visibility="{Binding ShowViperUnsupportedNote, Converter={StaticResource VisibleWhen}}"/>
+            <TextBlock Text="{Binding CustomNote}" TextWrapping="Wrap" FontStyle="Italic"
+                       Visibility="{Binding ShowCustomNote, Converter={StaticResource VisibleWhen}}"/>
+            <TextBlock Text="{Binding ViperSetupNote}" TextWrapping="Wrap" FontStyle="Italic"
+                       Visibility="{Binding ShowViperSetupNote, Converter={StaticResource VisibleWhen}}"/>
+            <TextBlock Text="{Binding ViperUnavailableNote}" TextWrapping="Wrap" FontStyle="Italic" Foreground="DarkOrange"
+                       Visibility="{Binding ShowViperUnavailableNote, Converter={StaticResource VisibleWhen}}"/>
+            <TextBlock Text="{Binding ManualNote}" TextWrapping="Wrap" FontStyle="Italic"
+                       Visibility="{Binding ShowManualNote, Converter={StaticResource VisibleWhen}}"/>
+
+            <TextBlock Text="{Binding SourcesNote}" TextWrapping="Wrap" FontStyle="Italic"/>
+            <TextBlock Text="{Binding ContractNote}" TextWrapping="Wrap" FontStyle="Italic"/>
+
+            <!-- The four wheel sources: label, P/J/N toggle, text, Pick / Edit button. While the channel is
+                 shadowed to Raw every control of a row is disabled and shows Raw's property. -->
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+              </Grid.RowDefinitions>
+
+              <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding Rows[0].Label}"/>
+              <Button    Grid.Row="0" Grid.Column="1" DataContext="{Binding Rows[0]}" Style="{StaticResource ScriptTypeToggleButtonStyle}"
+                         Content="{Binding ScriptLetter}" ToolTip="{Binding ScriptTooltip}" Command="{Binding CycleScriptTypeCommand}"
+                         IsEnabled="{Binding IsEnabled}" Visibility="{Binding ShowScriptType, Converter={StaticResource VisibleWhen}}"/>
+              <TextBox   Grid.Row="0" Grid.Column="2" DataContext="{Binding Rows[0]}" IsEnabled="{Binding IsEnabled}"
+                         Text="{Binding Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="0" Grid.Column="3" DataContext="{Binding Rows[0]}" Content="{Binding ActionLabel}" Command="{Binding ActionCommand}"
+                         IsEnabled="{Binding IsEnabled}" Visibility="{Binding ShowAction, Converter={StaticResource VisibleWhen}}"/>
+
+              <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding Rows[1].Label}"/>
+              <Button    Grid.Row="1" Grid.Column="1" DataContext="{Binding Rows[1]}" Style="{StaticResource ScriptTypeToggleButtonStyle}"
+                         Content="{Binding ScriptLetter}" ToolTip="{Binding ScriptTooltip}" Command="{Binding CycleScriptTypeCommand}"
+                         IsEnabled="{Binding IsEnabled}" Visibility="{Binding ShowScriptType, Converter={StaticResource VisibleWhen}}"/>
+              <TextBox   Grid.Row="1" Grid.Column="2" DataContext="{Binding Rows[1]}" IsEnabled="{Binding IsEnabled}"
+                         Text="{Binding Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="1" Grid.Column="3" DataContext="{Binding Rows[1]}" Content="{Binding ActionLabel}" Command="{Binding ActionCommand}"
+                         IsEnabled="{Binding IsEnabled}" Visibility="{Binding ShowAction, Converter={StaticResource VisibleWhen}}"/>
+
+              <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding Rows[2].Label}"/>
+              <Button    Grid.Row="2" Grid.Column="1" DataContext="{Binding Rows[2]}" Style="{StaticResource ScriptTypeToggleButtonStyle}"
+                         Content="{Binding ScriptLetter}" ToolTip="{Binding ScriptTooltip}" Command="{Binding CycleScriptTypeCommand}"
+                         IsEnabled="{Binding IsEnabled}" Visibility="{Binding ShowScriptType, Converter={StaticResource VisibleWhen}}"/>
+              <TextBox   Grid.Row="2" Grid.Column="2" DataContext="{Binding Rows[2]}" IsEnabled="{Binding IsEnabled}"
+                         Text="{Binding Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="2" Grid.Column="3" DataContext="{Binding Rows[2]}" Content="{Binding ActionLabel}" Command="{Binding ActionCommand}"
+                         IsEnabled="{Binding IsEnabled}" Visibility="{Binding ShowAction, Converter={StaticResource VisibleWhen}}"/>
+
+              <TextBlock Grid.Row="3" Grid.Column="0" Text="{Binding Rows[3].Label}"/>
+              <Button    Grid.Row="3" Grid.Column="1" DataContext="{Binding Rows[3]}" Style="{StaticResource ScriptTypeToggleButtonStyle}"
+                         Content="{Binding ScriptLetter}" ToolTip="{Binding ScriptTooltip}" Command="{Binding CycleScriptTypeCommand}"
+                         IsEnabled="{Binding IsEnabled}" Visibility="{Binding ShowScriptType, Converter={StaticResource VisibleWhen}}"/>
+              <TextBox   Grid.Row="3" Grid.Column="2" DataContext="{Binding Rows[3]}" IsEnabled="{Binding IsEnabled}"
+                         Text="{Binding Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="3" Grid.Column="3" DataContext="{Binding Rows[3]}" Content="{Binding ActionLabel}" Command="{Binding ActionCommand}"
+                         IsEnabled="{Binding IsEnabled}" Visibility="{Binding ShowAction, Converter={StaticResource VisibleWhen}}"/>
+            </Grid>
+          </StackPanel>
+
+          <!-- KEY DATA POINTS (agent A2's view, bound to KeyDataPageViewModel). -->
+          <v:WheelChannelKeyDataView DataContext="{Binding KeyData}"/>
+
+          <!-- CUSTOM SOURCE COLD-START REFERENCE - under the key data points (owner, 2026-09-29): those are what
+               the plugin LEARNED, these what it assumes until it has. Custom only. No Watermark: they can never
+               read dashes (owner, 2026-09-29). -->
+          <StackPanel x:Name="CustomRefPanel" DataContext="{Binding CustomReference}"
+                      Visibility="{Binding IsVisible, Converter={StaticResource VisibleWhen}}">
+            <TextBlock Text="{Binding Header}" FontWeight="Bold" Margin="4,14,4,4"/>
+            <TextBlock Text="{Binding Description}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,4"/>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" SharedSizeGroup="ChannelAlign"/>
+                <ColumnDefinition Width="Auto" SharedSizeGroup="ChannelEditor"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+              </Grid.RowDefinitions>
+              <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding SMaxLabel}"/>
+              <c:NumericEditor Grid.Row="0" Grid.Column="1" Value="{Binding SMax}" HorizontalAlignment="Left" IsEnabled="{Binding IsEnabled}"
+                               Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0"/>
+              <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding S90Label}"/>
+              <c:NumericEditor Grid.Row="1" Grid.Column="1" Value="{Binding S90}" HorizontalAlignment="Left" IsEnabled="{Binding IsEnabled}"
+                               Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0"/>
+              <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding S75Label}"/>
+              <c:NumericEditor Grid.Row="2" Grid.Column="1" Value="{Binding S75}" HorizontalAlignment="Left" IsEnabled="{Binding IsEnabled}"
+                               Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0"/>
+            </Grid>
+          </StackPanel>
+        </StackPanel>
+      </GroupBox>
+
+      <!-- AGGREGATION (docs\aggregation-report.md) - the Max/Min axle blend and the Front/Rear weights; the slip
+           floor on Wheel Slip only (Wheel Lock has no equivalent control). -->
+      <GroupBox x:Name="AggregationGroup" DataContext="{Binding Aggregation}" Header="{Binding Header}">
+        <StackPanel>
+          <TextBlock Text="{Binding Note}" TextWrapping="Wrap" FontStyle="Italic"/>
+
+          <Grid Margin="0,4,0,0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" SharedSizeGroup="ChannelAlign"/><ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding WMaxLabel}"/>
+            <c:NumericEditor Grid.Row="0" Grid.Column="1" Value="{Binding WMax}" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding WMinLabel}"/>
+            <c:NumericEditor Grid.Row="1" Grid.Column="1" Value="{Binding WMin}" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding WFrontLabel}"/>
+            <c:NumericEditor Grid.Row="2" Grid.Column="1" Value="{Binding WFront}" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="{Binding WRearLabel}"/>
+            <c:NumericEditor Grid.Row="3" Grid.Column="1" Value="{Binding WRear}" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+          </Grid>
+
+          <TextBlock Text="{Binding AxleHelp}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,8,4,0"/>
+          <!-- The two channels' side help differ in their bottom margin only (Slip has the floor below it). -->
+          <TextBlock Text="{Binding SideHelp}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,4,4,4"
+                     Visibility="{Binding IsLock, Converter={StaticResource VisibleWhen}}"/>
+          <TextBlock Text="{Binding SideHelp}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,4,4,0"
+                     Visibility="{Binding IsSlip, Converter={StaticResource VisibleWhen}}"/>
+
+          <Grid x:Name="SlipFloorRow" Margin="0,4,0,0" Visibility="{Binding ShowFloor, Converter={StaticResource VisibleWhen}}">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" SharedSizeGroup="ChannelAlign"/><ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="{Binding FloorLabel}" ToolTip="{Binding FloorNote}"/>
+            <c:NumericEditor Grid.Column="1" Value="{Binding SlipFloorFactor}" Minimum="0" Maximum="1" Interval="0.05" StringFormat="0.00"
+                             ToolTip="{Binding FloorNote}"/>
+          </Grid>
+          <TextBlock Text="{Binding FloorNote}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,4"
+                     Visibility="{Binding ShowFloor, Converter={StaticResource VisibleWhen}}"/>
+        </StackPanel>
+      </GroupBox>
+
+      <!-- OUTPUT DATA AND SHAPING and PULSE (agent A2's views). -->
+      <v:WheelChannelCurveView DataContext="{Binding Curve}"/>
+      <v:WheelChannelPulseView DataContext="{Binding Pulse}"/>
+    </StackPanel>
+</UserControl>

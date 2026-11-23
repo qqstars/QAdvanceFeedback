@@ -120,7 +120,22 @@ namespace QAdvanceFeedback.Core.Runtime
         /// as every earlier additive bump): a Version-9-or-earlier file simply has neither section, both
         /// deserialise to empty dictionaries, and Layer 3 then behaves as a first run - which is exactly
         /// the condition that triggers the automatic ShakeIt precalibration import.</remarks>
-        public int Version = 11;
+        /// <remarks>Version 12 (slip-angle plan, Task 15) adds <see cref="SlipAngleLearners"/> - additive
+        /// again: a Version-11-or-earlier file has no such section, it deserialises to an empty dictionary
+        /// (field initialiser; an explicit null is normalised by <c>RuntimeStore</c>), and the Slip Angle
+        /// channel starts cold (Tier 1 / borrowed). No migration code.</remarks>
+        /// <remarks>Version 13 (2026-11-21) adds <see cref="SlipAngleSpeedBands"/> - additive: an older file
+        /// has no such section, it deserialises to an empty dictionary and the speed scale starts at 1.</remarks>
+        /// <remarks>Version 14 (2026-11-21) adds <see cref="LockScaleEvidence"/> / <see cref="SlipScaleEvidence"/>
+        /// - additive: an older file has neither, SMax starts from its saved ceiling with no evidence (maturity 0)
+        /// exactly as before, and the first drive builds the evidence.</remarks>
+        /// <remarks>Version 15 (2026-11-21, docs\parameters-file-format-report.md) saves the Slip Angle learners and the
+        /// SMax evidence as SINGLE VALUES (summaries) instead of arrays, and the file is written section by section
+        /// (only changed sections are regenerated). An older file's arrays still load and are saved as summaries
+        /// from then on; a loaded file is stamped with the current version when it is next written.</remarks>
+        /// <remarks>Version 16 (2026-11-22): the slip-ratio scale changed to 10 points per degree (was 5) - an older file's
+        /// slip-ratio Slip Angle windows are dropped on load (<c>KeyedSlipAngleLearner.DropSource</c>); nothing else changes.</remarks>
+        public int Version = 16;
 
         /// <summary>Per (gameId, carId) Lock-channel learner state - key format matches
         /// <see cref="KeyedGripLearner.MakeKey"/>.</summary>
@@ -165,6 +180,32 @@ namespace QAdvanceFeedback.Core.Runtime
         /// <summary>The Slip channel's equivalent of <see cref="LockScaleCrossCarSeed"/>.</summary>
         public Dictionary<string, ScaleLearnerState> SlipScaleCrossCarSeed = new Dictionary<string, ScaleLearnerState>();
 
+        /// <summary>Clutch Bite learning per (game, car, clutch source), key format
+        /// <see cref="KeyedGripLearner.MakeKey"/> (docs\clutch-bite-design.md): the samples while
+        /// learning, or only the matured bite. Absent from older files, which load as empty.</summary>
+        public Dictionary<string, Clutch.ClutchBiteLearnerState> ClutchBiteLearners = new Dictionary<string, Clutch.ClutchBiteLearnerState>();
+
+        /// <summary>The most recent in-game clutch learning key - the Clutch Test Effect uses that car's
+        /// bite out of game.</summary>
+        public string LastClutchKey;
+
+        /// <summary>The last (game, car) the key data was shown for (docs\architecture.md, "Restart
+        /// display"): with SimHub on the menu after a restart, the settings page and the ShakeIt panels
+        /// form the EXACT persist key from it, so they show that key's persisted SMax/S90/S75 rather than
+        /// a default. Absent from older files (null: the default is shown until a game runs).</summary>
+        public string LastKeyDataGame;
+        public string LastKeyDataCar;
+
+        /// <summary>The Slip Angle twin of <see cref="LastKeyDataGame"/>/<see cref="LastKeyDataCar"/>
+        /// (docs\full-mvvm-plan.md 3.5): the last (game, car) Slip Angle ran in and its identity tier
+        /// (<c>SourceNativeness</c> name: Native / Fallback / Unknown - which Plugin Internal identity the key
+        /// data belongs to), so after a restart the Slip Angle tab and ShakeIt panel form the EXACT persist
+        /// key with no game running. Additive: absent from older files (null: the default is shown until a
+        /// game runs); an unreadable tier loads as Unknown.</summary>
+        public string LastSlipAngleGame;
+        public string LastSlipAngleCar;
+        public string LastSlipAngleTier;
+
         /// <summary>Version 8 (docs\v1068-four-range-report.md, Feature C): WheelLock's own learned
         /// S75/S90 anchors - see <c>LockAnchorLearner.ExportAll</c>/<c>ImportAll</c>. WHEELLOCK ONLY -
         /// there is deliberately no Slip equivalent.</summary>
@@ -208,6 +249,24 @@ namespace QAdvanceFeedback.Core.Runtime
         /// runs on EVERY launch so a SimHub update that ships new games is picked up automatically; this
         /// is what keeps that cheap, since an unchanged file is never opened.</summary>
         public Dictionary<string, long> ShakeItSourceTimestamps = new Dictionary<string, long>();
+
+        /// <summary>Version 12 (docs\slip-angle-design.md 9.5.9): every Slip Angle window learner, keyed
+        /// <c>game|#|car|#|source/target|#|surface</c> (<c>SlipAngle.KeyedSlipAngleLearner.MakeKey</c>).</summary>
+        public Dictionary<string, SlipAngle.SlipAngleKeyState> SlipAngleLearners =
+            new Dictionary<string, SlipAngle.SlipAngleKeyState>();
+
+        /// <summary>Version 13 (docs\slip-angle-speed-bands-report.md): the Slip Angle speed-aware lateral G
+        /// bands, keyed <c>game|#|car|#|</c> (<c>SlipAngle.SlipAngleSpeedBands.MakeKey</c>).</summary>
+        public Dictionary<string, SlipAngle.SlipAngleSpeedBandSetState> SlipAngleSpeedBands =
+            new Dictionary<string, SlipAngle.SlipAngleSpeedBandSetState>();
+
+        /// <summary>Version 14 (docs\learning-maturity-indicator-report.md): the evidence behind each Lock key's
+        /// SMax (<see cref="KeyedScaleLearner.ExportEvidence"/>), keyed like <see cref="LockScaleLearners"/> (surface
+        /// keys included), so a restart continues learning instead of starting again.</summary>
+        public Dictionary<string, ScaleEvidenceState> LockScaleEvidence = new Dictionary<string, ScaleEvidenceState>();
+
+        /// <summary>The Slip channel's equivalent of <see cref="LockScaleEvidence"/>.</summary>
+        public Dictionary<string, ScaleEvidenceState> SlipScaleEvidence = new Dictionary<string, ScaleEvidenceState>();
     }
 
     /// <summary>

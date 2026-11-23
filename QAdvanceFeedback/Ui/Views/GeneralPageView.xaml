@@ -1,0 +1,81 @@
+<UserControl x:Class="QAdvanceFeedbackViews.GeneralPageView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mah="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro"
+             xmlns:v="clr-namespace:QAdvanceFeedbackViews"
+             v:ViewModelLifetime.Activate="True">
+  <!-- The plugin page's General tab, bound to a GeneralViewModel (docs\full-mvvm-plan.md 3.2). Laid out
+       exactly like the old Settings\SettingsControl.xaml General tab; the page shell's implicit styles
+       (TextBlock / GroupBox / Button margins) reach in here on purpose. Activated while shown, which
+       re-reads the plugin health list. -->
+  <UserControl.Resources>
+    <v:VisibleWhenConverter x:Key="VisibleWhen"/>
+  </UserControl.Resources>
+
+  <StackPanel>
+    <GroupBox x:Name="GeneralGroup" Header="{v:Loc Group.General}">
+      <StackPanel>
+        <TextBlock x:Name="EnableDiagnosticsHeader" Text="{v:Loc General.EnableDiagnostics}" FontWeight="Bold" FontSize="14" Margin="4,4,4,0"/>
+        <mah:ToggleSwitch x:Name="EnableDiagnosticsCheckBox" IsChecked="{Binding EnableDiagnostics}" HorizontalAlignment="Left"
+                          OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
+        <TextBlock x:Name="EnableDiagnosticsNote" Text="{v:Loc General.EnableDiagnostics.Note}" TextWrapping="Wrap" FontStyle="Italic" Margin="20,0,4,4"/>
+        <TextBlock x:Name="EnableDiagnosticsRestartNote" Text="{v:Loc General.EnableDiagnostics.RestartNote}" TextWrapping="Wrap" FontWeight="Bold" Margin="20,0,4,8"/>
+
+        <TextBlock x:Name="ExportCsvHeader" Text="{v:Loc General.ExportCsv}" FontWeight="Bold" FontSize="14" Margin="4,4,4,0"/>
+        <mah:ToggleSwitch x:Name="ExportCsvCheckBox" IsChecked="{Binding ExportCsv}" HorizontalAlignment="Left"
+                          OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
+        <TextBlock x:Name="ExportCsvNote" Text="{v:Loc General.ExportCsv.Note}" TextWrapping="Wrap" FontStyle="Italic" Margin="20,0,4,4"/>
+
+        <!-- 1.0.6.0 (docs\release-1060-report.md, Part 4f) - the running assembly's own version, read at
+             display time through the host, never hardcoded. -->
+        <TextBlock x:Name="GeneralVersionText" Text="{Binding VersionText, Mode=OneWay}" TextWrapping="Wrap" Margin="4,8,4,4"/>
+      </StackPanel>
+    </GroupBox>
+
+    <!-- SHAKEIT REFERENCE DATA IMPORT (1.0.7.1). Layer 3 reproduces ShakeIt's arithmetic exactly; the one
+         input we cannot ship is SimHub's own precalibration file. Importing it from the local SimHub
+         installation makes our Raw values and ShakeIt's agree by construction (ShakeItPrecalibrationConverter).
+         Runs and persists at once - never part of Apply; the override switch is the import's argument. -->
+    <GroupBox x:Name="ShakeItImportGroup" Header="{v:Loc General.ShakeItImport.Group}">
+      <StackPanel>
+        <TextBlock x:Name="ShakeItImportNote" Text="{v:Loc General.ShakeItImport.Note}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,6"/>
+        <TextBlock x:Name="ShakeItImportOverrideHeader" Text="{v:Loc General.ShakeItImport.Override}" FontWeight="Bold" FontSize="14" Margin="4,4,4,0"/>
+        <mah:ToggleSwitch x:Name="ShakeItImportOverrideCheckBox" IsChecked="{Binding ShakeItImportOverride}" HorizontalAlignment="Left"
+                          OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
+        <TextBlock x:Name="ShakeItImportOverrideNote" Text="{v:Loc General.ShakeItImport.Override.Note}" TextWrapping="Wrap" FontStyle="Italic" Margin="20,0,4,6"/>
+        <Button x:Name="ShakeItImportButton" Content="{v:Loc General.ShakeItImport.Button}" Command="{Binding ShakeItImportCommand}"
+                HorizontalAlignment="Left" Margin="4,0,4,4" Padding="8,2"/>
+        <TextBlock x:Name="ShakeItImportResultText" Text="{Binding ShakeItImportResultText, Mode=OneWay}" TextWrapping="Wrap" Margin="4,4,4,4"
+                   Visibility="{Binding ShowShakeItImportResult, Converter={StaticResource VisibleWhen}}"/>
+      </StackPanel>
+    </GroupBox>
+
+    <!-- Plugin health (Core.Health.HealthRegistry, HealthListViewModel). One line when nothing is wrong,
+         so it adds no clutter in the normal case; one warning block per degraded subsystem otherwise
+         (bold, wrapped; Firebrick when the subsystem failed, DarkOrange when it degraded). -->
+    <GroupBox x:Name="HealthGroup" Header="{v:Loc Group.Health}" DataContext="{Binding Health}">
+      <StackPanel>
+        <TextBlock x:Name="HealthAllGoodText" Text="{Binding AllGoodText, Mode=OneWay}" TextWrapping="Wrap" Margin="4,0,4,4"
+                   Visibility="{Binding IsHealthy, Converter={StaticResource VisibleWhen}}"/>
+        <ItemsControl x:Name="HealthIssuesPanel" ItemsSource="{Binding Issues}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <TextBlock x:Name="HealthIssueBlock" Text="{Binding Text, Mode=OneWay}" TextWrapping="Wrap" FontWeight="Bold"
+                         Foreground="DarkOrange" Margin="4,0,4,8"/>
+              <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsFailed}" Value="True">
+                  <Setter TargetName="HealthIssueBlock" Property="Foreground" Value="Firebrick"/>
+                </DataTrigger>
+              </DataTemplate.Triggers>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <Button x:Name="HealthCopyDetailsButton" Content="{v:Loc Health.CopyDetails}" Command="{Binding CopyDetailsCommand}"
+                HorizontalAlignment="Left" Margin="4,4,4,4" Padding="8,2"
+                Visibility="{Binding ShowCopyDetails, Converter={StaticResource VisibleWhen}}"/>
+        <TextBlock x:Name="HealthCopyDetailsDoneText" Text="{Binding CopyDoneText, Mode=OneWay}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,4"
+                   Visibility="{Binding ShowCopyDone, Converter={StaticResource VisibleWhen}}"/>
+      </StackPanel>
+    </GroupBox>
+  </StackPanel>
+</UserControl>

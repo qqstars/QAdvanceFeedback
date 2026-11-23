@@ -14,15 +14,18 @@ namespace QAdvanceFeedback.Core.Normalized
     /// crossing is the wheel letting go completely, where the source runs toward full scale while the
     /// car is no longer decelerating, and teaching from THAT is what drives the ceiling to 100.
     /// <para/>
-    /// DELIBERATELY A SEPARATE CLASS FROM <see cref="SlipCrossingGate"/>, NOT A SHARED BASE OR A
-    /// PARAMETERISED ONE. The owner's explicit requirement: "similar mechanism logic but different
-    /// implementation so we can disable one side only just in case". The two channels are calibrated
-    /// against different physical events, they arrive here through different upstream detectors (Lock
-    /// has the corner-local at-limit confidence, Slip has a plain boolean), and their thresholds are
-    /// free to diverge as evidence accumulates. Sharing the code would make every future tuning change
-    /// to one channel a silent change to the other, and would make "turn Lock's gate off and keep
-    /// Slip's" a conditional inside shared code rather than a switch on an independent object.
-    /// The duplication here is the feature.
+    /// ORIGINALLY A SEPARATE CLASS FROM <see cref="SlipCrossingGate"/> BY DESIGN, NOW A WRAPPER OVER THE
+    /// SHARED <see cref="CrossingGate"/> (slip-angle plan Task 7, docs\slip-angle-design.md section 9.5a).
+    /// The owner's original requirement was "similar mechanism logic but different implementation so we
+    /// can disable one side only just in case". Comparing the two shipped gates line by line showed the
+    /// logic and every threshold identical; the one behavioural difference - how the teaching weight is
+    /// formed (a multiplier on the corner-local confidence here, an absolute weight on Slip) - is a
+    /// <see cref="CrossingGateParameters.WeightMode"/>. The owner then chose to unify "unless the
+    /// CrossingGate for the Lock and Slip cannot use parameter to reuse". What the original requirement
+    /// actually protected is preserved: each channel still owns its OWN gate object with its own enable
+    /// switch and its own tunables, so turning Lock's gate off or retuning it never touches Slip's, and
+    /// this class keeps every public constant and member it had. The shared code is pinned bit-identical
+    /// to the pre-extraction gates by <c>CrossingGateEquivalenceTests</c>.
     /// <para/>
     /// WHAT ARMS IT DIFFERS FROM SLIP'S, and this is the one substantive difference. Slip's gate arms
     /// on the engine's <c>physicallyAtLimit</c> boolean. Lock has something better already: the
@@ -49,6 +52,16 @@ namespace QAdvanceFeedback.Core.Normalized
         /// cannot read as "still rising" against a previous 100.
         /// </summary>
         public const double SourceCeiling = 100.0;
+
+        /// <summary>
+        /// THE LEARN CEILING (owner, 2026-11-19). The highest SMax this gate may ever teach: every taught
+        /// basis - the crossing snapshot inside a window, the live value outside one - is clamped to it.
+        /// The source range is a hard 0-100, so a fully saturated source (100) can never be a grip-limit
+        /// reading; 95 is the absolute hard limit, shared with <see cref="KeyedScaleLearner.MaxLearnedCeiling"/>
+        /// (the learner's own cap) and the typed SMax on the settings page and ShakeIt panel.
+        /// Detection is unaffected: the trend history still clamps only to <see cref="SourceCeiling"/>.
+        /// </summary>
+        public const double LearnCeiling = KeyedScaleLearner.MaxLearnedCeiling;
 
         /// <summary>Smallest frame-over-frame rise that counts as GENUINELY INCREASING (owner's rule 1).
         /// A hair above zero rather than zero, so floating noise on a held signal is not a rise.</summary>
@@ -132,7 +145,7 @@ namespace QAdvanceFeedback.Core.Normalized
         /// exactly 100 - observed in the corpus (session-20260825-201217: Lock max 100.0, Slip max
         /// 100.0). Lock's basis is the weighted aggregate, and across 1934 corpus frames with
         /// <c>Raw.All &gt;= 99.9</c> there was NOT ONE with fewer than two pegged wheels, so at 2 this
-        /// guard rejects every such frame. <see cref="AtMostCeiling"/> remains the structural backstop.
+        /// guard rejects every such frame. The ceiling clamp on <see cref="TeachingBasis"/> remains the structural backstop.
         /// <para/>
         /// MEASURED ON THE WHOLE 11-LOG CORPUS, Lock channel, crossing snapshots:
         /// <code>
@@ -149,7 +162,7 @@ namespace QAdvanceFeedback.Core.Normalized
         /// <para/>
         /// WHY NOT WALK BACK TO THE PRE-SATURATION FRAME INSTEAD (the owner's own proposal, measured and
         /// declined). Their observation is exactly right and is guaranteed by construction: the arm
-        /// condition below requires <c>deltaBasis &gt; LockRise</c> and <c>deltaG &lt; GFall</c>, so the
+        /// condition in <see cref="CrossingGate.Observe"/> requires <c>deltaBasis &gt; LockRise</c> and <c>deltaG &lt; GFall</c>, so the
         /// frame <see cref="TrendFrames"/> back ALWAYS has a lower basis and a higher G than the
         /// detection frame - such a frame must exist. But snapshotting there over-corrects badly,
         /// because "basis lower, G higher" holds across the whole APPROACH to the limit, not just near
@@ -284,110 +297,67 @@ namespace QAdvanceFeedback.Core.Normalized
         /// <summary>Hard frame backstop, for a caller feeding a tiny-but-positive dt forever.</summary>
         public const int HoldMaxFrames = 500;
 
-        private const int HistoryLength = TrendFrames + 1;
+        /// <summary>The shared detector this gate delegates to, built from
+        /// <see cref="CrossingGateParameters.LockShipped"/>. Every constant above is still this class's own;
+        /// the parameter set mirrors them and <c>CrossingGateEquivalenceTests</c> pins both.</summary>
+        private readonly CrossingGate _gate = new CrossingGate(CrossingGateParameters.LockShipped);
+
+        public LockCrossingGate()
+        {
+            _gate.MaxGCollapseFractionPerSecond = DefaultMaxGCollapseFractionPerSecond;
+            _gate.MinSaturatedWheelsForRejection = DefaultMinSaturatedWheelsForRejection;
+            _gate.WalkBackGBandFraction = DefaultWalkBackGBandFraction;
+            _gate.NonCrossingWeight = DefaultNonCrossingWeightFactor;
+        }
 
         /// <summary>The live G-collapse limit - see
         /// <see cref="DefaultMaxGCollapseFractionPerSecond"/>. Set to 0 or less to DISABLE the test
         /// entirely, which is the kill switch for it.</summary>
-        public double MaxGCollapseFractionPerSecond { get; set; } = DefaultMaxGCollapseFractionPerSecond;
+        public double MaxGCollapseFractionPerSecond
+        {
+            get { return _gate.MaxGCollapseFractionPerSecond; }
+            set { _gate.MaxGCollapseFractionPerSecond = value; }
+        }
 
         /// <summary>The live saturated-wheel guard - see
         /// <see cref="DefaultMinSaturatedWheelsForRejection"/>. Set to 0 or less to DISABLE the guard
         /// entirely, which is the kill switch for it; the two channels own independent gate objects, so
         /// switching one off leaves the other exactly as it was.</summary>
-        public int MinSaturatedWheelsForRejection { get; set; } = DefaultMinSaturatedWheelsForRejection;
+        public int MinSaturatedWheelsForRejection
+        {
+            get { return _gate.MinSaturatedWheelsForRejection; }
+            set { _gate.MinSaturatedWheelsForRejection = value; }
+        }
 
         /// <summary>The live G-banded walk-back - see <see cref="DefaultWalkBackGBandFraction"/>. Set to
         /// 0 or less to DISABLE the walk-back entirely (snapshot the detection frame, as before v1.1.0),
         /// which is the kill switch for it; the two channels own independent gate objects, so switching
         /// one off leaves the other exactly as it was.</summary>
-        public double WalkBackGBandFraction { get; set; } = DefaultWalkBackGBandFraction;
-
-        /// <summary>
-        /// Picks the frame this crossing should teach from: walking back from the detection frame while
-        /// the basis keeps falling AND the G stays inside <see cref="WalkBackGBandFraction"/>, return the
-        /// slot with the HIGHEST G - the grip peak of this one rise. See
-        /// <see cref="DefaultWalkBackGBandFraction"/> for why, and for the measurement.
-        /// <para/>
-        /// Returns <paramref name="newestSlot"/> itself whenever the walk cannot step - the band is off,
-        /// the previous frame is not part of this rise, its G is out of band, or the detection G is not
-        /// usable as a denominator - so the degenerate cases all reproduce the pre-1.1.0 snapshot exactly.
-        /// </summary>
-        private int WalkBackSlot(int newestSlot)
+        public double WalkBackGBandFraction
         {
-            double gAtDetection = _gHistory[newestSlot];
-            if (WalkBackGBandFraction <= 0.0 || !ClampMath.IsFinite(gAtDetection) || gAtDetection <= 0.0)
-                return newestSlot;
-
-            double band = WalkBackGBandFraction * gAtDetection;
-            int best = newestSlot;
-            int here = newestSlot;
-            // At most HistoryLength-1 steps, so the walk can never wrap around onto the detection frame
-            // and start re-reading the ring buffer as though it were older data.
-            for (int step = 0; step < HistoryLength - 1; step++)
-            {
-                int previous = (here - 1 + HistoryLength) % HistoryLength;
-                // (1) stay inside the one contiguous rise that produced this crossing
-                if (!(_basisHistory[previous] < _basisHistory[here])) break;
-                // (2) and inside the G band around the detection frame
-                if (Math.Abs(_gHistory[previous] - gAtDetection) > band) break;
-                here = previous;
-                if (_gHistory[here] > _gHistory[best]) best = here;
-            }
-            return best;
+            get { return _gate.WalkBackGBandFraction; }
+            set { _gate.WalkBackGBandFraction = value; }
         }
-
-        /// <summary>The immediately previous accepted basis, for the frame-over-frame rise test - see
-        /// the rule 1 block in <see cref="Observe"/>. NaN until the first accepted frame.</summary>
-        private double _previousBasis = double.NaN;
-
-        /// <summary>The immediately previous accepted G, for the collapse-rate test.</summary>
-        private double _previousG = double.NaN;
-
-        private readonly double[] _basisHistory = new double[HistoryLength];
-        private readonly double[] _gHistory = new double[HistoryLength];
-
-        /// <summary>The Raw-fallback basis, kept per slot alongside the configured one so the walk-back
-        /// can snapshot BOTH keys at the SAME chosen frame. Teaching them from different frames would
-        /// break the engine's configured-vs-fallback divergence test, which compares the two on the
-        /// assumption that they describe the same moment - see <see cref="TeachingFallbackBasis"/>.</summary>
-        private readonly double[] _fallbackHistory = new double[HistoryLength];
-        private readonly Dictionary<string, FrameCounts> _counts = new Dictionary<string, FrameCounts>(StringComparer.Ordinal);
-
-        private int _written;
-        private int _next;
-        private double _secondsSinceCrossing = double.PositiveInfinity;
-        private int _framesSinceCrossing = int.MaxValue;
-        private double _nonCrossingWeightFactor = DefaultNonCrossingWeightFactor;
-        private double _crossingBasis;
-        private double _crossingFallbackBasis;
 
         /// <summary>See <see cref="DefaultNonCrossingWeightFactor"/>. Clamped to 0..1.</summary>
         public double NonCrossingWeightFactor
         {
-            get { return _nonCrossingWeightFactor; }
-            set { _nonCrossingWeightFactor = ClampMath.To01(value); }
+            get { return _gate.NonCrossingWeight; }
+            set { _gate.NonCrossingWeight = value; }
         }
 
         /// <summary>True while a crossing has occurred within the last <see cref="HoldSeconds"/> AND
         /// within <see cref="HoldMaxFrames"/> frames.</summary>
-        public bool Qualified
-        {
-            get { return _secondsSinceCrossing <= HoldSeconds && _framesSinceCrossing <= HoldMaxFrames; }
-        }
+        public bool Qualified => _gate.Qualified;
 
         /// <summary>Diagnostics only - the gate itself acts on <see cref="Qualified"/>.</summary>
-        public bool CrossedThisFrame { get; private set; }
+        public bool CrossedThisFrame => _gate.CrossedThisFrame;
 
         /// <summary>
         /// Scales the corner-local detector's own confidence for this frame: unchanged inside a
         /// qualified window, multiplied by <see cref="NonCrossingWeightFactor"/> outside it.
         /// </summary>
-        public double TeachingWeight(double cornerAtLimitConfidence)
-        {
-            if (!ClampMath.IsFinite(cornerAtLimitConfidence) || cornerAtLimitConfidence <= 0.0) return 0.0;
-            return Qualified ? cornerAtLimitConfidence : cornerAtLimitConfidence * _nonCrossingWeightFactor;
-        }
+        public double TeachingWeight(double cornerAtLimitConfidence) => _gate.TeachingWeight(cornerAtLimitConfidence);
 
         /// <summary>
         /// The value a candidate frame should teach SMax - the reading captured AT THE CROSSING while
@@ -402,42 +372,17 @@ namespace QAdvanceFeedback.Core.Normalized
         /// the taught pool's P90 was 100.0, and every taught frame at or above 80 was a hold frame
         /// rather than a crossing.
         /// </summary>
-        public double TeachingBasis(double liveBasis)
-        {
-            return AtMostCeiling(Qualified && IsUsable(_crossingBasis) ? _crossingBasis : liveBasis);
-        }
+        public double TeachingBasis(double liveBasis) => _gate.TeachingBasis(liveBasis);
 
         /// <summary><see cref="TeachingBasis"/> for the Raw-fallback key. Both keys must learn on the
         /// same definition or the engine's divergence test between them compares quantities that are
         /// not comparable.</summary>
-        public double TeachingFallbackBasis(double liveFallbackBasis)
-        {
-            return AtMostCeiling(Qualified && IsUsable(_crossingFallbackBasis) ? _crossingFallbackBasis : liveFallbackBasis);
-        }
-
-        /// <summary>Rule 2 applied on the way OUT as well as the way in: the live-value fallback
-        /// path never passed through Observe's clamp, so a live 100.0000000001 could still leave
-        /// this gate and become SMax. Caught by CrossingGateHeldSourceTests.</summary>
-        private static double AtMostCeiling(double basis)
-            => ClampMath.IsFinite(basis) && basis > SourceCeiling ? SourceCeiling : basis;
-
-        private static bool IsUsable(double basis) => ClampMath.IsFinite(basis) && basis > 0.0;
+        public double TeachingFallbackBasis(double liveFallbackBasis) => _gate.TeachingFallbackBasis(liveFallbackBasis);
 
         /// <summary>Clears the trend history AND the hold window - called wherever the channel stops
         /// being engaged, since the frames either side of a disengagement are not a continuous
         /// series.</summary>
-        public void Reset()
-        {
-            _previousBasis = double.NaN;
-            _previousG = double.NaN;
-            _written = 0;
-            _next = 0;
-            _secondsSinceCrossing = double.PositiveInfinity;
-            _framesSinceCrossing = int.MaxValue;
-            CrossedThisFrame = false;
-            _crossingBasis = 0.0;
-            _crossingFallbackBasis = 0.0;
-        }
+        public void Reset() => _gate.Reset();
 
         /// <summary>
         /// Folds one engaged frame into the trend and ages the hold window.
@@ -457,141 +402,16 @@ namespace QAdvanceFeedback.Core.Normalized
         /// every pre-existing caller and test keeps its previous behaviour byte for byte.</param>
         public bool Observe(double lockBasis, double fallbackBasis, double achievedG, bool atLimit, double dtSeconds,
             int saturatedWheelCount = 0)
-        {
-            double aged = ClampMath.IsFinite(dtSeconds) && dtSeconds > 0.0 ? dtSeconds : NominalFrameSeconds;
-            _secondsSinceCrossing += aged;
-            if (_framesSinceCrossing < int.MaxValue) _framesSinceCrossing++;
-
-            CrossedThisFrame = false;
-
-            // Telemetry can arrive NaN, infinite or negative. A non-finite reading must not enter the
-            // trend history, and an INFINITE basis would satisfy the rise test outright and arm a window
-            // whose snapshot the learner then discards - teaching nothing for a whole second.
-            if (!ClampMath.IsFinite(lockBasis) || !ClampMath.IsFinite(achievedG) || lockBasis < 0.0)
-                return Qualified;
-
-            // ---- OWNER'S RULES 1 AND 2, 2026-09-07 ------------------------------------------------
-            //
-            // RULE 2 - CLAMP TO THE CEILING. Everything downstream of here, the snapshot that becomes
-            // SMax included, is therefore <= 100 exactly.
-            //
-            // RULE 1 - THE SOURCE MUST BE RISING ON THIS VERY FRAME, not merely higher than it was
-            // TrendFrames ago. THE LEAK THIS CLOSES: the trend below differences against 5 frames back,
-            // so a source that shoots 10 -> 100 in two frames and then SITS at 100 still reports a rise
-            // of +90 for the next five frames. Across those frames it is not rising at all - it is
-            // pegged - yet the gate saw a large rise, G was falling because the wheel had already let
-            // go, and the frame qualified and taught 100. That is the "source is HOLD but G is
-            // decreasing" case, reported from real driving.
-            //
-            // WHY THIS MAKES SMax = 100 STRUCTURALLY UNREACHABLE, which is the real prize: teaching now
-            // requires a strictly increasing source at the detection frame, and a value clamped to 100
-            // cannot increase. The taught snapshot is therefore always the last reading BELOW the
-            // ceiling. Normal-range crossings are untouched - a crossing at 55 is still rising at 55.
-            if (lockBasis > SourceCeiling) lockBasis = SourceCeiling;
-            if (ClampMath.IsFinite(fallbackBasis) && fallbackBasis > SourceCeiling) fallbackBasis = SourceCeiling;
-
-            double previousBasis = _previousBasis;
-            double previousG = _previousG;
-            _previousBasis = lockBasis;
-            _previousG = achievedG;
-            bool risingThisFrame = ClampMath.IsFinite(previousBasis)
-                                   && lockBasis - previousBasis > MinFrameRise;
-
-            // ---- THE G-COLLAPSE LIMIT (owner, 2026-09-07) ----------------------------------------
-            //
-            // A tyre passing the peak of its slip curve sheds grip PROGRESSIVELY. G that vanishes far
-            // faster than that did not come from the tyre: an upshift's torque interruption, a lift, a
-            // kerb, a landing. Those all show "slip up, G down" and used to qualify - the probe measured
-            // an upshift teaching 40 from a G drop of 0.85 -> 0.30 in a single frame.
-            //
-            // Self-scaling by construction - see MaxGCollapseFractionPerSecond.
-            bool collapseTooFast = false;
-            if (MaxGCollapseFractionPerSecond > 0.0
-                && ClampMath.IsFinite(previousG)
-                && previousG >= MinGForCollapseTest)
-            {
-                double dropFraction = (previousG - achievedG) / previousG;
-                if (dropFraction > 0.0)
-                {
-                    double perSecond = dropFraction / aged;
-                    collapseTooFast = perSecond > MaxGCollapseFractionPerSecond;
-                }
-            }
-
-
-            int slot = _next;
-            _basisHistory[slot] = lockBasis;
-            _gHistory[slot] = achievedG;
-            _fallbackHistory[slot] = fallbackBasis;
-            _next = (slot + 1) % HistoryLength;
-            if (_written < HistoryLength) _written++;
-
-            // ONE CROSSING PER EVENT, AND ONLY AT THE LIMIT. "Source rising while G falls" is satisfied
-            // by the whole lock-up, not just its onset, so a re-arm mid-event would overwrite the
-            // snapshot with the runaway's value and the refreshed window would reach forward into the
-            // next braking zone. And a crossing detected while the car is NOT at its braking limit is a
-            // spin, a kerb, or wheels off the ground - all of which show the same signature.
-            // THE SATURATED-WHEEL GUARD (v1.1.0) - see DefaultMinSaturatedWheelsForRejection for the
-            // measurement and for why it is car/surface/weather-neutral. It decides WHETHER this crossing
-            // may teach at all; DefaultWalkBackGBandFraction then decides WHICH frame it teaches from.
-            // The two are independent and were measured independently - the guard alone leaves 13 of 25
-            // channel-sessions bit-identical, the walk-back alone does not close the saturated cases.
-            bool sourceAlreadyLetGo = MinSaturatedWheelsForRejection > 0
-                                      && saturatedWheelCount >= MinSaturatedWheelsForRejection;
-
-            if (_written >= HistoryLength && !Qualified && atLimit && risingThisFrame && !collapseTooFast
-                && !sourceAlreadyLetGo)
-            {
-                double deltaBasis = lockBasis - _basisHistory[_next];
-                double deltaG = achievedG - _gHistory[_next];
-                if (deltaBasis > LockRise && deltaG < GFall)
-                {
-                    _secondsSinceCrossing = 0.0;
-                    _framesSinceCrossing = 0;
-                    CrossedThisFrame = true;
-                    // THE G-BANDED WALK-BACK (v1.1.0) - the detection frame is structurally late by up
-                    // to TrendFrames, so the snapshot is taken at the grip PEAK of this one rise rather
-                    // than here. Both keys are read from the SAME chosen slot. Degenerates to exactly
-                    // `lockBasis`/`fallbackBasis` whenever the walk cannot step - see WalkBackSlot.
-                    int teachSlot = WalkBackSlot(slot);
-                    _crossingBasis = _basisHistory[teachSlot];
-                    _crossingFallbackBasis = _fallbackHistory[teachSlot];
-                }
-            }
-
-            return Qualified;
-        }
+            => _gate.Observe(lockBasis, fallbackBasis, achievedG, atLimit, dtSeconds, saturatedWheelCount);
 
         /// <summary>Records that one candidate frame was seen for a key, and whether it qualified.
         /// <see cref="TotalFrames"/> is deliberately not consumed by anything.</summary>
-        public void RecordCandidate(string key, bool qualified)
-        {
-            if (key == null) return;
-            FrameCounts counts;
-            if (!_counts.TryGetValue(key, out counts)) counts = new FrameCounts();
-            counts.Total++;
-            if (qualified) counts.Valid++;
-            _counts[key] = counts;
-        }
+        public void RecordCandidate(string key, bool qualified) => _gate.RecordCandidate(key, qualified);
 
         /// <summary>Candidate frames for this key that were part of a crossing.</summary>
-        public long ValidFrames(string key)
-        {
-            FrameCounts counts;
-            return key != null && _counts.TryGetValue(key, out counts) ? counts.Valid : 0L;
-        }
+        public long ValidFrames(string key) => _gate.ValidFrames(key);
 
         /// <summary>Every candidate frame for this key. Recorded, not consumed.</summary>
-        public long TotalFrames(string key)
-        {
-            FrameCounts counts;
-            return key != null && _counts.TryGetValue(key, out counts) ? counts.Total : 0L;
-        }
-
-        private struct FrameCounts
-        {
-            public long Valid;
-            public long Total;
-        }
+        public long TotalFrames(string key) => _gate.TotalFrames(key);
     }
 }

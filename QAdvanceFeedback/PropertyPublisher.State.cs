@@ -3,6 +3,7 @@ using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.GForce;
 using QAdvanceFeedback.Core.Projection;
 using QAdvanceFeedback.Core.Normalized;
+using QAdvanceFeedback.Core.SlipAngle;
 
 namespace QAdvanceFeedback
 {
@@ -100,6 +101,12 @@ namespace QAdvanceFeedback
         private string _lockColdStartTier = "Tier1";
         private string _slipColdStartTier = "Tier1";
 
+        // Diag.ShakeIt.* - ShakeIt's own built-in lock/slip via a native QAdvanceFeedback effect
+        // (docs\shakeit-native-effects-design.md); 0 and inactive while no such effect is running.
+        private bool _shakeItTapActive;
+        private readonly double[] _shakeItTapLock = new double[4];
+        private readonly double[] _shakeItTapSlip = new double[4];
+
         // Surface-keyed learning (docs\branch-dispatch-and-source-keyed-learning-report.md).
         private bool? _wheelOnLooseSurfaceFrontLeft, _wheelOnLooseSurfaceFrontRight, _wheelOnLooseSurfaceRearLeft, _wheelOnLooseSurfaceRearRight;
         private bool _surfaceEverReportedLoose;
@@ -156,6 +163,57 @@ namespace QAdvanceFeedback
         private string _capGameFamily;
         private double? _capWheelSlipCalibrationProviderSlipScale;
 
+        // Slip Angle (docs\slip-angle-design.md 9.8) - the plain values captured from one
+        // SlipAngleFrameResult on the data thread; properties, CSV and UI read only this, never the learner.
+        private SlipAngleFrameResult _slipAngle = SlipAngleFrameResult.Empty;
+
+        /// <summary>Capture one Slip Angle frame (or <see cref="SlipAngleFrameResult.Empty"/> when no game is
+        /// running / the pipeline faulted). The result is immutable, so one reference write publishes it.</summary>
+        public void UpdateSlipAngle(SlipAngleFrameResult result)
+            => System.Threading.Volatile.Write(ref _slipAngle, result ?? SlipAngleFrameResult.Empty);
+
+        /// <summary>The last captured Slip Angle frame.</summary>
+        public SlipAngleFrameResult SlipAngleSnapshot => System.Threading.Volatile.Read(ref _slipAngle);
+
+        /// <summary>Readers for the Slip Angle product values, in <see cref="SlipAnglePublishedNames.ProductNames"/>
+        /// order - shared by <c>Register</c> and the CSV row so the two can never disagree.</summary>
+        internal static readonly Func<SlipAngleFrameResult, object>[] SlipAngleProductGetters =
+        {
+            a => a.RawAll, a => a.NormalizedAll, a => a.ProjectedAll,
+        };
+
+        /// <summary>Readers for the Slip Angle diagnostics, in <see cref="SlipAnglePublishedNames.DiagnosticNames"/> order.</summary>
+        internal static readonly Func<SlipAngleFrameResult, object>[] SlipAngleDiagnosticGetters =
+        {
+            a => a.WheelFrontLeft, a => a.WheelFrontRight, a => a.WheelRearLeft, a => a.WheelRearRight,
+            a => a.Front, a => a.Rear, a => a.K, a => a.FrontLearnedBest, a => a.RearLearnedBest,
+            a => a.Tier.ToString(), a => a.DriftState.ToString(), a => a.DriftFactor,
+            a => a.LearnedWindow.Min, a => a.LearnedWindow.Best, a => a.LearnedWindow.Max,
+            a => a.Maturity, a => a.WindowQuality, a => a.BorrowingTier.ToString(), a => a.WobbleRemaining,
+            a => a.PedalGateOpen, a => a.ImpactFlag, a => a.ExclusionRemaining, a => a.YawResidual,
+            a => a.SurfaceBucket.ToString(), a => a.SurfaceWeightSealed, a => a.SurfaceWeightLoose, a => a.SurfaceWeightLowGrip,
+            a => a.SurfaceSource.ToString(),
+            a => a.Unit.ToString(), a => a.UnitUndetermined, a => a.UnitVotesDegrees, a => a.UnitVotesRadians, a => a.NativeBlocked,
+            a => a.SpeedScale,
+            a => a.Crossings, a => a.PeakConfirmed, a => a.CurvePeakG, a => a.SourceIdentity ?? string.Empty,
+            a => a.Sliding, a => a.EarlyWeight, a => a.EarlyGuarded,
+            a => a.AppliedWindow.Min, a => a.AppliedWindow.Best, a => a.AppliedWindow.Max, a => a.ManualApplied,
+        };
+
+        /// <summary>The Slip Angle product values, in <see cref="SlipAnglePublishedNames.ProductNames"/> order.</summary>
+        public object[] SlipAngleProductValues() => Read(SlipAngleProductGetters);
+
+        /// <summary>The Slip Angle diagnostics, in <see cref="SlipAnglePublishedNames.DiagnosticNames"/> order.</summary>
+        public object[] SlipAngleDiagnosticValues() => Read(SlipAngleDiagnosticGetters);
+
+        private object[] Read(Func<SlipAngleFrameResult, object>[] getters)
+        {
+            SlipAngleFrameResult a = SlipAngleSnapshot;
+            var values = new object[getters.Length];
+            for (int i = 0; i < getters.Length; i++) values[i] = getters[i](a);
+            return values;
+        }
+
         public void UpdateRaw(LegacyWheelLockSlipResult result)
         {
             Fill(_lockRaw, _slipRaw, result);
@@ -193,6 +251,37 @@ namespace QAdvanceFeedback
         {
             _lockColdStartTier = lockTier ?? "Tier1";
             _slipColdStartTier = slipTier ?? "Tier1";
+        }
+
+        // Clutch Bite (docs\clutch-bite-design.md): the product value and its diagnostics.
+        private double _clutchBiteOutput;
+        private string _clutchSource = "None";
+        private double? _clutchInput;
+        private double _clutchBiteFinal = 50.0;
+        private double? _clutchBiteLearned;
+        private int _clutchBiteSamples;
+
+        /// <summary>QAdvanceFeedback.Clutch.Bite.Output, 0..100.</summary>
+        public void UpdateClutch(double output) => _clutchBiteOutput = ClampMath.To0100(output);
+
+        public void UpdateClutchDiagnostics(string source, double? input, double finalBite, double? learned, int samples)
+        {
+            _clutchSource = source ?? "None";
+            _clutchInput = input;
+            _clutchBiteFinal = finalBite;
+            _clutchBiteLearned = learned;
+            _clutchBiteSamples = samples;
+        }
+
+        /// <summary>Diag.ShakeIt.* - <paramref name="active"/> false publishes zeros.</summary>
+        public void UpdateShakeItTap(bool active, Corners lockWheels, Corners slipWheels)
+        {
+            _shakeItTapActive = active;
+            for (int i = 0; i < 4; i++)
+            {
+                _shakeItTapLock[i] = active ? lockWheels[i] : 0.0;
+                _shakeItTapSlip[i] = active ? slipWheels[i] : 0.0;
+            }
         }
 
         /// <summary>Surface-keyed learning (docs\branch-dispatch-and-source-keyed-learning-report.md) -
@@ -429,6 +518,9 @@ namespace QAdvanceFeedback
             foreach (double v in _lockProjected) values.Add(v);
             foreach (double v in _slipProjected) values.Add(v);
             foreach (double? v in _gforce) values.Add(v);
+            values.Add(_clutchBiteOutput);
+            // Slip Angle product values - appended after Clutch Bite (docs\slip-angle-design.md 9.8).
+            values.AddRange(SlipAngleProductValues());
 
             // ORDER BELOW MUST EXACTLY MATCH AllPublishedProperties.DiagnosticNames() - read that
             // method alongside this one before reordering either. (Diag.GameId/Diag.CarId and
@@ -515,6 +607,21 @@ namespace QAdvanceFeedback
             // existing column's position/meaning shifts for a log already being parsed by position.
             values.Add(_lockColdStartTier);
             values.Add(_slipColdStartTier);
+
+            // Diag.ShakeIt.* (docs\shakeit-native-effects-design.md) - appended at the END, same rule.
+            values.Add(_shakeItTapActive);
+            for (int i = 0; i < 4; i++) values.Add(_shakeItTapLock[i]);
+            for (int i = 0; i < 4; i++) values.Add(_shakeItTapSlip[i]);
+
+            // Diag.Clutch.* (docs\clutch-bite-design.md) - appended at the END, same rule.
+            values.Add(_clutchSource);
+            values.Add(_clutchInput);
+            values.Add(_clutchBiteFinal);
+            values.Add(_clutchBiteLearned);
+            values.Add(_clutchBiteSamples);
+
+            // Slip Angle diagnostics - appended at the END.
+            values.AddRange(SlipAngleDiagnosticValues());
 
             return values.ToArray();
         }

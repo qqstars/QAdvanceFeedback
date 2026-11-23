@@ -23,9 +23,22 @@ namespace QAdvanceFeedback.Core.Health
         /// Source field that is not a plain property name (<c>SimHubExpressionEvaluator</c>).</summary>
         public const string ExpressionEvaluator = "ExpressionEvaluator";
 
-        /// <summary>Reading ShakeIt Motors' own exported wheel properties for the source-mode
-        /// availability note (<c>MotorsExportAvailabilityProvider</c>).</summary>
-        public const string ShakeItExport = "ShakeItExport";
+        /// <summary>Reading viper4gh's CalcLngWheelSlip properties for the Viper source's "plugin not detected"
+        /// note (<c>ViperAvailabilityProvider</c>). Formerly <c>ShakeItExport</c>, shared with the removed ShakeIt
+        /// Motors export provider; renamed with its strings (docs\shakeit-source-design.md Task E) - the
+        /// health registry is in-memory only, so no persisted data carries the old id.</summary>
+        public const string ViperAvailability = "ViperAvailability";
+
+        /// <summary>The native QAdvanceFeedback ShakeIt effects and the ShakeIt built-in lock/slip they
+        /// read (docs\shakeit-native-effects-design.md).</summary>
+        public const string ShakeItEffects = "ShakeItEffects";
+
+        /// <summary>The 1 Hz inspection of the ShakeIt profiles for an enabled QAdvanceFeedback effect
+        /// (docs\shakeit-source-design.md section 3.1, <c>ShakeItProfileInspection</c>). Cleared on recovery.</summary>
+        public const string ShakeItProfile = "ShakeItProfile";
+
+        /// <summary>Clutch Bite output and bite point learning (docs\clutch-bite-design.md).</summary>
+        public const string ClutchBite = "ClutchBite";
 
         /// <summary>Reading SimHub's live <c>FeedbackCapabilities</c>/per-wheel raw telemetry for the
         /// <c>Diag.Capabilities.*</c>/<c>Diag.Telemetry.*</c> diagnostics (<c>SimHubTelemetryAdapter.
@@ -68,5 +81,13 @@ namespace QAdvanceFeedback.Core.Health
         /// <summary>The settings screen (<c>GetWPFSettingsControl</c>/<c>SettingsControl</c>'s own
         /// constructor) failing to build at all.</summary>
         public const string SettingsUi = "SettingsUi";
+
+        /// <summary>Reading a game's native per-wheel slip angle from SimHub raw data
+        /// (<c>SlipAngleRawSourceReader</c>).</summary>
+        public const string SlipAngleSource = "SlipAngleSource";
+
+        /// <summary>The per-frame Slip Angle pipeline (<c>QAdvanceFeedback.UpdateSlipAngle</c> /
+        /// <c>SlipAngleFrameProcessor</c>); on a fault its outputs read 0 / null and Lock/Slip/G-Force carry on.</summary>
+        public const string SlipAngle = "SlipAngle";
     }
 }

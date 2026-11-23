@@ -45,7 +45,7 @@ namespace QAdvanceFeedback
                 if (!string.IsNullOrEmpty(path) && File.Exists(path))
                 {
                     var loaded = JsonConvert.DeserializeObject<QAdvanceFeedbackSettings>(File.ReadAllText(path));
-                    if (loaded != null) return loaded;
+                    if (loaded != null) { loaded.Normalise(); return loaded; }
                 }
             }
             catch (Exception e) when (e is IOException || e is JsonException || e is UnauthorizedAccessException)
@@ -62,6 +62,7 @@ namespace QAdvanceFeedback
                     var legacy = JsonConvert.DeserializeObject<QAdvanceFeedbackSettings>(File.ReadAllText(legacyPath));
                     if (legacy != null)
                     {
+                        legacy.Normalise();
                         Save(path, legacy, logWarning);
                         return legacy;
                     }

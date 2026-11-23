@@ -3,9 +3,17 @@
 # Ported from the sibling reliable-wheel-lock project's tools/fetch-simhub-refs.sh, adapted for this
 # project's own lib\ (seven assemblies, not six - see the loop below).
 #
-# Targets SimHub 9.11.22 by default (the version this repo's own lib\ was captured from - every DLL
+# Targets SimHub 9.13.2 by default (the version this repo's own lib\ was captured from - every DLL
 # in lib\ matches this release byte-for-byte). Pass a different version as $1 to target another
 # release; there is no guarantee a different version's assembly layout inside the installer matches.
+#
+# BUMPED FROM 9.11.22 (2026-10-09). 9.13.0 reworked ShakeIt's wheel lock/slip dispatch - a new
+# WheelsLockDirectMode capability and a FeedbackData.WheelLock[4] array, both read straight through
+# with only a 0..1 clamp. That path is reachable ONLY via External Sim integrations (no shipped game
+# reader sets either direct flag), so nothing this plugin replicates changed: the RPM-vs-speed legacy
+# formula is byte-identical, and SimHub's shipped ShakeIt precalibration gained only Suspension
+# entries for TMLTheBus and IL2Series, which this plugin does not consume. The bump is purely to
+# compile and run against what drivers actually have installed.
 #
 # innoextract 1.9 and innounp 1.x do NOT support Inno Setup 6.4 - innounp-2 >= 2.67 is required.
 #
@@ -13,7 +21,7 @@
 # itself, and the innounp2 unpacker) is downloaded fresh into a scratch working directory and never
 # touches Program Files or the Windows registry.
 set -euo pipefail
-VERSION="${1:-9.11.22}"
+VERSION="${1:-9.13.2}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$ROOT/.simhub-refs-work"
 mkdir -p "$WORK" "$ROOT/lib"

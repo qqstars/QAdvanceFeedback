@@ -112,6 +112,8 @@ routine. Tested: import-when-new-absent, ignored-once-new-exists, missing-both-d
    configuration matrix as the sibling's `.sln`. Verified: opens/builds cleanly via
    `MSBuild QAdvanceFeedback.sln -t:Restore,Build`.
 2. **`tools/fetch-simhub-refs.sh`** — ported from the sibling's script, targeting **SimHub 9.11.22**
+   at the time of this report (**bumped to 9.13.2 on 2026-10-09** — see the note at the end of this
+   document; the script's default and header were updated with it)
    (documented in the script's own header; every DLL in this repo's `lib\` matches that release
    byte-for-byte, confirmed by comparing file sizes against the sibling project's own `lib\`, which was
    fetched the same way). **One fix over the sibling's script**: its copy loop lists only six DLLs and
@@ -192,7 +194,8 @@ import their respective old-named file exactly once if present, then never touch
    `Themes/NumericUpDown.xaml`, etc.) were confirmed empirically by enumerating the actual
    `MahApps.Metro.dll` shipped in `lib\` (via a small reflection tool), not from any MahApps
    documentation — they are correct for **this specific DLL version** (matching SimHub 9.11.22) but are
-   not guaranteed to be the right paths for a different MahApps release.
+   not guaranteed to be the right paths for a different MahApps release. (Still correct after the
+   2026-10-09 bump: `MahApps.Metro.dll` is byte-identical in 9.11.22 and 9.13.2.)
 4. **MIT was chosen for LICENSE only because the sibling project has none** — if the actual intended
    license is something else, this is a one-file replacement.
 5. **The "washout" G-force model credit in the README is described in general terms** ("adapted from
@@ -202,10 +205,52 @@ import their respective old-named file exactly once if present, then never touch
    as an adaptation of a known technique, not attributed to a work I have not actually verified was the
    source.
 6. **`tools/fetch-simhub-refs.sh` itself was not executed in this task** (this machine already has
-   `lib\` populated, matching SimHub 9.11.22 byte-for-byte) — its logic was ported from the sibling's
+   `lib\` populated, matching SimHub 9.11.22 byte-for-byte at the time) — its logic was ported from the sibling's
    already-working script plus the one documented fix (`System.Windows.Interactivity`), and it passed
    `bash -n`, but a genuine "clean clone, no SimHub installed" run of it is unverified here.
 7. **Every other item already flagged in `docs/layer123-report.md`, `docs/layer45-report.md`,
    `docs/gforce-report.md` and `docs/wiring-ui-report.md`** (the `LongitudinalG`/`LateralG` sign
    conventions, the per-wheel redistribution heuristic, the washout time constants' offline-only
    calibration, etc.) still apply unchanged — this task did not re-verify or re-litigate any of them.
+
+---
+
+## Update, 2026-10-09 — reference bump to SimHub 9.13.2
+
+`lib\` and `tools/fetch-simhub-refs.sh`'s default now target **SimHub 9.13.2**
+(`SimHub.Plugins.dll` `1.0.9776.38956`, up from 9.11.22's `1.0.9708.30848`).
+
+**Why.** SimHub 9.13.0 reworked ShakeIt's wheel lock/slip dispatch, which this plugin replicates, so
+the change had to be assessed rather than assumed. It was decompiled and diffed against 9.11.22:
+
+- `FeedbackCapabilities` gained `WheelsLockDirectMode`; `FeedbackData` gained `WheelLock[4]` plus four
+  named accessors. Both additive.
+- `WheelSlipEffect` takes an `isLock` flag and gained two branches at the TOP of the chain, reading
+  `WheelLock[i]` / `WheelSlip[i]` with only a `Clamp(0,1)` — no calibration of any kind.
+- The only producer of either is `ExternalSimManagerV3` (SimHub's External Sim bridge), straight from
+  a manifest field. **No shipped game reader sets either flag** — checked across every extracted
+  reader DLL. Trackmania, which mentions `WheelsSlipDirectMode`, sets it to `false`.
+- `GetRpmSpeedSlipLegacy` — the branch this plugin's Raw actually targets — is **byte-identical**
+  between the two releases, and `UseLegacyIracingAlgorythm` is read in exactly one place across the
+  whole assembly (`WheelSlipEffect.cs:169`), inside the final `Speed && RPM` branch.
+
+**Impact on this plugin: none.** No code change was required. The types it compiles against are
+unchanged or additive-only (`CalibrationData` and `PreloadedCalibrationData` identical;
+`CalibrationDataProvider` differs by one logging cast; `NCalcEngineBase`'s public surface unchanged),
+so the existing binary binds and runs against 9.13.2 as-is.
+
+**Shipped ShakeIt precalibration data is unchanged for everything imported.**
+`ShakeIt\ShakeItPrecalibration\GameData.json` grew 19,661 → 20,001 bytes, but the only differences
+are a new `IL2Series` entry and a `Suspension` entry added to `TMLTheBus` — both `Suspension`-only,
+a metric consumed by `WheelImpactEffect`/`WheelVibrationEffect` and **not** by `WheelSlipEffect`.
+`ShakeItPrecalibrationConverter.ConsumedMetrics` imports only `Slip`, `RpsToSpeed_Front` and
+`RpsToSpeed_Rear`, none of which moved.
+
+**Deliberately NOT adopted:** the two direct branches. This plugin's goal is a lock/slip reading whose
+definition is consistent across games and surfaces, and a raw passthrough of a manifest-defined field
+is the opposite of that. Our Raw's existing `DirectSlipFeedback → return 0.0` short-circuit is
+unreachable on every native title; if an External Sim integration ever makes it reachable, the right
+change is to DELETE that short-circuit so the selector falls through to a derived branch, not to add
+a passthrough.
+
+Verified: clean Release build, 0 warnings, 1565 tests passing against the 9.13.2 references.

@@ -1,0 +1,81 @@
+<UserControl x:Class="QAdvanceFeedbackViews.GForceEffectView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mah="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro"
+             xmlns:c="clr-namespace:QAdvanceFeedbackControls"
+             xmlns:v="clr-namespace:QAdvanceFeedbackViews"
+             v:ViewModelLifetime.Activate="True">
+  <!-- The G-Force ShakeIt panel, bound to a GForceEffectViewModel. ONE grid for every row, so the Auto
+       toggles, the Lateral direction dropdown and the Integrate switch start in the same column:
+       0 label | 1 "Auto" | 2 toggle / dropdown / switch | 3 max-G editor | 4 readout. The Test Effect
+       below keeps its label column as wide as columns 0-1 (LabelColumnSync), so its toggle starts in
+       column 2 too. -->
+  <StackPanel>
+    <Grid Margin="0,0,0,6" IsEnabled="{Binding Available}" v:LabelColumnSync.Group="{Binding Test}" v:LabelColumnSync.Columns="2">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="110"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+      <Grid.Resources>
+        <Style x:Key="RowLabel" TargetType="TextBlock">
+          <Setter Property="VerticalAlignment" Value="Center"/>
+          <Setter Property="Margin" Value="0,2,8,2"/>
+        </Style>
+        <Style x:Key="Readout" TargetType="TextBlock">
+          <Setter Property="VerticalAlignment" Value="Center"/>
+          <Setter Property="TextWrapping" Value="Wrap"/>
+          <Setter Property="Margin" Value="8,2,0,2"/>
+        </Style>
+      </Grid.Resources>
+
+      <TextBlock Grid.Row="0" Text="{Binding Axes[0].Label}" Style="{StaticResource RowLabel}"/>
+      <TextBlock Grid.Row="0" Grid.Column="1" Text="{v:Loc GForce.Mode.Auto.Short}" VerticalAlignment="Center" Margin="0,2,4,2"/>
+      <mah:ToggleSwitch Grid.Row="0" Grid.Column="2" x:Name="AccelAuto" IsChecked="{Binding Axes[0].Auto}"
+                        OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"
+                        HorizontalAlignment="Left" VerticalAlignment="Center" Margin="0,2,8,2"/>
+      <c:NumericEditor Grid.Row="0" Grid.Column="3" Value="{Binding Axes[0].Max}" Minimum="0.1" Maximum="10" Interval="0.1" StringFormat="0.00" VerticalAlignment="Center" Margin="0,2,0,2"/>
+      <TextBlock Grid.Row="0" Grid.Column="4" Text="{Binding Axes[0].Readout}" Style="{StaticResource Readout}"/>
+
+      <TextBlock Grid.Row="1" Text="{Binding Axes[1].Label}" Style="{StaticResource RowLabel}"/>
+      <TextBlock Grid.Row="1" Grid.Column="1" Text="{v:Loc GForce.Mode.Auto.Short}" VerticalAlignment="Center" Margin="0,2,4,2"/>
+      <mah:ToggleSwitch Grid.Row="1" Grid.Column="2" IsChecked="{Binding Axes[1].Auto}"
+                        OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"
+                        HorizontalAlignment="Left" VerticalAlignment="Center" Margin="0,2,8,2"/>
+      <c:NumericEditor Grid.Row="1" Grid.Column="3" Value="{Binding Axes[1].Max}" Minimum="0.1" Maximum="10" Interval="0.1" StringFormat="0.00" VerticalAlignment="Center" Margin="0,2,0,2"/>
+      <TextBlock Grid.Row="1" Grid.Column="4" Text="{Binding Axes[1].Readout}" Style="{StaticResource Readout}"/>
+
+      <TextBlock Grid.Row="2" Text="{Binding Axes[2].Label}" Style="{StaticResource RowLabel}"/>
+      <TextBlock Grid.Row="2" Grid.Column="1" Text="{v:Loc GForce.Mode.Auto.Short}" VerticalAlignment="Center" Margin="0,2,4,2"/>
+      <mah:ToggleSwitch Grid.Row="2" Grid.Column="2" IsChecked="{Binding Axes[2].Auto}"
+                        OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"
+                        HorizontalAlignment="Left" VerticalAlignment="Center" Margin="0,2,8,2"/>
+      <c:NumericEditor Grid.Row="2" Grid.Column="3" Value="{Binding Axes[2].Max}" Minimum="0.1" Maximum="10" Interval="0.1" StringFormat="0.00" VerticalAlignment="Center" Margin="0,2,0,2"/>
+      <TextBlock Grid.Row="2" Grid.Column="4" Text="{Binding Axes[2].Readout}" Style="{StaticResource Readout}"/>
+
+      <!-- Labels span the label and "Auto" columns; the controls sit in the toggle column, all starting at
+           its left edge (a toggle with its ON/OFF text first - owner, 2026-11-20). -->
+      <TextBlock Grid.Row="3" Grid.ColumnSpan="2" Text="{v:Loc GForce.LateralDirection.Label}" Style="{StaticResource RowLabel}"/>
+      <ComboBox Grid.Row="3" Grid.Column="2" Grid.ColumnSpan="3" MinWidth="160" HorizontalAlignment="Left" Margin="0,2,0,2"
+                ItemsSource="{Binding LateralChoices}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                SelectedValue="{Binding LateralDirection}"/>
+      <TextBlock Grid.Row="4" Grid.ColumnSpan="2" Text="{v:Loc GForce.Shake.Enable}" Style="{StaticResource RowLabel}"/>
+      <mah:ToggleSwitch Grid.Row="4" Grid.Column="2" IsChecked="{Binding Integrate}"
+                        OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"
+                        HorizontalAlignment="Left" Margin="0,2,0,2"/>
+      <TextBlock Grid.Row="5" Grid.ColumnSpan="2" Text="{v:Loc GForce.Shake.Angle.Enable}" Style="{StaticResource RowLabel}"/>
+      <mah:ToggleSwitch Grid.Row="5" Grid.Column="2" IsChecked="{Binding IntegrateSlipAngle}"
+                        OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"
+                        HorizontalAlignment="Left" Margin="0,2,0,2"/>
+    </Grid>
+    <TextBlock Text="{v:Loc ShakeItPanel.SharedNote}" TextWrapping="Wrap" Opacity="0.7"/>
+
+    <v:GForceTestView DataContext="{Binding Test}" Margin="0,10,0,0"/>
+  </StackPanel>
+</UserControl>

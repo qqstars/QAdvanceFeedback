@@ -247,9 +247,9 @@ namespace QAdvanceFeedback.Tests
             var settings = new GForceSettings();
             Assert.Equal(0.15, settings.SustainTimeConstantSeconds, 6);
             Assert.Equal(0.08, settings.TransientTimeConstantSeconds, 6);
-            // Sweep speed 1.5 -> 1.2 -> **1.0** (owner, 2026-09-06, after seat time: a slower, smoother
+            // Sweep speed 1.5 -> 1.2 -> 1.0 -> **0.6** (owner, 2026-11-20: a slower, smoother
             // transition reads better). A legitimate default change, not a weakened assertion.
-            Assert.Equal(1.0, settings.TransientGain, 6);
+            Assert.Equal(0.6, settings.TransientGain, 6);
         }
 
         [Fact]
@@ -720,6 +720,50 @@ namespace QAdvanceFeedback.Tests
             // GForceSettings, see An_impact_magnitude_reading_is_rejected_by_both_learners above) exists
             // to prevent.
             Assert.Equal(18.0, looseLearner.GetLearnedMax("Game", "Car"), 2);
+        }
+
+        // ---- Integrate Slip Angle (docs\slip-angle-design.md section 10) ----
+
+        [Fact]
+        public void Missing_field_loads_true()
+        {
+            var s = Newtonsoft.Json.JsonConvert.DeserializeObject<GForceSettings>("{\"IntegrateWheelLockAndSlip\":false}");
+            Assert.True(s.IntegrateSlipAngle);
+            Assert.False(s.IntegrateWheelLockAndSlip);
+            Assert.Equal(GForceSettings.DefaultShakeScaleFor(GForceSettings.DefaultShakeApplyMode), s.WheelSlipAngleShakeScale, 9);
+        }
+
+        [Fact]
+        public void Slip_angle_scale_defaults_to_the_shipped_modes_scale_like_lock_and_slip()
+        {
+            var s = new GForceSettings();
+            Assert.Equal(GForceSettings.DefaultShakeScaleFor(GForceSettings.DefaultShakeApplyMode), s.WheelSlipAngleShakeScale, 9);
+            Assert.Equal(s.WheelLockShakeScale, s.WheelSlipAngleShakeScale, 9);
+            s.WheelSlipAngleShakeScale = -1.0;
+            Assert.Equal(0.0, s.WheelSlipAngleShakeScale, 9);
+        }
+
+        [Fact]
+        public void Setting_the_mode_does_not_rewrite_the_slip_angle_scale()
+        {
+            var s = new GForceSettings { WheelSlipAngleShakeScale = 2.7 };
+            foreach (ShakeApplyMode mode in Enum.GetValues(typeof(ShakeApplyMode)))
+            {
+                s.ShakeApplyMode = mode;
+                Assert.Equal(2.7, s.WheelSlipAngleShakeScale, 9);
+            }
+        }
+
+        [Fact]
+        public void ApplyTo_pushes_integrate_slip_angle_and_its_scale()
+        {
+            var engine = new GForceEngine();
+            Assert.False(engine.IntegrateSlipAngle);
+            new GForceSettings { IntegrateSlipAngle = true, WheelSlipAngleShakeScale = 0.8 }.ApplyTo(engine);
+            Assert.True(engine.IntegrateSlipAngle);
+            Assert.Equal(0.8, engine.WheelSlipAngleShakeScale, 9);
+            new GForceSettings { IntegrateSlipAngle = false }.ApplyTo(engine);
+            Assert.False(engine.IntegrateSlipAngle);
         }
     }
 }

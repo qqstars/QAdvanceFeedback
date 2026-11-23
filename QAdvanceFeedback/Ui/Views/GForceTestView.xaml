@@ -1,0 +1,86 @@
+<UserControl x:Class="QAdvanceFeedbackViews.GForceTestView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mah="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro"
+             xmlns:c="clr-namespace:QAdvanceFeedbackControls"
+             xmlns:v="clr-namespace:QAdvanceFeedbackViews"
+             Grid.IsSharedSizeScope="True">
+  <!-- The G-Force Test Effect (docs\shakeit-test-effect-mvvm-design.md), bound to a GForceTestViewModel.
+       Shared by the plugin page and the G-Force ShakeIt panels. Everything below the toggle is collapsed
+       while the test is off. -->
+  <UserControl.Resources>
+    <v:VisibleWhenConverter x:Key="VisibleWhen"/>
+    <Style x:Key="RowLabel" TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+      <Setter Property="MaxWidth" Value="220"/>
+      <Setter Property="Margin" Value="0,0,8,0"/>
+    </Style>
+  </UserControl.Resources>
+  <!-- Rows share ONE label column (SharedSizeGroup "Label"); in the G-Force ShakeIt panel it is kept as
+       wide as the panel's label + "Auto" columns (LabelColumnSync), so the toggle (its ON/OFF text first) and
+       the rate editor start with the panel's toggles and dropdown (owner, 2026-11-20). -->
+  <StackPanel v:LabelColumnSync.Group="{Binding}">
+    <TextBlock x:Name="GForceTestHeader" Text="{v:Loc GForce.Test.Header}" FontWeight="Bold" Margin="0,0,0,4"/>
+    <Grid Margin="0,0,0,6">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <TextBlock Text="{v:Loc ShakeItPanel.Test.Label}" Style="{StaticResource RowLabel}"/>
+      <mah:ToggleSwitch Grid.Column="1" x:Name="GForceTestEnabled" IsChecked="{Binding IsTestEnabled}"
+                        OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"
+                        HorizontalAlignment="Left" VerticalAlignment="Center"/>
+    </Grid>
+    <!-- The description shows only while the test is on (owner). -->
+    <TextBlock x:Name="GForceTestNote" Text="{v:Loc GForce.Test.Note}" TextWrapping="Wrap" FontStyle="Italic"
+                 Visibility="{Binding IsTestEnabled, Converter={StaticResource VisibleWhen}}"/>
+    <TextBlock x:Name="GForceTestAutoOffNote" Text="{v:Loc ShakeItPanel.Test.AutoOffNote}" TextWrapping="Wrap" FontStyle="Italic" Opacity="0.8"
+                 Visibility="{Binding IsTestEnabled, Converter={StaticResource VisibleWhen}}"/>
+
+    <StackPanel x:Name="GForceTestPanel" Visibility="{Binding IsTestEnabled, Converter={StaticResource VisibleWhen}}" Margin="0,8,0,0">
+      <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <TextBlock x:Name="GForceTestRateLabel" Text="{v:Loc GForce.Test.Rate.Label}" Style="{StaticResource RowLabel}"/>
+        <c:NumericEditor Grid.Column="1" x:Name="GForceTestRate" Value="{Binding RateHz}" Minimum="1" Maximum="240" Interval="10" StringFormat="0" Width="110"/>
+        <TextBlock Grid.Column="2" x:Name="GForceTestRateHint" Text="{v:Loc GForce.Test.Rate.Hint}" TextWrapping="Wrap" FontStyle="Italic" VerticalAlignment="Center" Margin="8,0,0,0" MaxWidth="260"/>
+      </Grid>
+
+      <!-- One column (owner, 2026-11-20): the pad, then the Lock/Slip bar under it, then the Slip Angle
+           bar (docs\slip-angle-design.md section 10) - the bars share one left edge and every caption
+           sits under its own control. 320 px wide, so it never wraps in the ShakeIt panel. -->
+      <StackPanel x:Name="GForceTestControls" HorizontalAlignment="Left" Margin="0,10,0,0">
+        <v:GBallPad x:Name="GForceTestPad" PadX="{Binding PadX}" PadY="{Binding PadY}" HorizontalAlignment="Center"/>
+        <TextBlock x:Name="GForceTestPadCaption" Text="{v:Loc GForce.Test.Pad.Caption}" HorizontalAlignment="Center" Foreground="#FF808080" Margin="0,6,0,0"/>
+        <v:WheelBar x:Name="GForceTestBar" Value="{Binding Wheel}" HorizontalAlignment="Center" Margin="0,12,0,0"/>
+        <TextBlock x:Name="GForceTestBarCaption" Text="{v:Loc GForce.Test.Bar.Caption}" HorizontalAlignment="Center" Foreground="#FF808080" Margin="0,6,0,0"/>
+        <v:WheelBar x:Name="GForceTestAngleBar" Value="{Binding Angle}" HorizontalAlignment="Center" Margin="0,12,0,0"/>
+        <TextBlock x:Name="GForceTestAngleBarCaption" Text="{v:Loc GForce.Test.AngleBar.Caption}" HorizontalAlignment="Center" Foreground="#FF808080" Margin="0,6,0,0"/>
+      </StackPanel>
+
+      <Grid HorizontalAlignment="Left" Margin="0,14,0,0">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+          <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+          <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="{Binding LongLabel}" HorizontalAlignment="Right" Margin="0,0,10,2"/>
+        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding LongText}" FontFamily="Consolas" Margin="0,0,0,2"/>
+        <TextBlock Grid.Row="1" Text="{v:Loc GForce.Test.Readout.Lat}" HorizontalAlignment="Right" Margin="0,0,10,2"/>
+        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding LatText}" FontFamily="Consolas" Margin="0,0,0,2"/>
+        <TextBlock Grid.Row="2" Text="{v:Loc GForce.Test.Readout.Wheel}" HorizontalAlignment="Right" Margin="0,0,10,2"/>
+        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding WheelText}" FontFamily="Consolas" Margin="0,0,0,2"/>
+        <TextBlock Grid.Row="3" Text="{v:Loc GForce.Test.Readout.Angle}" HorizontalAlignment="Right" Margin="0,0,10,2"/>
+        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding AngleText}" FontFamily="Consolas" Margin="0,0,0,2"/>
+        <TextBlock Grid.Row="4" Text="{v:Loc GForce.Test.Readout.Channels}" HorizontalAlignment="Right" Margin="0,6,10,2" FontWeight="Bold"/>
+        <TextBlock Grid.Row="5" Text="{v:Loc GForce.Test.Readout.Front}" HorizontalAlignment="Right" Margin="0,0,10,2"/>
+        <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding FrontText}" FontFamily="Consolas" Margin="0,0,0,2"/>
+        <TextBlock Grid.Row="6" Text="{v:Loc GForce.Test.Readout.Rear}" HorizontalAlignment="Right" Margin="0,0,10,2"/>
+        <TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding RearText}" FontFamily="Consolas" Margin="0,0,0,2"/>
+        <TextBlock Grid.Row="7" Text="{v:Loc GForce.Test.Readout.Low}" HorizontalAlignment="Right" Margin="0,0,10,2"/>
+        <TextBlock Grid.Row="7" Grid.Column="1" Text="{Binding LowText}" FontFamily="Consolas" Margin="0,0,0,2"/>
+        <TextBlock Grid.Row="8" Text="{v:Loc GForce.Test.Readout.Top}" HorizontalAlignment="Right" Margin="0,0,10,2"/>
+        <TextBlock Grid.Row="8" Grid.Column="1" Text="{Binding TopText}" FontFamily="Consolas" Margin="0,0,0,2"/>
+      </Grid>
+    </StackPanel>
+  </StackPanel>
+</UserControl>

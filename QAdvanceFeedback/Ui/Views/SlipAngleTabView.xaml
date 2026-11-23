@@ -1,0 +1,439 @@
+<UserControl x:Class="QAdvanceFeedbackViews.SlipAngleTabView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mah="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro"
+             xmlns:c="clr-namespace:QAdvanceFeedbackControls"
+             xmlns:v="clr-namespace:QAdvanceFeedbackViews"
+             v:ViewModelLifetime.Activate="True">
+  <!-- The plugin page's Slip Angle tab (docs\slip-angle-design.md 9.9), bound to a SlipAngleTabViewModel.
+       Built to look exactly like the Wheel Lock tab: the same GroupBox sections in the same order
+       (Trigger threshold, Sources with the key data points, Wheel combination, Output data and shaping
+       with the anchors table and the two graphs, Pulse), then the Slip Angle-only Drift handling /
+       Landing / Noise groups. The page's own implicit styles (TextBlock/TextBox/ComboBox/GroupBox/
+       Button/NumericUpDown margins and widths) reach in here on purpose - that is what makes the
+       controls line up like the Lock tab's. ONE shared label column (SharedSizeGroup "SlipAngleAlign")
+       and one shared editor column ("SlipAngleEditor") across every section, like LockAlign/LockEditor. -->
+  <UserControl.Resources>
+    <v:VisibleWhenConverter x:Key="VisibleWhen"/>
+    <LinearGradientBrush x:Key="ScriptPlainBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#FF9E9E9E" Offset="0"/><GradientStop Color="#FF424242" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="ScriptJavaScriptBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#FF66BB6A" Offset="0"/><GradientStop Color="#FF1B5E20" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="ScriptNCalcBrush" StartPoint="0,0" EndPoint="0,1">
+      <GradientStop Color="#FF42A5F5" Offset="0"/><GradientStop Color="#FF0D47A1" Offset="1"/>
+    </LinearGradientBrush>
+    <!-- The page's script-type toggle (P/J/N), with its fill bound to the row's script type. -->
+    <Style x:Key="ScriptTypeToggleButtonStyle" TargetType="Button">
+      <Setter Property="Width" Value="28"/>
+      <Setter Property="Height" Value="24"/>
+      <Setter Property="Margin" Value="4,4,0,4"/>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Background" Value="{StaticResource ScriptPlainBrush}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="ScriptTypeBorder" CornerRadius="6" Background="{TemplateBinding Background}"
+                    BorderBrush="#55000000" BorderThickness="1">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ScriptTypeBorder" Property="Opacity" Value="0.85"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="ScriptTypeBorder" Property="Opacity" Value="0.7"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="ScriptTypeBorder" Property="BorderBrush" Value="Black"/>
+                <Setter TargetName="ScriptTypeBorder" Property="BorderThickness" Value="2"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding ScriptLetter}" Value="J">
+          <Setter Property="Background" Value="{StaticResource ScriptJavaScriptBrush}"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding ScriptLetter}" Value="N">
+          <Setter Property="Background" Value="{StaticResource ScriptNCalcBrush}"/>
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
+  </UserControl.Resources>
+
+  <StackPanel Grid.IsSharedSizeScope="True">
+
+    <!-- TRIGGER THRESHOLD - first, as on the Lock tab. The threshold(s) shown follow Trigger By. -->
+    <GroupBox Header="{v:Loc Group.TriggerThreshold}">
+      <StackPanel>
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <TextBlock Grid.Row="0" Grid.Column="0" Text="{v:Loc SlipAngle.TriggerBy.Label}"/>
+          <ComboBox Grid.Row="0" Grid.Column="1" HorizontalAlignment="Left"
+                    ItemsSource="{Binding TriggerByChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding TriggerBy}"/>
+          <TextBlock Grid.Row="1" Grid.Column="0" Text="{v:Loc SlipAngle.Threshold.Brake}"
+                     Visibility="{Binding ShowBrakeThreshold, Converter={StaticResource VisibleWhen}}"/>
+          <c:NumericEditor Grid.Row="1" Grid.Column="1" HorizontalAlignment="Left" Value="{Binding BrakeThreshold}" StringFormat="0"
+                           Visibility="{Binding ShowBrakeThreshold, Converter={StaticResource VisibleWhen}}"/>
+          <TextBlock Grid.Row="2" Grid.Column="0" Text="{v:Loc SlipAngle.Threshold.Throttle}"
+                     Visibility="{Binding ShowThrottleThreshold, Converter={StaticResource VisibleWhen}}"/>
+          <c:NumericEditor Grid.Row="2" Grid.Column="1" HorizontalAlignment="Left" Value="{Binding ThrottleThreshold}" StringFormat="0"
+                           Visibility="{Binding ShowThrottleThreshold, Converter={StaticResource VisibleWhen}}"/>
+        </Grid>
+        <TextBlock Text="{v:Loc SlipAngle.Threshold.Note}" TextWrapping="Wrap" FontStyle="Italic"/>
+      </StackPanel>
+    </GroupBox>
+
+    <GroupBox Header="{v:Loc Group.Sources}">
+      <StackPanel>
+        <!-- R19: orange fallback warning (Plugin Internal on the body-motion estimate), and the
+             "no slip-angle data" line. A fault shows neither (the Health section has it). -->
+        <TextBlock Text="{Binding FallbackWarningText}" TextWrapping="Wrap" FontWeight="Bold" Foreground="DarkOrange" Margin="4,0,4,4"
+                   Visibility="{Binding ShowFallbackWarning, Converter={StaticResource VisibleWhen}}"/>
+        <TextBlock Text="{Binding NoDataText}" TextWrapping="Wrap" FontStyle="Italic" Foreground="DarkOrange" Margin="4,0,4,4"
+                   Visibility="{Binding ShowNoData, Converter={StaticResource VisibleWhen}}"/>
+
+        <Grid x:Name="SlipAngleSourceRow" HorizontalAlignment="Left">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <TextBlock Grid.Column="0" Text="{v:Loc Sources.Mode.Label}"/>
+          <ComboBox Grid.Column="1" HorizontalAlignment="Stretch"
+                    ItemsSource="{Binding SourceModeChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SourceMode}"/>
+        </Grid>
+        <TextBlock Text="{v:Loc SlipAngle.Sources.ManualNote}" TextWrapping="Wrap" FontStyle="Italic"
+                   Visibility="{Binding IsPluginInternal, Converter={StaticResource VisibleWhen}}"/>
+        <TextBlock Text="{v:Loc SlipAngle.Sources.CustomNote}" TextWrapping="Wrap" FontStyle="Italic"
+                   Visibility="{Binding IsCustom, Converter={StaticResource VisibleWhen}}"/>
+
+        <!-- Custom only: the four wheel sources, the same row layout as the Lock tab's. -->
+        <Grid Visibility="{Binding IsCustom, Converter={StaticResource VisibleWhen}}">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <Grid.RowDefinitions>
+            <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+          </Grid.RowDefinitions>
+
+          <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding SourceRows[0].Label}"/>
+          <Button    Grid.Row="0" Grid.Column="1" DataContext="{Binding SourceRows[0]}" Style="{StaticResource ScriptTypeToggleButtonStyle}"
+                     Content="{Binding ScriptLetter}" ToolTip="{Binding ScriptTooltip}" Command="{Binding CycleScriptTypeCommand}"
+                     Visibility="{Binding ShowScriptType, Converter={StaticResource VisibleWhen}}"/>
+          <TextBox   Grid.Row="0" Grid.Column="2" Text="{Binding SourceRows[0].Text, UpdateSourceTrigger=PropertyChanged}"/>
+          <Button    Grid.Row="0" Grid.Column="3" DataContext="{Binding SourceRows[0]}" Content="{Binding ActionLabel}" Command="{Binding ActionCommand}"
+                     Visibility="{Binding ShowAction, Converter={StaticResource VisibleWhen}}"/>
+
+          <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding SourceRows[1].Label}"/>
+          <Button    Grid.Row="1" Grid.Column="1" DataContext="{Binding SourceRows[1]}" Style="{StaticResource ScriptTypeToggleButtonStyle}"
+                     Content="{Binding ScriptLetter}" ToolTip="{Binding ScriptTooltip}" Command="{Binding CycleScriptTypeCommand}"
+                     Visibility="{Binding ShowScriptType, Converter={StaticResource VisibleWhen}}"/>
+          <TextBox   Grid.Row="1" Grid.Column="2" Text="{Binding SourceRows[1].Text, UpdateSourceTrigger=PropertyChanged}"/>
+          <Button    Grid.Row="1" Grid.Column="3" DataContext="{Binding SourceRows[1]}" Content="{Binding ActionLabel}" Command="{Binding ActionCommand}"
+                     Visibility="{Binding ShowAction, Converter={StaticResource VisibleWhen}}"/>
+
+          <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding SourceRows[2].Label}"/>
+          <Button    Grid.Row="2" Grid.Column="1" DataContext="{Binding SourceRows[2]}" Style="{StaticResource ScriptTypeToggleButtonStyle}"
+                     Content="{Binding ScriptLetter}" ToolTip="{Binding ScriptTooltip}" Command="{Binding CycleScriptTypeCommand}"
+                     Visibility="{Binding ShowScriptType, Converter={StaticResource VisibleWhen}}"/>
+          <TextBox   Grid.Row="2" Grid.Column="2" Text="{Binding SourceRows[2].Text, UpdateSourceTrigger=PropertyChanged}"/>
+          <Button    Grid.Row="2" Grid.Column="3" DataContext="{Binding SourceRows[2]}" Content="{Binding ActionLabel}" Command="{Binding ActionCommand}"
+                     Visibility="{Binding ShowAction, Converter={StaticResource VisibleWhen}}"/>
+
+          <TextBlock Grid.Row="3" Grid.Column="0" Text="{Binding SourceRows[3].Label}"/>
+          <Button    Grid.Row="3" Grid.Column="1" DataContext="{Binding SourceRows[3]}" Style="{StaticResource ScriptTypeToggleButtonStyle}"
+                     Content="{Binding ScriptLetter}" ToolTip="{Binding ScriptTooltip}" Command="{Binding CycleScriptTypeCommand}"
+                     Visibility="{Binding ShowScriptType, Converter={StaticResource VisibleWhen}}"/>
+          <TextBox   Grid.Row="3" Grid.Column="2" Text="{Binding SourceRows[3].Text, UpdateSourceTrigger=PropertyChanged}"/>
+          <Button    Grid.Row="3" Grid.Column="3" DataContext="{Binding SourceRows[3]}" Content="{Binding ActionLabel}" Command="{Binding ActionCommand}"
+                     Visibility="{Binding ShowAction, Converter={StaticResource VisibleWhen}}"/>
+        </Grid>
+
+        <!-- KEY DATA POINTS: one Min/Best/Max set on Raw.All. Applies and saves at once (never Apply).
+             Auto => the editors (text box and +/- together) are disabled and show the learned window. -->
+        <TextBlock Text="{Binding KeyDataHeader}" FontWeight="Bold" Margin="4,14,4,4" TextWrapping="Wrap"/>
+        <!-- Unit dropdown (owner, 2026-11-22): always shown; entries depend on the game. Restore default only when changed. -->
+        <StackPanel Orientation="Horizontal" Margin="4,0,4,6" Visibility="{Binding ShowUnitChoice, Converter={StaticResource VisibleWhen}}">
+          <ComboBox ItemsSource="{Binding UnitChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedUnitChoice}"
+                    MinWidth="240" ToolTip="{v:Loc SlipAngle.Unit.ToolTip}"/>
+          <Button Content="{v:Loc SlipAngle.Unit.Reset}" Command="{Binding ResetUnitCommand}" Margin="6,0,0,0" Padding="12,2"
+                  Visibility="{Binding ShowUnitReset, Converter={StaticResource VisibleWhen}}"
+                  ToolTip="{v:Loc SlipAngle.Unit.Reset.ToolTip}"/>
+        </StackPanel>
+        <Grid IsEnabled="{Binding Available}">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/>
+            <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleEditor"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+
+          <TextBlock Grid.Row="0" Grid.Column="0" Text="{v:Loc KeyData.AutoGenerate.Label}"/>
+          <mah:ToggleSwitch Grid.Row="0" Grid.Column="1" IsChecked="{Binding Auto}" HorizontalAlignment="Left" Margin="4"
+                            OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
+          <TextBlock Grid.Row="0" Grid.Column="3" Text="{v:Loc KeyData.AutoGenerate.Desc}" TextWrapping="Wrap" FontStyle="Italic"/>
+
+          <TextBlock Grid.Row="1" Grid.Column="0" Text="{v:Loc KeyData.PerGame.Label}"
+                     Visibility="{Binding ShowPerGame, Converter={StaticResource VisibleWhen}}"/>
+          <mah:ToggleSwitch Grid.Row="1" Grid.Column="1" IsChecked="{Binding PerGame}" HorizontalAlignment="Left" Margin="4"
+                            OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"
+                            Visibility="{Binding ShowPerGame, Converter={StaticResource VisibleWhen}}"/>
+          <TextBlock Grid.Row="1" Grid.Column="3" Text="{v:Loc KeyData.PerGame.Desc}" TextWrapping="Wrap" FontStyle="Italic"
+                     Visibility="{Binding ShowPerGame, Converter={StaticResource VisibleWhen}}"/>
+
+          <TextBlock Grid.Row="2" Grid.Column="0" Text="{v:Loc SlipAngle.KeyData.Max.Label}"/>
+          <!-- Learning indicator LEFT of the box (owner): Auto only, collapsed (no space) under Manual. -->
+          <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
+            <v:LearningLed DataContext="{Binding MaxIndicator}" Margin="4,0,2,0"/>
+            <c:NumericEditor Value="{Binding Max}" IsEnabled="{Binding ValuesEditable}"
+                             Minimum="0.5" Maximum="45" Interval="0.1" StringFormat="0.0" Watermark="---"/>
+          </StackPanel>
+          <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding MaxLearnedText}" FontFamily="Consolas" Width="150"
+                     Visibility="{Binding ShowLearnedHints, Converter={StaticResource VisibleWhen}}"/>
+          <TextBlock Grid.Row="2" Grid.Column="3" Text="{v:Loc SlipAngle.KeyData.Max.Desc}" TextWrapping="Wrap" FontStyle="Italic"/>
+
+          <TextBlock Grid.Row="3" Grid.Column="0" Text="{v:Loc SlipAngle.KeyData.Best.Label}"/>
+          <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
+            <v:LearningLed DataContext="{Binding BestIndicator}" Margin="4,0,2,0"/>
+            <c:NumericEditor Value="{Binding Best}" IsEnabled="{Binding ValuesEditable}"
+                             Minimum="0.5" Maximum="45" Interval="0.1" StringFormat="0.0" Watermark="---"/>
+          </StackPanel>
+          <TextBlock Grid.Row="3" Grid.Column="2" Text="{Binding BestLearnedText}" FontFamily="Consolas" Width="150"
+                     Visibility="{Binding ShowLearnedHints, Converter={StaticResource VisibleWhen}}"/>
+          <TextBlock Grid.Row="3" Grid.Column="3" Text="{v:Loc SlipAngle.KeyData.Best.Desc}" TextWrapping="Wrap" FontStyle="Italic"/>
+
+          <TextBlock Grid.Row="4" Grid.Column="0" Text="{v:Loc SlipAngle.KeyData.Min.Label}"/>
+          <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
+            <v:LearningLed DataContext="{Binding MinIndicator}" Margin="4,0,2,0"/>
+            <c:NumericEditor Value="{Binding Min}" IsEnabled="{Binding ValuesEditable}"
+                             Minimum="0.5" Maximum="45" Interval="0.1" StringFormat="0.0" Watermark="---"/>
+          </StackPanel>
+          <TextBlock Grid.Row="4" Grid.Column="2" Text="{Binding MinLearnedText}" FontFamily="Consolas" Width="150"
+                     Visibility="{Binding ShowLearnedHints, Converter={StaticResource VisibleWhen}}"/>
+          <TextBlock Grid.Row="4" Grid.Column="3" Text="{v:Loc SlipAngle.KeyData.Min.Desc}" TextWrapping="Wrap" FontStyle="Italic"/>
+        </Grid>
+        <TextBlock Text="{Binding StartText}" Visibility="{Binding StartText, Converter={StaticResource VisibleWhen}}"
+                   TextWrapping="Wrap" FontStyle="Italic" Margin="4,2,4,0"/>
+        <Button Content="{v:Loc KeyData.ResetToDefault}" Command="{Binding ResetCommand}" Padding="16,4" HorizontalAlignment="Left"
+                Visibility="{Binding ShowReset, Converter={StaticResource VisibleWhen}}"/>
+        <TextBlock Text="{Binding KeyDataStatus}" TextWrapping="Wrap" FontStyle="Italic" Foreground="#C62828" Margin="4,4,4,0"
+                   Visibility="{Binding KeyDataStatus, Converter={StaticResource VisibleWhen}}"/>
+        <TextBlock Text="{Binding LearningStatus}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,4,4,0"
+                   Visibility="{Binding LearningStatus, Converter={StaticResource VisibleWhen}}"/>
+      </StackPanel>
+    </GroupBox>
+
+    <!-- WHEEL COMBINATION: the per-axle Max/Min wheel weights. -->
+    <GroupBox Header="{v:Loc Group.Aggregation}">
+      <StackPanel>
+        <TextBlock Text="{v:Loc SlipAngle.Aggregation.Note}" TextWrapping="Wrap" FontStyle="Italic"/>
+        <Grid Margin="0,4,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <Grid.RowDefinitions>
+            <RowDefinition/><RowDefinition/>
+          </Grid.RowDefinitions>
+          <TextBlock Grid.Row="0" Grid.Column="0" Text="{v:Loc SlipAngle.Aggregation.WMax.Label}"/>
+          <c:NumericEditor Grid.Row="0" Grid.Column="1" Value="{Binding WeightMax}" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+          <TextBlock Grid.Row="1" Grid.Column="0" Text="{v:Loc SlipAngle.Aggregation.WMin.Label}"/>
+          <c:NumericEditor Grid.Row="1" Grid.Column="1" Value="{Binding WeightMin}" Minimum="0" Maximum="2" Interval="0.05" StringFormat="0.00"/>
+        </Grid>
+      </StackPanel>
+    </GroupBox>
+
+    <!-- OUTPUT DATA AND SHAPING: preset, the anchors table and the two graphs - the Lock tab's
+         curve editor, bound to the ProjectorEditorViewModel. -->
+    <GroupBox Header="{v:Loc Group.Curve}">
+      <StackPanel>
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <TextBlock Grid.Column="0" Text="{v:Loc Curve.Preset.Label}"/>
+          <ComboBox Grid.Column="1" HorizontalAlignment="Left"
+                    ItemsSource="{Binding Projector.PresetChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Projector.Preset}"/>
+        </Grid>
+
+        <TextBlock Text="{v:Loc SlipAngle.Curve.AnchorNote}" TextWrapping="Wrap" FontStyle="Italic"/>
+
+        <Grid Margin="0,8,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <Grid.RowDefinitions>
+            <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+            <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+            <RowDefinition/>
+          </Grid.RowDefinitions>
+
+          <TextBlock Grid.Row="0" Grid.Column="1" Text="{v:Loc Curve.Column.RawValue}" HorizontalAlignment="Center" FontWeight="Bold"/>
+          <TextBlock Grid.Row="0" Grid.Column="2" Text="{v:Loc Curve.Column.OutputValue}" HorizontalAlignment="Center" FontWeight="Bold"/>
+          <TextBlock Grid.Row="0" Grid.Column="3" Text="{v:Loc Curve.Column.FlattenRange}" ToolTip="{v:Loc Curve.Column.FlattenRange.Note}" HorizontalAlignment="Center" FontWeight="Bold"/>
+
+          <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding Projector.Start.Label}" FontWeight="Bold"/>
+          <c:NumericEditor Grid.Row="1" Grid.Column="1" Value="{Binding Projector.Start.Raw}"/>
+          <c:NumericEditor Grid.Row="1" Grid.Column="2" Value="{Binding Projector.Start.Output}" ToolTip="{Binding Projector.Start.OutputHelp}" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
+          <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="5" Text="{Binding Projector.Start.Description}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+
+          <TextBlock Grid.Row="3" Grid.Column="0" Text="{Binding Projector.Slightly.Label}" FontWeight="Bold"/>
+          <c:NumericEditor Grid.Row="3" Grid.Column="1" Value="{Binding Projector.Slightly.Raw}"/>
+          <c:NumericEditor Grid.Row="3" Grid.Column="2" Value="{Binding Projector.Slightly.Output}"/>
+          <c:NumericEditor Grid.Row="3" Grid.Column="3" Value="{Binding Projector.Slightly.FlattenRange}" ToolTip="{v:Loc Curve.Column.FlattenRange.Note}" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+          <TextBlock Grid.Row="3" Grid.Column="4" Text="{Binding Projector.Slightly.DefaultText}" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
+          <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5" Text="{Binding Projector.Slightly.Description}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+
+          <TextBlock Grid.Row="5" Grid.Column="0" Text="{Binding Projector.Moderate.Label}" FontWeight="Bold"/>
+          <c:NumericEditor Grid.Row="5" Grid.Column="1" Value="{Binding Projector.Moderate.Raw}"/>
+          <c:NumericEditor Grid.Row="5" Grid.Column="2" Value="{Binding Projector.Moderate.Output}"/>
+          <c:NumericEditor Grid.Row="5" Grid.Column="3" Value="{Binding Projector.Moderate.FlattenRange}" ToolTip="{v:Loc Curve.Column.FlattenRange.Note}" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+          <TextBlock Grid.Row="5" Grid.Column="4" Text="{Binding Projector.Moderate.DefaultText}" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
+          <TextBlock Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="5" Text="{Binding Projector.Moderate.Description}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+
+          <TextBlock Grid.Row="7" Grid.Column="0" Text="{Binding Projector.Critical.Label}" FontWeight="Bold"/>
+          <c:NumericEditor Grid.Row="7" Grid.Column="1" Value="{Binding Projector.Critical.Raw}"/>
+          <c:NumericEditor Grid.Row="7" Grid.Column="2" Value="{Binding Projector.Critical.Output}"/>
+          <c:NumericEditor Grid.Row="7" Grid.Column="3" Value="{Binding Projector.Critical.FlattenRange}" ToolTip="{v:Loc Curve.Column.FlattenRange.Note}" Minimum="0" Maximum="15" Interval="1" StringFormat="0"/>
+          <TextBlock Grid.Row="7" Grid.Column="4" Text="{Binding Projector.Critical.DefaultText}" TextWrapping="Wrap" FontStyle="Italic" Margin="8,0,0,0"/>
+          <TextBlock Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="5" Text="{Binding Projector.Critical.Description}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+
+          <TextBlock Grid.Row="9" Grid.Column="0" Text="{Binding Projector.End.Label}" FontWeight="Bold"/>
+          <c:NumericEditor Grid.Row="9" Grid.Column="1" Value="{Binding Projector.End.Raw}"/>
+          <c:NumericEditor Grid.Row="9" Grid.Column="2" Value="{Binding Projector.End.Output}" ToolTip="{Binding Projector.End.OutputHelp}" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
+          <TextBlock Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="5" Text="{Binding Projector.End.Description}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,8"/>
+        </Grid>
+
+        <!-- TWO GRAPHS SIDE BY SIDE, as on the Lock tab. Left: normalized -> projected, dashed markers at
+             30/60/80 (Min/Best/Max). Right: Raw.All degrees (0 -> End) -> projected, sampled every 0.25°. -->
+        <StackPanel Orientation="Horizontal" Margin="4,8,4,0">
+          <StackPanel>
+            <Border BorderBrush="Gray" BorderThickness="1" HorizontalAlignment="Left">
+              <v:NormalizedCurveGraph Curve="{Binding Projector.Curve}" Anchors="{Binding Projector.Anchors}" Markers="{Binding KeyMarkers}"/>
+            </Border>
+            <TextBlock Text="{v:Loc Curve.Graph.Normalized}" HorizontalAlignment="Center" FontStyle="Italic" Margin="0,2,0,0"/>
+          </StackPanel>
+          <StackPanel Margin="12,0,0,0">
+            <Border BorderBrush="Gray" BorderThickness="1" HorizontalAlignment="Left">
+              <v:SourceProjectedGraph Curve="{Binding SourceGraphCurve}"/>
+            </Border>
+            <TextBlock Text="{Binding SourceGraphCaption}" HorizontalAlignment="Center" FontStyle="Italic" Margin="0,2,0,0"/>
+          </StackPanel>
+        </StackPanel>
+      </StackPanel>
+    </GroupBox>
+
+    <GroupBox Header="{v:Loc Group.Pulse}">
+      <StackPanel>
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/>
+            <ColumnDefinition Width="*"/>
+          </Grid.ColumnDefinitions>
+          <TextBlock Grid.Column="0" Text="{v:Loc Pulse.Enable}" TextWrapping="Wrap"/>
+          <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding PulseEnabled}" HorizontalAlignment="Left" Margin="4"
+                            OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
+        </Grid>
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="{v:Loc Pulse.GapMs}"/><c:NumericEditor Value="{Binding PulseGapMs}" Minimum="200" Maximum="5000" Interval="50"/>
+          <TextBlock Text="{v:Loc Pulse.MinValue}"/><c:NumericEditor Value="{Binding PulseMinValue}"/>
+        </StackPanel>
+        <TextBlock Text="{v:Loc Pulse.FloorNote}" TextWrapping="Wrap" FontStyle="Italic"/>
+      </StackPanel>
+    </GroupBox>
+
+    <!-- SLIP ANGLE ONLY (9.7 parameter table, exact ranges): drift attenuation, landing, noise. -->
+    <GroupBox Header="{v:Loc Group.SlipAngleDrift}">
+      <StackPanel>
+        <TextBlock Text="{v:Loc SlipAngle.Drift.Note}" TextWrapping="Wrap" FontStyle="Italic"/>
+        <Grid Margin="0,4,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <Grid.RowDefinitions>
+            <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+          </Grid.RowDefinitions>
+          <TextBlock Grid.Row="0" Grid.Column="0" Text="{v:Loc SlipAngle.Drift.Hold}"/>
+          <c:NumericEditor Grid.Row="0" Grid.Column="1" Value="{Binding HoldMs}" Minimum="50" Maximum="2000" Interval="10" StringFormat="0"/>
+          <TextBlock Grid.Row="1" Grid.Column="0" Text="{v:Loc SlipAngle.Drift.Stability}"/>
+          <c:NumericEditor Grid.Row="1" Grid.Column="1" Value="{Binding StabilityRange}" Minimum="2" Maximum="60" Interval="1" StringFormat="0"/>
+          <TextBlock Grid.Row="2" Grid.Column="0" Text="{v:Loc SlipAngle.Drift.ToPercent}"/>
+          <c:NumericEditor Grid.Row="2" Grid.Column="1" Value="{Binding ToPercent}" Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
+          <TextBlock Grid.Row="3" Grid.Column="0" Text="{v:Loc SlipAngle.Drift.Duration}"/>
+          <c:NumericEditor Grid.Row="3" Grid.Column="1" Value="{Binding DurationMs}" Minimum="0" Maximum="2000" Interval="10" StringFormat="0"/>
+          <TextBlock Grid.Row="4" Grid.Column="0" Text="{v:Loc SlipAngle.Drift.Gamma}"/>
+          <c:NumericEditor Grid.Row="4" Grid.Column="1" Value="{Binding Gamma}" Minimum="0.5" Maximum="6" Interval="0.1" StringFormat="0.0"/>
+          <!-- Throttle clear (owner, 2026-11-20): back at or below Max, a re-press clears the drift. -->
+          <TextBlock Grid.Row="5" Grid.Column="0" Text="{v:Loc SlipAngle.Drift.ThrottleRise}"/>
+          <c:NumericEditor Grid.Row="5" Grid.Column="1" Value="{Binding ThrottleRiseClear}" Minimum="5" Maximum="100" Interval="1" StringFormat="0"/>
+          <TextBlock Grid.Row="6" Grid.Column="0" Text="{v:Loc SlipAngle.Drift.ThrottleLevel}"/>
+          <c:NumericEditor Grid.Row="6" Grid.Column="1" Value="{Binding ThrottleLevelClear}" Minimum="50" Maximum="100" Interval="1" StringFormat="0"/>
+        </Grid>
+      </StackPanel>
+    </GroupBox>
+
+    <GroupBox Header="{v:Loc Group.SlipAngleLanding}">
+      <StackPanel>
+        <TextBlock Text="{v:Loc SlipAngle.Landing.Note}" TextWrapping="Wrap" FontStyle="Italic"/>
+        <Grid Margin="0,4,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <Grid.RowDefinitions>
+            <RowDefinition/><RowDefinition/>
+          </Grid.RowDefinitions>
+          <!-- The page's implicit NumericUpDown style pins the INNER control at Width 80, so an outer
+               Width alone does not widen the box; this local style lets the inner control fill the
+               editor's 120 so "1000" fits beside the +/- buttons. -->
+          <Grid.Resources>
+            <Style TargetType="mah:NumericUpDown" BasedOn="{StaticResource {x:Type mah:NumericUpDown}}">
+              <Setter Property="Width" Value="NaN"/>
+              <Setter Property="HorizontalAlignment" Value="Stretch"/>
+              <Setter Property="Margin" Value="4"/>
+            </Style>
+          </Grid.Resources>
+          <TextBlock Grid.Row="0" Grid.Column="0" Text="{v:Loc SlipAngle.Landing.MaxFlight}"/>
+          <c:NumericEditor Grid.Row="0" Grid.Column="1" Value="{Binding MaxFlightMs}" Width="120" HorizontalAlignment="Left" Minimum="50" Maximum="5000" Interval="50" StringFormat="0"/>
+          <TextBlock Grid.Row="1" Grid.Column="0" Text="{v:Loc SlipAngle.Landing.MaxWobble}"/>
+          <c:NumericEditor Grid.Row="1" Grid.Column="1" Value="{Binding MaxWobbleMs}" Width="120" HorizontalAlignment="Left" Minimum="0" Maximum="5000" Interval="50" StringFormat="0"/>
+        </Grid>
+      </StackPanel>
+    </GroupBox>
+
+    <GroupBox Header="{v:Loc Group.SlipAngleNoise}">
+      <StackPanel>
+        <TextBlock Text="{v:Loc SlipAngle.Noise.Note}" TextWrapping="Wrap" FontStyle="Italic"/>
+        <Grid Margin="0,4,0,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <Grid.RowDefinitions>
+            <RowDefinition/><RowDefinition/><RowDefinition/>
+          </Grid.RowDefinitions>
+          <TextBlock Grid.Row="0" Grid.Column="0" Text="{v:Loc SlipAngle.Noise.Smoothing}"/>
+          <c:NumericEditor Grid.Row="0" Grid.Column="1" Value="{Binding SmoothingMs}" Minimum="0" Maximum="500" Interval="10" StringFormat="0"/>
+          <TextBlock Grid.Row="1" Grid.Column="0" Text="{v:Loc SlipAngle.Noise.Swing}"/>
+          <c:NumericEditor Grid.Row="1" Grid.Column="1" Value="{Binding SwingMargin}" Minimum="1" Maximum="40" Interval="1" StringFormat="0"/>
+          <TextBlock Grid.Row="2" Grid.Column="0" Text="{v:Loc SlipAngle.Noise.Confirm}"/>
+          <c:NumericEditor Grid.Row="2" Grid.Column="1" Value="{Binding TrendConfirmMs}" Minimum="0" Maximum="500" Interval="10" StringFormat="0"/>
+        </Grid>
+      </StackPanel>
+    </GroupBox>
+  </StackPanel>
+</UserControl>

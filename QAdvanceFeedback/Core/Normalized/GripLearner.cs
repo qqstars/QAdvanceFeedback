@@ -133,7 +133,7 @@ namespace QAdvanceFeedback.Core.Normalized
         /// SUPERSEDED (docs\adaptive-peak-learner-report.md): the fixed-gain decaying maximum this note
         /// used to describe (unconditional <c>*= ForgetPerSample</c> decay every call, plus a fixed
         /// <c>RaiseAlpha</c>=15% raise toward any single higher reading) is REPLACED below by
-        /// <see cref="AdaptivePeakState"/>/<see cref="ApplyEvidenceWeightedObservation"/> - an
+        /// <see cref="CorroboratedLevelState"/>/<see cref="CorroboratedLevelEstimator.Observe"/> - an
         /// EVIDENCE-WEIGHTED estimator whose gain grows with CORROBORATION (repeated, consistent
         /// evidence) rather than being fixed, and whose downward movement requires evidence that looks
         /// like a genuine, repeated limit-seeking shortfall, not merely the ABSENCE of a recent high
@@ -143,7 +143,7 @@ namespace QAdvanceFeedback.Core.Normalized
         /// and a single spurious spike moving the estimate a fixed 15% regardless of whether anything
         /// ever corroborated it) are exactly what the new estimator was built to fix.
         /// </summary>
-        private const double MinPeakFloor = 0.1;
+        internal const double MinPeakFloor = 0.1;
 
         // ---- EVIDENCE-WEIGHTED ADAPTIVE PEAK ESTIMATOR (docs\adaptive-peak-learner-report.md) ----
         // Replaces the old fixed-gain decaying maximum (unconditional ForgetPerSample decay + a fixed
@@ -161,7 +161,7 @@ namespace QAdvanceFeedback.Core.Normalized
         // FIRST sighting of a new lower level is recorded as a candidate but moves nothing (confidence
         // 0) - only once a SECOND, separately-arriving observation corroborates the SAME lower level does
         // it start to move, then on the SAME doubling schedule (10%/20%/40%/80%/100% from the 2nd
-        // sighting) - see ApplyEvidenceWeightedObservation's own remarks for why this asymmetry is the
+        // sighting) - see CorroboratedLevelEstimator.Observe's own remarks for why this asymmetry is the
         // load-bearing fix for "must not drift down merely because the driver stopped trying".
         //
         // "CORROBORATING" = within a TOLERANCE BAND of the level currently being corroborated (8% of that
@@ -190,7 +190,7 @@ namespace QAdvanceFeedback.Core.Normalized
         // one earns none, regardless of how large the raw magnitude itself is (Observe's own LearnCapG
         // reject already screens the absolute magnitude; this screens the FRAME-TO-FRAME JUMP, a
         // different, complementary signal).
-        private const double AdaptiveConfidenceBase = 0.10;
+        internal const double AdaptiveConfidenceBase = 0.10;
 
         /// <summary>RAISE-side tolerance band (fraction of the candidate level) - deliberately WIDER than
         /// the lower side. MEASURED (not guessed) on real logs (docs\adaptive-peak-learner-report.md): a
@@ -204,7 +204,7 @@ namespace QAdvanceFeedback.Core.Normalized
         /// resolves this (confirmed) while the LOWER side (see <see cref="LowerToleranceFraction"/>) is
         /// kept narrow, because widening THAT side instead breaks the ramp-down discriminator's entire
         /// purpose - see that constant's own remarks.</summary>
-        private const double ToleranceFraction = 0.30;
+        internal const double ToleranceFraction = 0.30;
 
         /// <summary>LOWER-side tolerance band - deliberately NARROWER than the raise side. MEASURED: at
         /// 30% (matching the raise side), varied CASUAL light driving (e.g. 0.25-0.55g, no two readings
@@ -215,9 +215,9 @@ namespace QAdvanceFeedback.Core.Normalized
         /// real surface change, which - like hard braking - clusters near ONE new level) corroborating
         /// correctly while casual, varied-intensity driving (which does NOT cluster near one level) still
         /// fails to repeatedly match itself.</summary>
-        private const double LowerToleranceFraction = 0.15;
+        internal const double LowerToleranceFraction = 0.15;
 
-        private const double ToleranceFloorG = 0.05;
+        internal const double ToleranceFloorG = 0.05;
 
         /// <summary>RAISE-side cooldown - a single sustained hard push should be trusted about as
         /// promptly as the owner's own worked example implies (full trust by the ~5th corroborating
@@ -241,7 +241,7 @@ namespace QAdvanceFeedback.Core.Normalized
         /// </summary>
         public const int LowerCooldownQualifyingSamples = 40;
 
-        private const double MaxPlausibleJerkG = 3.0;
+        internal const double MaxPlausibleJerkG = 3.0;
 
         /// <summary>SATURATION CAP (docs\adaptive-peak-learner-report.md, Part 1 - the Int32 overflow
         /// fix) shared by every persisted/accumulating sample counter this class owns
@@ -280,7 +280,7 @@ namespace QAdvanceFeedback.Core.Normalized
         // docs\anchor-rescale-report.md) is needed or wanted here - see this class's own report for the
         // full derivation, real-log measurement, and why that floor mechanism was deliberately NOT
         // reused as-is.
-        private const double StabilityMoveResetFraction = 0.01;
+        internal const double StabilityMoveResetFraction = 0.01;
 
         /// <summary>SOFT scale reference (see this section's own remarks) for how many consecutive
         /// "quiet" (no meaningful Level movement) qualifying observations are needed before the
@@ -304,148 +304,12 @@ namespace QAdvanceFeedback.Core.Normalized
             return 1.0 - oneMinusX * oneMinusX;
         }
 
-        /// <summary>
-        /// One channel's (flat-scalar OR one speed bucket's) own evidence-weighted peak-estimator state -
-        /// see this class's own remarks above <see cref="AdaptiveConfidenceBase"/> for the full mechanism.
-        /// A plain mutable struct (not a class) so both <see cref="_flatPeak"/> and each
-        /// <see cref="SpeedBucket"/>'s own <see cref="SpeedBucket.Peak"/> can hold one inline, with no
-        /// extra allocation, mirroring how <see cref="SpeedBucket"/> itself is already a plain struct.
-        /// </summary>
-        private struct AdaptivePeakState
-        {
-            public double Level;
-
-            public double RaiseCandidateG;
-            public int RaiseHits;
-
-            public double LowerCandidateG;
-            public int LowerHits;
-
-            /// <summary>Qualifying-call countdown before the NEXT hit may be credited in either
-            /// direction - see this class's own "SEPARATELY-ARRIVING" remarks above.</summary>
-            public int Cooldown;
-
-            public double LastRawG;
-            public bool HasLastRaw;
-
-            /// <summary>STABILITY-GATED MATURITY (see the remarks above <see cref="StabilityWeight"/>) -
-            /// consecutive qualifying observations since <see cref="Level"/> last moved meaningfully,
-            /// reduced (never below 0) proportionally to how big the most recent move was, rather than
-            /// hard-reset to exactly 0 - continuous, no step. Starts at 0 (maximally unstable/no
-            /// evidence yet) for a brand-new state, matching this whole class's own "identity/no trust
-            /// until evidence says otherwise" convention.</summary>
-            public double QuietStreak;
-
-            public static AdaptivePeakState Seeded(double level) => new AdaptivePeakState { Level = level };
-        }
-
-        /// <summary>0..1 confidence for the Nth RAISING hit - <c>min(1, base * 2^(hits-1))</c>: 10%, 20%,
-        /// 40%, 80%, then capped at 100% from the 5th corroborating sighting onward. See this class's own
-        /// remarks for the worked example this reproduces.</summary>
-        private static double RaiseConfidenceForHits(int hits)
-        {
-            if (hits <= 0) return 0.0;
-            double confidence = AdaptiveConfidenceBase * Math.Pow(2.0, hits - 1);
-            return confidence >= 1.0 ? 1.0 : confidence;
-        }
-
-        /// <summary>0..1 confidence for the Nth LOWERING hit - deliberately ONE SIGHTING MORE CONSERVATIVE
-        /// than <see cref="RaiseConfidenceForHits"/>: the very first sighting of a new, lower level
-        /// contributes ZERO confidence (a candidate is recorded, but nothing moves) - only the SECOND,
-        /// separately-arriving corroborating sighting starts to move the estimate, then on the identical
-        /// doubling schedule from there (10%, 20%, 40%, 80%, 100%). This is the load-bearing half of the
-        /// ramp-down discriminator: an isolated single low reading (a driver momentarily not pushing as
-        /// hard) can never, by itself, move the estimate down at all - only a REPEATED, consistent
-        /// shortfall can, exactly implementing "tried and could not" (repeats) versus "did not try" (an
-        /// isolated one-off that is never corroborated again before something else supersedes it).</summary>
-        private static double LowerConfidenceForHits(int hits) => hits < 2 ? 0.0 : RaiseConfidenceForHits(hits - 1);
-
-        /// <summary>
-        /// Applies one qualifying observation to <paramref name="state"/> - the shared mechanism behind
-        /// BOTH <see cref="_flatPeak"/> and every <see cref="SpeedBucket.Peak"/>. See this class's own
-        /// remarks above <see cref="AdaptiveConfidenceBase"/> for the full derivation.
-        /// </summary>
-        private static void ApplyEvidenceWeightedObservation(ref AdaptivePeakState state, double magnitudeG)
-        {
-            // DATA QUALITY GATE: an implausible frame-to-frame jump (collision/telemetry-glitch
-            // signature) earns no confidence at all this frame - excluded before it can ever start or
-            // corroborate any candidate, in either direction.
-            if (state.HasLastRaw && Math.Abs(magnitudeG - state.LastRawG) > MaxPlausibleJerkG)
-                return;
-
-            state.LastRawG = magnitudeG;
-            state.HasLastRaw = true;
-
-            if (state.Cooldown > 0)
-            {
-                state.Cooldown--;
-                // STABILITY (see the remarks above StabilityWeight): a cooldown call is, by
-                // construction, a call where Level cannot possibly move this frame - count it as one
-                // more "quiet" observation toward the settling streak.
-                state.QuietStreak += 1.0;
-                return;
-            }
-
-            double levelBeforeThisObservation = state.Level;
-
-            if (magnitudeG > state.Level)
-            {
-                double bandReference = state.RaiseHits > 0 ? state.RaiseCandidateG : magnitudeG;
-                double band = Math.Max(ToleranceFraction * bandReference, ToleranceFloorG);
-                bool matches = state.RaiseHits > 0 && Math.Abs(magnitudeG - state.RaiseCandidateG) <= band;
-
-                // INT32 OVERFLOW GUARD (docs\release-1060-report.md, Part 5 overflow audit) - saturate
-                // rather than let this wrap negative after enough cumulative real-world corroborating
-                // hits. Harmless functionally (RaiseConfidenceForHits already clamps to 1.0 by the 5th
-                // hit, so hits beyond that change nothing), but the counter itself must still not
-                // overflow over a genuinely multi-year, never-restarted session.
-                state.RaiseHits = matches ? (state.RaiseHits < SampleCountSaturationCap ? state.RaiseHits + 1 : state.RaiseHits) : 1;
-                state.RaiseCandidateG = magnitudeG;
-                // Fresh, confirmed-higher evidence supersedes whatever lower candidate was in progress -
-                // it is no longer informative about where the CURRENT level actually sits.
-                state.LowerHits = 0;
-
-                double confidence = RaiseConfidenceForHits(state.RaiseHits);
-                state.Level += confidence * (magnitudeG - state.Level);
-                state.Cooldown = RaiseCooldownQualifyingSamples;
-            }
-            else if (magnitudeG < state.Level)
-            {
-                double bandReference = state.LowerHits > 0 ? state.LowerCandidateG : magnitudeG;
-                double band = Math.Max(LowerToleranceFraction * bandReference, ToleranceFloorG);
-                bool matches = state.LowerHits > 0 && Math.Abs(magnitudeG - state.LowerCandidateG) <= band;
-
-                // INT32 OVERFLOW GUARD - see the RaiseHits guard's own remarks just above; identical
-                // reasoning applies to the lowering side.
-                state.LowerHits = matches ? (state.LowerHits < SampleCountSaturationCap ? state.LowerHits + 1 : state.LowerHits) : 1;
-                state.LowerCandidateG = magnitudeG;
-
-                double confidence = LowerConfidenceForHits(state.LowerHits);
-                if (confidence > 0.0)
-                {
-                    state.Level += confidence * (magnitudeG - state.Level);
-                    state.Cooldown = LowerCooldownQualifyingSamples;
-                }
-                // else: an uncorroborated first sighting of a new lower level - recorded as a candidate
-                // for a FUTURE corroborating sighting to confirm, but moves nothing yet, and spends no
-                // cooldown (so it does not delay a genuinely corroborating sighting arriving right
-                // after it).
-            }
-
-            // STABILITY (see the remarks above StabilityWeight): how much THIS call actually moved
-            // Level, as a fraction of where it started - a proportional, continuous reduction of the
-            // quiet streak (never a hard reset to a fixed value), so a tiny nudge barely dents
-            // settledness while a large revision resets it close to zero. A call that moved nothing
-            // (magnitude equalled Level, or a candidate was recorded with zero confidence) simply adds
-            // to the streak with no reduction at all.
-            double relativeMove = Math.Abs(state.Level - levelBeforeThisObservation)
-                / Math.Max(levelBeforeThisObservation, MinPeakFloor);
-            if (relativeMove > 0.0)
-                state.QuietStreak *= ClampMath.Clamp(1.0 - relativeMove / StabilityMoveResetFraction, 0.0, 1.0);
-            state.QuietStreak += 1.0;
-
-            if (state.Level < MinPeakFloor) state.Level = MinPeakFloor;
-        }
+        // The per-observation mechanism (formerly the private AdaptivePeakState struct plus
+        // RaiseConfidenceForHits/LowerConfidenceForHits/ApplyEvidenceWeightedObservation here) now lives
+        // in the shared CorroboratedLevelEstimator (slip-angle plan, Task 6) - extracted verbatim and
+        // pinned bit-identical by CorroboratedLevelEstimatorEquivalenceTests. The constants above remain
+        // the single source of truth for GripLearner's own values: CorroborationParameters.GripLearnerDefaults
+        // reads them.
 
         // ---- SPEED-DEPENDENT GRIP MODEL (docs\speed-aware-grip-report.md, "Stage A") ----
         // THE BUG: LearnedPeakG above is a single scalar mixing every speed this car has ever
@@ -472,7 +336,7 @@ namespace QAdvanceFeedback.Core.Normalized
         /// TWO DISTINCT, MEASURED DEFECTS this replaces the old mechanism to fix:
         /// <list type="number">
         /// <item>DECAY EROSION - a corroboration-gated estimator (the flat scalar's own
-        /// <see cref="AdaptivePeakState"/>) under-converges badly at a single bucket's own sparse sample
+        /// <see cref="CorroboratedLevelState"/>) under-converges badly at a single bucket's own sparse sample
         /// rate (MEASURED, docs\two-signal-band-mapping-report.md: "Lock under-converges - 90-96% of
         /// frames read &gt;=100% of ref" with the old per-bucket mechanism, vs a per-bucket P99-style
         /// estimator recovering physically-plausible aero fits in all 7 dry logs checked).</item>
@@ -626,7 +490,7 @@ namespace QAdvanceFeedback.Core.Normalized
         private const double MinAeroFitSpeedSpreadKmh = 30.0;
 
         /// <summary>Guard 7 (extrapolation-overshoot): the fitted g_mech must not exceed the single
-        /// highest g this instance has EVER recorded this session (<see cref="_flatPeak"/>.<see cref="AdaptivePeakState.Level"/>) by more
+        /// highest g this instance has EVER recorded this session (<see cref="_flatPeak"/>.<see cref="CorroboratedLevelState.Level"/>) by more
         /// than this fraction - since g_mech is the model's own smallest predicted value (v=0), it cannot
         /// legitimately exceed the largest g ever demonstrated at ANY speed. Found and tuned by observing
         /// exactly this failure live on one real log (session-230140) - see the report's own Part 3.5.</summary>
@@ -647,10 +511,14 @@ namespace QAdvanceFeedback.Core.Normalized
         private SpeedBucket[] _buckets;
 
         /// <summary>The flat scalar's own evidence-weighted peak-estimator state - see
-        /// <see cref="AdaptivePeakState"/>. <see cref="LearnedPeakG"/> reads
-        /// <see cref="AdaptivePeakState.Level"/> directly - same public meaning as always ("the highest g
+        /// <see cref="CorroboratedLevelState"/>. <see cref="LearnedPeakG"/> reads
+        /// <see cref="CorroboratedLevelState.Level"/> directly - same public meaning as always ("the highest g
         /// this car has demonstrated, regardless of speed"), new mechanism underneath.</summary>
-        private AdaptivePeakState _flatPeak = AdaptivePeakState.Seeded(SeedPeakG);
+        private CorroboratedLevelState _flatPeak = CorroboratedLevelState.Seeded(SeedPeakG);
+
+        /// <summary>This instance's estimator tuning - <see cref="CorroborationParameters.GripLearnerDefaults"/>
+        /// with <see cref="CorroborationParameters.PlausibleCap"/> set to <see cref="LearnCapG"/>.</summary>
+        private readonly CorroborationParameters _corroboration;
 
         private int _samples;
 
@@ -661,9 +529,9 @@ namespace QAdvanceFeedback.Core.Normalized
         /// NOT cold/warm blended like <see cref="PublishedPeakG"/> - a corroboration count is discrete
         /// bookkeeping about evidence gathered so far, not a physical quantity meaningful to interpolate
         /// between a cold and a hot value.</summary>
-        public double RaiseCandidateG => _flatPeak.RaiseCandidateG;
+        public double RaiseCandidateG => _flatPeak.RaiseCandidate;
         public int RaiseCandidateHits => _flatPeak.RaiseHits;
-        public double LowerCandidateG => _flatPeak.LowerCandidateG;
+        public double LowerCandidateG => _flatPeak.LowerCandidate;
         public int LowerCandidateHits => _flatPeak.LowerHits;
 
         // ---- COLD/WARM PERSISTENCE (telemetry-integrity pass, item 3). _flatPeak/_samples above
@@ -845,6 +713,10 @@ namespace QAdvanceFeedback.Core.Normalized
         public GripLearner(double learnCapG = MaxPlausibleG)
         {
             LearnCapG = learnCapG > 0.0 && ClampMath.IsFinite(learnCapG) ? learnCapG : MaxPlausibleG;
+            // The estimator's own cap mirrors THIS instance's cap, so it can never reject anything
+            // Observe's own LearnCapG check admits (Observe still rejects first, exactly as before).
+            _corroboration = CorroborationParameters.GripLearnerDefaults;
+            _corroboration.PlausibleCap = LearnCapG;
             _buckets = NewBuckets();
         }
 
@@ -921,7 +793,7 @@ namespace QAdvanceFeedback.Core.Normalized
         {
             if (!ClampMath.IsFinite(magnitudeG) || magnitudeG <= 0.0 || magnitudeG > LearnCapG) return;
 
-            ApplyEvidenceWeightedObservation(ref _flatPeak, magnitudeG);
+            CorroboratedLevelEstimator.Observe(ref _flatPeak, magnitudeG, _corroboration);
 
             // INT32 OVERFLOW GUARD (adaptive-peak-learner-report.md, Part 1): _samples PERSISTS and
             // accumulates across every session (see GripLearnerState.Samples/KeyedGripLearner.ExportAll),
@@ -1003,7 +875,7 @@ namespace QAdvanceFeedback.Core.Normalized
         /// k-nonzero-then-rejected behaviour for a brand-new key before enough evidence accumulates to
         /// settle (see docs\speed-aware-grip-report.md's own Concerns).
         /// <para/>
-        /// Falls back to <c>(gMech: <see cref="_flatPeak"/>.<see cref="AdaptivePeakState.Level"/>, k: 0.0)</c> - EXACTLY today's flat
+        /// Falls back to <c>(gMech: <see cref="_flatPeak"/>.<see cref="CorroboratedLevelState.Level"/>, k: 0.0)</c> - EXACTLY today's flat
         /// value, not a second, differently-computed one - unless every one of the following holds (see
         /// the report's own Part 3.5 for how each guard was found and tuned against the real captured
         /// logs):
@@ -1019,7 +891,7 @@ namespace QAdvanceFeedback.Core.Normalized
         /// <item>The fitted <c>k</c> is not negative - aero cannot REDUCE available grip; a negative fit
         /// indicates the wrong functional shape, not a smaller aero effect.</item>
         /// <item>The fitted <c>gMech</c> is not below <see cref="MinPeakFloor"/>.</item>
-        /// <item>The fitted <c>gMech</c> does not exceed <see cref="_flatPeak"/>.<see cref="AdaptivePeakState.Level"/> (the single highest g
+        /// <item>The fitted <c>gMech</c> does not exceed <see cref="_flatPeak"/>.<see cref="CorroboratedLevelState.Level"/> (the single highest g
         /// this instance has EVER recorded) by more than <see cref="MaxGMechOvershootOfLearnedPeak"/> -
         /// since <c>gMech</c> is the model's own smallest predicted value (v=0), it cannot legitimately
         /// exceed the largest g ever demonstrated at any speed.</item>
@@ -1269,7 +1141,7 @@ namespace QAdvanceFeedback.Core.Normalized
         /// own in-progress "settling streak" (see <see cref="QuietStreak"/>) - persisted so a RETURNING
         /// car, whose reference has already been genuinely stable across many past sessions, does not
         /// have its stability clock reset to zero on every single restart (deliberately DIFFERENT from
-        /// how a genuinely brand-new key starts - see <see cref="AdaptivePeakState.QuietStreak"/>'s own
+        /// how a genuinely brand-new key starts - see <see cref="CorroboratedLevelState.QuietStreak"/>'s own
         /// remarks - this only warms a RETURNING key's own prior settledness, never fabricates one). A
         /// document written before this feature existed simply has no <c>quietStreak</c> to pass -
         /// <see cref="GripLearnerState"/>'s own field default (0.0) flows straight through here,
@@ -1283,7 +1155,7 @@ namespace QAdvanceFeedback.Core.Normalized
             double quietStreak)
         {
             if (!ClampMath.IsFinite(learnedPeakG) || learnedPeakG <= 0.0 || samples <= 0) return;
-            _flatPeak = AdaptivePeakState.Seeded(learnedPeakG);
+            _flatPeak = CorroboratedLevelState.Seeded(learnedPeakG);
             _samples = samples;
             _coldPeakG = learnedPeakG;
             _hasCold = true;
@@ -1295,12 +1167,12 @@ namespace QAdvanceFeedback.Core.Normalized
 
             if (raiseCandidateHits > 0 && ClampMath.IsFinite(raiseCandidateG) && raiseCandidateG > 0.0)
             {
-                _flatPeak.RaiseCandidateG = raiseCandidateG;
+                _flatPeak.RaiseCandidate = raiseCandidateG;
                 _flatPeak.RaiseHits = raiseCandidateHits;
             }
             if (lowerCandidateHits > 0 && ClampMath.IsFinite(lowerCandidateG) && lowerCandidateG > 0.0)
             {
-                _flatPeak.LowerCandidateG = lowerCandidateG;
+                _flatPeak.LowerCandidate = lowerCandidateG;
                 _flatPeak.LowerHits = lowerCandidateHits;
             }
             if (ClampMath.IsFinite(quietStreak) && quietStreak > 0.0)

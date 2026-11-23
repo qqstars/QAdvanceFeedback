@@ -135,5 +135,46 @@ namespace QAdvanceFeedback.Core
 
         /// <summary>See <see cref="WheelOnLooseSurfaceFrontLeft"/> - the rear right wheel.</summary>
         bool? WheelOnLooseSurfaceRearRight { get; }
+
+        // ---- Slip Angle inputs (docs\slip-angle-design.md 9.1/9.2, docs\slip-angle-spike-report.md) ----
+
+        /// <summary>
+        /// Forward component of the car's local velocity, m/s (SimHub:
+        /// <c>FeedbackData.LocalVelocity.Forward</c>; the reader remaps game axes, so the sign is the
+        /// game's own convention as SimHub presents it).
+        /// </summary>
+        double? ForwardLocalVelocity { get; }
+
+        /// <summary>
+        /// Yaw rate in radians/second, converted from SimHub's <c>FeedbackData.YawChangeVelocity</c>
+        /// (degrees/second per the spike). The sign is passed through RAW: it is not uniform across
+        /// games (spike), so consumers learn it per game (<c>YawSignDetector</c>). Null when SimHub
+        /// supplies no yaw change velocity.
+        /// </summary>
+        double? YawRateRadPerSec { get; }
+
+        /// <summary>
+        /// Vertical acceleration in g (SimHub: <c>FeedbackData.VerticalAcceleration</c>, assumed m/s2 -
+        /// the spike could not verify the unit). Populated ONLY for the titles that actually write it
+        /// (iRacing and Rennsport, per the spike); null everywhere else, because the field otherwise
+        /// sits at a default 0 that is not a reading.
+        /// </summary>
+        double? VerticalG { get; }
+
+        /// <summary>
+        /// Airborne per SimHub's own derived flag, <c>FeedbackData.IsFlying &gt; 0</c> (ruling R5:
+        /// <c>FlightIsOnGround</c> is never written for car games, so it is NOT used).
+        /// </summary>
+        bool IsAirborne { get; }
+
+        /// <summary>
+        /// Per-wheel "on a kerb" flags, FL/FR/RL/RR (SimHub: <c>FeedbackData.WheelsOnKerbs</c>), or null
+        /// when the array is missing or not four long. Same null-vs-false caveat as
+        /// <see cref="WheelOnLooseSurfaceFrontLeft"/>: a title that does not populate it reads all false.
+        /// </summary>
+        bool[] WheelsOnKerbs { get; }
+
+        /// <summary>Reserved for a future game-reported surface grip hint; always null today.</summary>
+        double? SurfaceGripHint { get; }
     }
 }

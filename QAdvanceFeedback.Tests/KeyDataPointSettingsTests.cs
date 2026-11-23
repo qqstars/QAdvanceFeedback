@@ -327,77 +327,9 @@ namespace QAdvanceFeedback.Tests
             Assert.False(KeyDataPointSettings.IsExactShippedSource(mixed, isLockChannel: true));
         }
 
-        // ---------------- Persisted learned values, with no game running ----------------
-
-        [Fact]
-        public void A_persisted_ceiling_is_found_by_source_without_knowing_the_game_or_car()
-        {
-            // The settings page has no (game, car) key while SimHub sits on the menu, but the parameters
-            // file still holds everything learned last time. Without this lookup the page would show a
-            // shipped default over its own evidence.
-            var learner = new KeyedScaleLearner(isLockChannel: false);
-            for (int i = 0; i < 400; i++)
-                learner.ObserveAtPhysicalLimit("F12025", "Haas", "SourceA", 72.0);
-
-            double? found = learner.PersistedCeilingForSource("SourceA");
-
-            Assert.True(found.HasValue);
-            Assert.InRange(found.Value, 65.0, 80.0);
-        }
-
-        [Fact]
-        public void A_source_with_nothing_learned_reports_nothing()
-        {
-            var learner = new KeyedScaleLearner(isLockChannel: false);
-            for (int i = 0; i < 400; i++)
-                learner.ObserveAtPhysicalLimit("F12025", "Haas", "SourceA", 72.0);
-
-            // A different source must not inherit SourceA's evidence - that is the whole point of keying
-            // by source.
-            Assert.False(learner.PersistedCeilingForSource("SourceB").HasValue);
-            Assert.False(learner.PersistedCeilingForSource(null).HasValue);
-            Assert.False(learner.PersistedCeilingForSource("").HasValue);
-        }
-
-        [Fact]
-        public void The_highest_ceiling_wins_across_cars_on_the_same_source()
-        {
-            // Ceilings, not averages: a car that has seen a harder lock has simply seen more of the
-            // source's range than one that has not.
-            var learner = new KeyedScaleLearner(isLockChannel: false);
-            for (int i = 0; i < 400; i++)
-            {
-                learner.ObserveAtPhysicalLimit("F12025", "Haas", "SourceA", 60.0);
-                learner.ObserveAtPhysicalLimit("F12025", "RedBull", "SourceA", 80.0);
-            }
-
-            double? found = learner.PersistedCeilingForSource("SourceA");
-
-            Assert.True(found.HasValue);
-            Assert.True(found.Value > 70.0);
-        }
-
-        [Fact]
-        public void A_persisted_ceiling_survives_a_restart_and_is_still_found_by_source()
-        {
-            // THE CASE THE FEATURE EXISTS FOR, and the one a first version silently failed: SimHub has
-            // just started, no game is running, and everything the plugin knows came out of the
-            // parameters file. The at-limit DISTRIBUTIONS are session-scoped - ImportAll restores only
-            // the resulting ceiling - so a lookup that searched the distributions alone found nothing
-            // exactly here, while passing happily in the same session where the value was learned.
-            var learned = new KeyedScaleLearner(isLockChannel: false);
-            for (int i = 0; i < 400; i++)
-                learned.ObserveAtPhysicalLimit("F12025", "Haas", "SourceA", 72.0);
-
-            var afterRestart = new KeyedScaleLearner(isLockChannel: false);
-            afterRestart.ImportAll(learned.ExportAll());
-
-            double? found = afterRestart.PersistedCeilingForSource("SourceA");
-
-            Assert.True(found.HasValue, "a restored ceiling must still be findable by source alone");
-            Assert.InRange(found.Value, 50.0, 100.0);
-            Assert.False(afterRestart.PersistedCeilingForSource("SourceB").HasValue);
-        }
+        // The former "persisted ceiling by source alone" lookup (best value across every game and car)
+        // was retired with the restart display rule (owner, 2026-11-19): the page and the panels show
+        // the EXACT persisted key, else the default - see KeyDataDisplayRuleTests.
 
         // ---------------- Configured per-source defaults ----------------
 

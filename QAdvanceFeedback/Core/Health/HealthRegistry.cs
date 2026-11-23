@@ -78,10 +78,11 @@ namespace QAdvanceFeedback.Core.Health
             get { lock (Gate) return Entries.Count == 0; }
         }
 
-        /// <summary>Removes one subsystem's entry, if present. Not used by any production code path
-        /// today (a fault, once recorded, stays visible for the rest of the session so a driver who
-        /// opens the settings screen late still sees it) - kept for test isolation and for a future
-        /// "this subsystem recovered" path.</summary>
+        /// <summary>Removes one subsystem's entry, if present. Most subsystems never call it (a fault,
+        /// once recorded, stays visible for the rest of the session so a driver who opens the settings
+        /// screen late still sees it); the per-frame Slip Angle pipeline clears its entry through
+        /// <see cref="HealthRecoveryTracker"/> after a sustained run of good frames. Also used for test
+        /// isolation.</summary>
         public static void Clear(string subsystem)
         {
             if (string.IsNullOrEmpty(subsystem)) return;

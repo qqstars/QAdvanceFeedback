@@ -110,8 +110,9 @@ namespace QAdvanceFeedback.Settings
 
         /// <summary>
         /// Manual (this channel's four Source*/ScriptType* fields above, pointed at Layer 3's own Raw
-        /// property) vs. ShakeIt (SimHub's own ShakeIt Motors export - see
-        /// <see cref="MotorsExportPropertyNames"/>).
+        /// property) vs. the preset sources: ShakeIt Built-in (SimHub's own ShakeIt calculation read
+        /// through our native effect - docs\shakeit-source-design.md; its rows hold the legacy export
+        /// names of <see cref="MotorsExportPropertyNames"/> only as its learning identity) and Viper.
         /// <para/>
         /// DEFAULT IS <see cref="Settings.SourceMode.Manual"/> (docs\relative-fallback-and-raw-default-report.md
         /// - FLIPPED from the previous shipped default, <see cref="Settings.SourceMode.ShakeIt"/>).
@@ -119,20 +120,19 @@ namespace QAdvanceFeedback.Settings
         /// the owner's own controlled F1 25 comparison (four matched wet/dry, Raw/ShakeIt logs, then a
         /// fifth wet/dry-in-one-session pair) established that Layer 3's own Raw needs NO SimHub-side
         /// setup at all and reads consistently across both cars/conditions from the very first braking
-        /// zone, while ShakeIt requires BOTH the export to be configured (steps 1-6 of
-        /// docs\shakeit-export-guide.md) AND its own internal per-car calibration to mature (up to 7000
+        /// zone, while ShakeIt required BOTH the export to be configured (at the time: steps 1-6 of the
+        /// now-retired docs\shakeit-export-guide.md) AND its own internal per-car calibration to mature (up to 7000
         /// samples - docs\shakeit-silence-diagnosis-report.md) before its numbers are trustworthy - on a
         /// car it has not yet "seen" enough, ShakeIt's own native scale for the SAME physical event can
         /// differ more than 3x from one car to another (measured: Sauber's own near-limit reading sits
         /// close to Raw's, F1 Generic's sits at roughly a third of it), something Raw does not exhibit.
         /// A fresh install (and "Restore all default settings") therefore now ships both channels
         /// already pointed at this channel's own Layer 3 Raw property (see
-        /// <see cref="ResetSourcesToDefault"/>) - a driver who prefers ShakeIt's own export can still
-        /// switch to it via the settings UI's toggle (see <see cref="ApplyMotorsExportDefaults"/>), which
-        /// remains fully supported and unchanged; the settings UI always shows the toggle and, when the
-        /// export is not yet configured, an inline note explaining how to produce it (see
-        /// <c>docs\shakeit-export-guide.md</c>); the plugin never silently reads a missing export as 0
-        /// either way (see <see cref="WheelSourceResolver"/>'s fallback to this channel's own Raw value).
+        /// <see cref="ResetSourcesToDefault"/>) - a driver who prefers ShakeIt's own calculation can still
+        /// pick ShakeIt Built-in (see <see cref="ApplyMotorsExportDefaults"/>). Since 2026-11-19 that source
+        /// reads only our native effect's tap (the export path is retired); the UI lists it while ShakeIt
+        /// is set up or it is selected, with a note when it is not set up or not supported, and the channel
+        /// then reads Raw under Raw's identity, per channel (docs\shakeit-source-design.md).
         /// </summary>
         public SourceMode SourceMode { get; set; } = SourceMode.Manual;
 
@@ -190,6 +190,15 @@ namespace QAdvanceFeedback.Settings
         /// <see cref="NormalizePattern.Mapping"/>, matching the engine's own field-initialiser default.
         /// </summary>
         public NormalizePattern NormalizePattern { get; set; } = NormalizePattern.Mapping;
+
+        /// <summary>
+        /// The "ShakeIt algorithm" settings the hidden ShakeIt container reads while this channel's source
+        /// is ShakeIt Built-in (docs\shakeit-source-design.md §6) - Lock uses its Lock part, Slip its Slip
+        /// part (see <see cref="ShakeItAlgorithmSettings"/>). Kept when the source changes. Both channels
+        /// share the same defaults, so the bare initialiser is correct for each; an older config without
+        /// it keeps this default, and a null in the file is repaired by <see cref="QAdvanceFeedbackSettings.Normalise"/>.
+        /// </summary>
+        public ShakeItAlgorithmSettings ShakeItAlgorithm { get; set; } = new ShakeItAlgorithmSettings();
 
         /// <summary>
         /// The driver-facing key data points for this channel - see <see cref="KeyDataPointSettings"/>.
@@ -403,19 +412,16 @@ namespace QAdvanceFeedback.Settings
             SourceMode = SourceMode.Manual;
         }
 
-        /// <summary>Switches this channel to <see cref="Settings.SourceMode.ShakeIt"/> and points all
-        /// four source fields at SimHub's own ShakeIt Motors export names
-        /// (<see cref="MotorsExportPropertyNames"/>), forcing <see cref="ScriptType.Plain"/> on all four
-        /// (a ShakeIt export is always read as a plain property, never scripted).
+        /// <summary>Switches this channel to <see cref="Settings.SourceMode.ShakeIt"/> (ShakeIt Built-in) and
+        /// points all four source fields at the legacy ShakeIt Motors export names
+        /// (<see cref="MotorsExportPropertyNames"/>), forcing <see cref="ScriptType.Plain"/> on all four.
         /// <para/>
-        /// This does NOT check availability, and never has to: the settings UI's toggle is ALWAYS
-        /// visible and switchable regardless of whether SimHub currently reports the four expected
-        /// properties (the owner's explicit correction - a previous version of this toggle hid itself
-        /// whenever availability could not be confirmed, which is why the owner could not find it at
-        /// all) - if the export is not yet configured, the UI shows an inline note explaining the setup
-        /// steps instead of hiding anything. Either way, <see cref="WheelSourceResolver"/>'s existing
-        /// per-source fallback to this channel's own Raw value keeps the plugin's output safe whenever
-        /// a configured source (ShakeIt or otherwise) fails to resolve.</summary>
+        /// The name is historical (kept for continuity): since 2026-11-19 these rows are never read as
+        /// properties - the ShakeIt source reads only our native effect's tap, and its learning identity
+        /// is the canonical <c>Core.ShakeItEffects.ShakeItSourceResolution.ShakeItIdentity</c>, which equals
+        /// these rows. They are kept so the preset still classifies as ShakeIt and existing configs stay
+        /// identical. Availability is not checked here: the page shows whether ShakeIt is set up and
+        /// supported, and the plugin falls back to Raw per channel (docs\shakeit-source-design.md).</summary>
         public void ApplyMotorsExportDefaults(bool isLockChannel)
         {
             SourceFrontLeft = MotorsExportPropertyNames.GetWheelPropertyName(isLockChannel, MotorsExportPropertyNames.FrontLeft);
@@ -474,6 +480,21 @@ namespace QAdvanceFeedback.Settings
             if (SourceMode == SourceMode.ShakeIt) ApplyMotorsExportDefaults(isLockChannel);
             else if (SourceMode == SourceMode.Viper) ApplyViperDefaults(isLockChannel);
             else ResetSourcesToDefault(isLockChannel);
+        }
+
+        /// <summary>
+        /// What the settings page saves for a channel whose source rows are SHADOWED (showing Raw because
+        /// the configured source cannot work right now): the rows are a readout and are never saved, but a
+        /// channel being saved as a PRESET (<see cref="SourceMode.ShakeIt"/> or <see cref="SourceMode.Viper"/>)
+        /// gets that preset's own four sources, so the saved mode never sits on the previous mode's rows
+        /// (the onboarding path: Raw saved, ShakeIt picked while not set up - or Viper picked on an
+        /// unsupported title - then Apply; without this, a Viper channel read Raw's rows for the whole
+        /// session after the title became supported). Manual and Custom keep their stored sources.
+        /// </summary>
+        public void KeepPresetSourcesWhileShadowed(SourceMode savedMode, bool isLockChannel)
+        {
+            if (savedMode == SourceMode.ShakeIt) ApplyMotorsExportDefaults(isLockChannel);
+            else if (savedMode == SourceMode.Viper) ApplyViperDefaults(isLockChannel);
         }
 
         /// <summary>

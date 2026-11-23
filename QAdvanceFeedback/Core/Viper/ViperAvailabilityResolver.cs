@@ -5,8 +5,8 @@ namespace QAdvanceFeedback.Core.Viper
 {
     /// <summary>
     /// Pure, SimHub-free resolution of whether viper4gh's CalcLngWheelSlip plugin
-    /// (<see cref="ViperPropertyNames"/>) is currently publishing all four wheels. The twin of
-    /// <see cref="MotorsExport.MotorsExportAvailabilityResolver"/>, and deliberately a separate class:
+    /// (<see cref="ViperPropertyNames"/>) is currently publishing all four wheels. Once the twin of the
+    /// (since removed) ShakeIt Motors export availability check, and deliberately a separate class:
     /// the two probe different plugins and their notions of "available" are free to diverge.
     /// <para/>
     /// WHY THIS CANNOT SIMPLY READ THE VALUE AND CHECK IT IS NONZERO. Viper's own output is legitimately

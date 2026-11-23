@@ -70,16 +70,5 @@ namespace QAdvanceFeedback.Tests
             Assert.Same(doc, ViperSupportedGames.WithGame(doc, "F12025"));
         }
 
-        [Fact]
-        public void The_button_is_hidden_for_a_shipped_title()
-        {
-            var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
-            while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, "QAdvanceFeedback", "Settings")))
-                dir = dir.Parent;
-            string code = File.ReadAllText(Path.Combine(
-                dir.FullName, "QAdvanceFeedback", "Settings", "SettingsControl.xaml.cs"));
-
-            Assert.Contains("!Core.Viper.ViperSupportedGames.IsShipped(_currentGameId)", code);
-        }
     }
 }

@@ -189,11 +189,190 @@ namespace QAdvanceFeedback.Core.Normalized
         /// magnitudes too (1.0 native unit of tolerance is generous near 0 but overly strict near 100).</summary>
         private const double NativeAgreementRelativeTolerance = 0.02;
 
-        /// <summary>The fixed sourceIdentity segment <see cref="KeyedScaleLearner"/> keys the
-        /// always-fed Layer-3-Raw fallback calibration under - deliberately never collides with a real
-        /// <see cref="SourceIdentity.Compute"/> output (those are either a verbatim property name or an
-        /// 8-hex-digit FNV-1a hash, never this literal).</summary>
-        private const string RawFallbackSourceIdentity = "__layer3_raw_fallback__";
+        // INTERNAL SOURCE ALWAYS LEARNS (docs\internal-source-learning-design.md, Task G). The
+        // always-fed Layer-3-Raw calibration the relative fallback compares against used to live under a
+        // separate hidden key ("__layer3_raw_fallback__", fed only by the scale learner and the lock
+        // anchors). It is retired: the comparison now reads our own internal source's REAL key
+        // (LockInternalSourceIdentity / SlipInternalSourceIdentity - Plugin Internal, Layer 3 Raw), and
+        // that key is fed every frame through exactly the same gates as when Plugin Internal is the
+        // active source - see InternalLearningState and ComputeChannel's `mirror` parameter. Saved
+        // hidden entries are folded into the internal key once on load (InternalSourceKeyMigration).
+
+        /// <summary>
+        /// Wheel Lock's internal (Plugin Internal = our Layer 3 Raw) source identity - the key that ALWAYS
+        /// learns, whichever source is active. Defaults to <see cref="PluginInternalSourceIdentity.For"/>,
+        /// the same string <c>Settings.RawSourceFallback.RawIdentity(true)</c> produces.
+        /// </summary>
+        public string LockInternalSourceIdentity { get; set; } = PluginInternalSourceIdentity.For(isLockChannel: true);
+
+        /// <summary>Wheel Slip's counterpart to <see cref="LockInternalSourceIdentity"/>.</summary>
+        public string SlipInternalSourceIdentity { get; set; } = PluginInternalSourceIdentity.For(isLockChannel: false);
+
+        /// <summary>
+        /// The manual key data configured for the INTERNAL source's own Lock key - what
+        /// <see cref="LockManualAnchors"/> would be if Plugin Internal were selected. Used only by the
+        /// internal learning pass while another source is active, so it takes the same learning branch
+        /// it would take when selected (a configured value suppresses anchor learning exactly as it does
+        /// for the active key). Never affects the published output.
+        /// </summary>
+        public ManualAnchors LockInternalManualAnchors { get; set; } = ManualAnchors.None;
+
+        /// <summary>Slip's counterpart to <see cref="LockInternalManualAnchors"/>.</summary>
+        public ManualAnchors SlipInternalManualAnchors { get; set; } = ManualAnchors.None;
+
+        /// <summary>
+        /// The per-channel learning state that belongs to the INTERNAL key and must follow it whether or
+        /// not it is selected: its own crossing gate (the trend/hold window is computed from that key's
+        /// own values) and its own previous at-limit basis. Used by the active path while the internal
+        /// source is active, and by the internal pass otherwise - so the internal key's learned state is
+        /// the same sequence of updates either way. Everything else ComputeChannel carries between frames
+        /// (loose fraction, last G, divergence) does not depend on which source is read, and stays shared.
+        /// </summary>
+        private sealed class InternalLearningState
+        {
+            public readonly LockCrossingGate LockGate = new LockCrossingGate();
+            public readonly SlipCrossingGate SlipGate = new SlipCrossingGate();
+            public double? AtLimitLastBasis;
+        }
+
+        /// <summary>One internal pass's inputs, built per frame by <see cref="Compute"/> (null while the
+        /// internal source is itself the active one - then the active path IS the internal learner).</summary>
+        private sealed class InternalMirror
+        {
+            public string Identity;
+            public InternalLearningState State;
+            public LockCrossingGate LockGate;
+            public SlipCrossingGate SlipGate;
+            public ManualAnchors ManualAnchors;
+
+            private string _keyGame, _keyCar, _keyIdentity, _key;
+
+            /// <summary>The internal key's surface-less (game, car, source) key - rebuilt only when the
+            /// game, car or identity changes, so the frame loop builds no string for it.</summary>
+            public string KeyFor(string gameId, string carId)
+            {
+                if (_key == null || !string.Equals(_keyGame, gameId, StringComparison.Ordinal)
+                    || !string.Equals(_keyCar, carId, StringComparison.Ordinal)
+                    || !string.Equals(_keyIdentity, Identity, StringComparison.Ordinal))
+                {
+                    _keyGame = gameId;
+                    _keyCar = carId;
+                    _keyIdentity = Identity;
+                    _key = KeyedGripLearner.MakeKey(gameId, carId, Identity, string.Empty);
+                }
+                return _key;
+            }
+        }
+
+        private readonly InternalLearningState _lockInternal = new InternalLearningState();
+        private readonly InternalLearningState _slipInternal = new InternalLearningState();
+        private readonly InternalMirror _lockMirror = new InternalMirror();
+        private readonly InternalMirror _slipMirror = new InternalMirror();
+
+        /// <summary>The previous frame's active identity for one channel, with the game / car it was keyed
+        /// under (so a closed run is closed under ITS key, not the current frame's).</summary>
+        private sealed class LastActive
+        {
+            public string Identity;
+            public string GameId;
+            public string CarId;
+        }
+
+        private readonly LastActive _lockLastActive = new LastActive();
+        private readonly LastActive _slipLastActive = new LastActive();
+
+        /// <summary>
+        /// See the ACTIVE-IDENTITY CHANGE note in <see cref="Compute"/>. The first frame (no previous
+        /// identity) clears nothing - there is nothing stale yet. On a change: the shared gate, the shared
+        /// at-limit basis and the (output-only) fallback divergence are cleared unconditionally, and the
+        /// previous source's anchor run is closed under its own game / car - EXCEPT when the previous source
+        /// is the internal one: its run continues on the internal pass next frame, so closing it would split
+        /// one corner into two runs and make the internal S75/S90 depend on when a switch happened.
+        /// </summary>
+        private static void NoteActiveIdentity(LastActive last, string identity, string internalIdentity,
+            LockCrossingGate lockGate, SlipCrossingGate slipGate, ref double? sharedAtLimitLastBasis,
+            ref double fallbackDivergence, LockAnchorLearner anchors, string gameId, string carId)
+        {
+            string now = identity ?? string.Empty;
+            if (last.Identity != null && !string.Equals(last.Identity, now, StringComparison.Ordinal))
+            {
+                lockGate?.Reset();
+                slipGate?.Reset();
+                sharedAtLimitLastBasis = null;
+                fallbackDivergence = 0.0;
+                if (!string.Equals(last.Identity, internalIdentity, StringComparison.Ordinal))
+                    anchors?.ResetRun(last.GameId, last.CarId, last.Identity);
+            }
+            last.Identity = now;
+            last.GameId = gameId;
+            last.CarId = carId;
+        }
+
+        // ---- CROSS-CHANNEL PAIRING (Task G rounds 3-4) - see CrossChannelSourcePairing. The resolver is one
+        // delegate made once. THREAD-SAFE BY SNAPSHOT: the pairing inputs live in an immutable snapshot that
+        // only Compute (the data thread) replaces, atomically, when an input changes. Each snapshot owns its
+        // own concurrent cache of answers, so a reader on any thread (the settings page reads published
+        // ceilings from the UI thread) resolves against one consistent snapshot, and an insert into an old
+        // snapshot's cache can never leak into the new one - there is no Clear to race with. Every answer is
+        // a pure function of its snapshot's inputs, so caching it is correct for whichever thread computed it.
+        private readonly Func<string, string> _pairingResolver;
+        private PairingSnapshot _pairing = new PairingSnapshot(string.Empty, string.Empty, string.Empty);
+
+        private sealed class PairingSnapshot
+        {
+            public readonly string ActiveLock, SlipInternal, LockInternal;
+            public readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> Answers =
+                new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.Ordinal);
+
+            public PairingSnapshot(string activeLock, string slipInternal, string lockInternal)
+            {
+                ActiveLock = activeLock;
+                SlipInternal = slipInternal;
+                LockInternal = lockInternal;
+            }
+
+            public bool Matches(string activeLock, string slipInternal, string lockInternal)
+                => string.Equals(ActiveLock, activeLock, StringComparison.Ordinal)
+                   && string.Equals(SlipInternal, slipInternal, StringComparison.Ordinal)
+                   && string.Equals(LockInternal, lockInternal, StringComparison.Ordinal);
+        }
+
+        /// <summary>Data thread only (from <see cref="Compute"/>): publishes a new snapshot when an input
+        /// changed; otherwise keeps the current one and its cache.</summary>
+        private void NotePairingInputs(string activeLockIdentity)
+        {
+            string slipInternal = SlipInternalSourceIdentity ?? string.Empty;
+            string lockInternal = LockInternalSourceIdentity ?? string.Empty;
+            string activeLock = activeLockIdentity ?? string.Empty;
+            if (System.Threading.Volatile.Read(ref _pairing).Matches(activeLock, slipInternal, lockInternal)) return;
+            System.Threading.Volatile.Write(ref _pairing, new PairingSnapshot(activeLock, slipInternal, lockInternal));
+        }
+
+        /// <summary>Any thread: resolves against one snapshot, read once.</summary>
+        private string ResolvePairing(string slipIdentity)
+        {
+            PairingSnapshot snapshot = System.Threading.Volatile.Read(ref _pairing);
+            string key = slipIdentity ?? string.Empty;
+            if (snapshot.Answers.TryGetValue(key, out string cached)) return cached;
+            string lockIdentity = CrossChannelSourcePairing.LockIdentityFor(key, snapshot.ActiveLock, snapshot.SlipInternal, snapshot.LockInternal);
+            snapshot.Answers.TryAdd(key, lockIdentity);
+            return lockIdentity;
+        }
+
+        /// <summary>Test seam: the pairing an off-thread reader sees right now.</summary>
+        internal string ResolveCrossChannelPairingForTesting(string slipIdentity) => ResolvePairing(slipIdentity);
+
+        /// <summary>Refreshes one channel's reusable mirror for this frame (no per-frame allocation).</summary>
+        private static InternalMirror PrepareMirror(InternalMirror mirror, InternalLearningState state, string identity,
+            ManualAnchors manualAnchors, LockCrossingGate lockGate, SlipCrossingGate slipGate)
+        {
+            mirror.Identity = identity;
+            mirror.State = state;
+            mirror.ManualAnchors = manualAnchors;
+            mirror.LockGate = lockGate;
+            mirror.SlipGate = slipGate;
+            return mirror;
+        }
 
         // FIELD FIXES HISTORY, superseded below (docs\field-fixes-report.md defects B/D, then
         // docs\f1-normalization-fix-report.md) - kept because the ORIGINAL defects are still fixed,
@@ -478,9 +657,10 @@ namespace QAdvanceFeedback.Core.Normalized
         private readonly SlipCrossingGate _slipCrossingGate = new SlipCrossingGate();
 
         /// <summary>
-        /// LOCK ONLY - the deliberately separate twin of <see cref="_slipCrossingGate"/>. See
-        /// <see cref="LockCrossingGate"/> for why the two are different classes rather than one
-        /// parameterised one: either channel's gate must be switchable off without touching the other.
+        /// LOCK ONLY - the deliberately separate twin of <see cref="_slipCrossingGate"/>. Both now delegate
+        /// to the shared, parameterised <see cref="CrossingGate"/>, but each channel still owns its own
+        /// gate OBJECT, so either can be switched off or retuned without touching the other - see
+        /// <see cref="LockCrossingGate"/>.
         /// </summary>
         private readonly LockCrossingGate _lockCrossingGate = new LockCrossingGate();
 
@@ -825,6 +1005,14 @@ namespace QAdvanceFeedback.Core.Normalized
             // direction only: Slip may lean on Lock, never the reverse. Wired here rather than at the
             // call site so every construction path (including every test's own bare `new`) gets it.
             _slipScaleLearner.AttachCrossChannelLockReference(_lockScaleLearner);
+            _pairingResolver = ResolvePairing;
+            // THE PAIRING FROM THE START (owner, 2026-11-21): Plugin Internal's Slip pairs with Plugin Internal's Lock
+            // whatever is selected, so it is known before any frame - the key data and its indicator read right on
+            // the SimHub menu after a restart (it used to wait for the first frame, showing Slip's borrowed-from-Lock
+            // share as 0). Any other identity keeps the pre-frame behaviour (its own identity) until the first frame
+            // installs the full pairing with the active Lock source.
+            _slipScaleLearner.SetCrossChannelLockIdentityResolver(slip =>
+                string.Equals(slip, SlipInternalSourceIdentity, StringComparison.Ordinal) ? LockInternalSourceIdentity : slip);
         }
 
         /// <summary>
@@ -836,7 +1024,7 @@ namespace QAdvanceFeedback.Core.Normalized
         public double SlipNonCrossingTeachingWeight
         {
             get { return _slipCrossingGate.NonCrossingWeight; }
-            set { _slipCrossingGate.NonCrossingWeight = value; }
+            set { _slipCrossingGate.NonCrossingWeight = value; _slipInternal.SlipGate.NonCrossingWeight = value; }
         }
 
         /// <summary>
@@ -848,7 +1036,7 @@ namespace QAdvanceFeedback.Core.Normalized
         public double LockNonCrossingTeachingWeightFactor
         {
             get { return _lockCrossingGate.NonCrossingWeightFactor; }
-            set { _lockCrossingGate.NonCrossingWeightFactor = value; }
+            set { _lockCrossingGate.NonCrossingWeightFactor = value; _lockInternal.LockGate.NonCrossingWeightFactor = value; }
         }
 
         /// <summary>
@@ -860,14 +1048,14 @@ namespace QAdvanceFeedback.Core.Normalized
         public double LockWalkBackGBandFraction
         {
             get { return _lockCrossingGate.WalkBackGBandFraction; }
-            set { _lockCrossingGate.WalkBackGBandFraction = value; }
+            set { _lockCrossingGate.WalkBackGBandFraction = value; _lockInternal.LockGate.WalkBackGBandFraction = value; }
         }
 
         /// <summary>See <see cref="LockWalkBackGBandFraction"/> - Slip's own, independent switch.</summary>
         public double SlipWalkBackGBandFraction
         {
             get { return _slipCrossingGate.WalkBackGBandFraction; }
-            set { _slipCrossingGate.WalkBackGBandFraction = value; }
+            set { _slipCrossingGate.WalkBackGBandFraction = value; _slipInternal.SlipGate.WalkBackGBandFraction = value; }
         }
 
         /// <summary>
@@ -912,21 +1100,36 @@ namespace QAdvanceFeedback.Core.Normalized
 
         /// <summary>Lock at-limit candidate frames for this key that were part of a crossing.</summary>
         public long LockCrossingValidFrames(string gameId, string carId, string sourceIdentity)
-            => _lockCrossingGate.ValidFrames(KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty));
+        {
+            // A key's crossing counters live in exactly one of the two gate objects (the internal key only
+            // ever runs through its own gate, every other key through the shared one), so the sum is that
+            // key's count.
+            string key = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty);
+            return _lockCrossingGate.ValidFrames(key) + _lockInternal.LockGate.ValidFrames(key);
+        }
 
         /// <summary>Every Lock at-limit candidate frame for this key. Recorded, not consumed.</summary>
         public long LockCrossingTotalFrames(string gameId, string carId, string sourceIdentity)
-            => _lockCrossingGate.TotalFrames(KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty));
+        {
+            string key = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty);
+            return _lockCrossingGate.TotalFrames(key) + _lockInternal.LockGate.TotalFrames(key);
+        }
 
         /// <summary>Slip at-limit candidate frames for this key that were part of a crossing, i.e. the
         /// frames that actually taught SMax.</summary>
         public long SlipCrossingValidFrames(string gameId, string carId, string sourceIdentity)
-            => _slipCrossingGate.ValidFrames(KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty));
+        {
+            string key = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty);
+            return _slipCrossingGate.ValidFrames(key) + _slipInternal.SlipGate.ValidFrames(key);
+        }
 
         /// <summary>Every Slip at-limit candidate frame for this key, crossing or not. RECORDED BUT NOT
         /// CONSUMED - see <see cref="SlipCrossingGate.RecordCandidate"/>.</summary>
         public long SlipCrossingTotalFrames(string gameId, string carId, string sourceIdentity)
-            => _slipCrossingGate.TotalFrames(KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty));
+        {
+            string key = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty);
+            return _slipCrossingGate.TotalFrames(key) + _slipInternal.SlipGate.TotalFrames(key);
+        }
 
         /// <summary>The full per-(game,car) keyed Lock learner store - exposed so the plugin
         /// composition root can Import/Export it through <c>RuntimeStore</c> at Init/every frame,
@@ -1172,6 +1375,8 @@ namespace QAdvanceFeedback.Core.Normalized
             _lockAtLimitLastBasis = null;
             _slipAtLimitLastG = null;
             _slipAtLimitLastBasis = null;
+            _lockInternal.AtLimitLastBasis = null;
+            _slipInternal.AtLimitLastBasis = null;
             // _surfaceSupport is DELIBERATELY not touched here - see its own field remarks.
         }
 
@@ -1292,6 +1497,11 @@ namespace QAdvanceFeedback.Core.Normalized
             // channel's own four wheel properties). Set here, before Lock's own ComputeChannel runs, so
             // the very first Slip query of the session already resolves.
             _slipScaleLearner.SetCrossChannelLockSourceIdentity(lockSourceIdentity);
+            // SAME SOURCE TYPE ONLY (Task G round 3): every Slip key - the active one, the internal one and
+            // every key ExportAll persists - borrows only from a Lock key of its own source type
+            // (CrossChannelSourcePairing). The pairing depends on this frame's Lock identity.
+            NotePairingInputs(lockSourceIdentity);
+            _slipScaleLearner.SetCrossChannelLockIdentityResolver(_pairingResolver);
 
             // THE SECOND HALF OF EACH GATE, kept in step with its own switch. The crossing rule governs
             // the at-limit distribution; this governs whether the GENERAL percentile may be adopted as
@@ -1304,6 +1514,33 @@ namespace QAdvanceFeedback.Core.Normalized
             _lockScaleLearner.SecondaryHandoverRequiresPrimaryEvidence = LockCrossingGateEnabled;
             _slipScaleLearner.SecondaryHandoverRequiresPrimaryEvidence = SlipCrossingGateEnabled;
 
+            // INTERNAL SOURCE ALWAYS LEARNS (docs\internal-source-learning-design.md). When the active
+            // identity IS the internal one (Plugin Internal selected, or a channel fallen back to Raw), the
+            // active path is the internal learner - it runs on the internal key's own gate and at-limit
+            // basis, and there is no second pass (fed once). Otherwise the active source learns under its
+            // own key on the shared gate, and the internal key is fed alongside it from Layer 3 Raw through
+            // the same gates (the mirror) - the mirror never touches the published output, the active key,
+            // or the shared non-source state (physical reference, surface support, direction, last G).
+            string lockInternalIdentity = LockInternalSourceIdentity ?? string.Empty;
+            string slipInternalIdentity = SlipInternalSourceIdentity ?? string.Empty;
+            bool lockActiveIsInternal = string.Equals(lockSourceIdentity ?? string.Empty, lockInternalIdentity, StringComparison.Ordinal);
+            bool slipActiveIsInternal = string.Equals(slipSourceIdentity ?? string.Empty, slipInternalIdentity, StringComparison.Ordinal);
+            // ACTIVE-IDENTITY CHANGE (Task G fix round 1): the shared gate and at-limit basis carry one
+            // source's trend, hold window and snapshot in THAT source's native units. On any change of the
+            // active identity (ShakeIt -> Viper, ShakeIt -> Raw fallback -> ShakeIt, ...) they are cleared,
+            // so a source never differences against - or is taught - another source's (or its own
+            // pre-gap) series. Per-key crossing counters live in the gate's dictionaries and are kept.
+            NoteActiveIdentity(_lockLastActive, lockSourceIdentity, lockInternalIdentity, _lockCrossingGate, null, ref _lockAtLimitLastBasis, ref _lockFallbackDivergence, _lockAnchors, gameId, carId);
+            NoteActiveIdentity(_slipLastActive, slipSourceIdentity, slipInternalIdentity, null, _slipCrossingGate, ref _slipAtLimitLastBasis, ref _slipFallbackDivergence, null, gameId, carId);
+            double? lockActiveAtLimitLastBasis = lockActiveIsInternal ? _lockInternal.AtLimitLastBasis : _lockAtLimitLastBasis;
+            double? slipActiveAtLimitLastBasis = slipActiveIsInternal ? _slipInternal.AtLimitLastBasis : _slipAtLimitLastBasis;
+            LockCrossingGate lockActiveGate = LockCrossingGateEnabled ? (lockActiveIsInternal ? _lockInternal.LockGate : _lockCrossingGate) : null;
+            SlipCrossingGate slipActiveGate = SlipCrossingGateEnabled ? (slipActiveIsInternal ? _slipInternal.SlipGate : _slipCrossingGate) : null;
+            InternalMirror lockMirror = lockActiveIsInternal ? null : PrepareMirror(_lockMirror, _lockInternal, lockInternalIdentity,
+                LockInternalManualAnchors, LockCrossingGateEnabled ? _lockInternal.LockGate : null, null);
+            InternalMirror slipMirror = slipActiveIsInternal ? null : PrepareMirror(_slipMirror, _slipInternal, slipInternalIdentity,
+                SlipInternalManualAnchors, null, SlipCrossingGateEnabled ? _slipInternal.SlipGate : null);
+
             Corners lockWheels = ComputeChannel(sample.New, rawLockWheels, motion, _lockLearners, _lockPhysicalReference, _lockScaleLearner,
                 gameId, carId, lockSourceIdentity, instantLooseFraction,
                 direction == LongitudinalMotionState.Slowing, lockTriggered, lockObserveAllowed, dtSeconds,
@@ -1311,13 +1548,15 @@ namespace QAdvanceFeedback.Core.Normalized
                 out _lockScaleCeiling, out _lockScaleCeilingIsPrimaryTier,
                 out _lockSourceFallbackActive, ref _lockFallbackDivergence, ref _lockLastG, out _lockUtilization, out _lockBranchConfidence,
                 out _lockCarLevelSeverity, out _lockAllScale, out _lockColdStartConfidence, _lockAnchors, out _lockFourRangeCurveActive,
-                ref _lockAtLimitLastG, ref _lockAtLimitLastBasis, out _lockNativeAggregate,
+                ref _lockAtLimitLastG, ref lockActiveAtLimitLastBasis, out _lockNativeAggregate,
                 useFourRangeForSeverity: LockNormalizePattern == NormalizePattern.Mapping,
                 manualAnchors: LockManualAnchors,
                 reportManualApplied: applied => _lockManualAnchorsApplied = applied,
                 manualGate: _manualGate,
                 // LOCK ONLY - see the field's own remarks for why this is a different class from Slip's.
-                lockCrossingGate: LockCrossingGateEnabled ? _lockCrossingGate : null);
+                lockCrossingGate: lockActiveGate,
+                internalIdentity: lockInternalIdentity,
+                mirror: lockMirror);
             Corners slipWheels = ComputeChannel(sample.New, rawSlipWheels, motion, _slipLearners, _slipPhysicalReference, _slipScaleLearner,
                 gameId, carId, slipSourceIdentity, instantLooseFraction,
                 direction == LongitudinalMotionState.SpeedingUp, slipTriggered, slipObserveAllowed, dtSeconds,
@@ -1325,7 +1564,7 @@ namespace QAdvanceFeedback.Core.Normalized
                 out _slipScaleCeiling, out _slipScaleCeilingIsPrimaryTier,
                 out _slipSourceFallbackActive, ref _slipFallbackDivergence, ref _slipLastG, out _slipUtilization, out _slipBranchConfidence,
                 out _slipCarLevelSeverity, out _slipAllScale, out _slipColdStartConfidence, lockAnchorLearner: null, out _slipFourRangeCurveActive,
-                ref _slipAtLimitLastG, ref _slipAtLimitLastBasis, out _slipNativeAggregate,
+                ref _slipAtLimitLastG, ref slipActiveAtLimitLastBasis, out _slipNativeAggregate,
                 // SLIP ONLY - see the floor's own remarks at the severity assignment. The Lock call above
                 // deliberately does not pass this, so Lock keeps the F1 25 fix's behaviour exactly.
                 floorSeverityAtRawBasis: true,
@@ -1334,7 +1573,14 @@ namespace QAdvanceFeedback.Core.Normalized
                 reportManualApplied: applied => _slipManualAnchorsApplied = applied,
                 manualGate: _manualGate,
                 // SLIP ONLY - see the field's own remarks for why Lock has no counterpart.
-                slipCrossingGate: SlipCrossingGateEnabled ? _slipCrossingGate : null);
+                slipCrossingGate: slipActiveGate,
+                internalIdentity: slipInternalIdentity,
+                mirror: slipMirror);
+
+            if (lockActiveIsInternal) _lockInternal.AtLimitLastBasis = lockActiveAtLimitLastBasis;
+            else _lockAtLimitLastBasis = lockActiveAtLimitLastBasis;
+            if (slipActiveIsInternal) _slipInternal.AtLimitLastBasis = slipActiveAtLimitLastBasis;
+            else _slipAtLimitLastBasis = slipActiveAtLimitLastBasis;
 
             // TIERED COLD-START REFERENCE SYSTEM (v1.0.7, docs\v107-tiered-coldstart-report.md) -
             // diagnostic-only readout of which tier THIS key most recently resolved to (the actual
@@ -1452,8 +1698,9 @@ namespace QAdvanceFeedback.Core.Normalized
             bool useFourRangeForSeverity = true, bool floorSeverityAtRawBasis = false,
             ManualAnchors manualAnchors = default(ManualAnchors), Action<bool> reportManualApplied = null,
             ManualOverrideGate manualGate = null, SlipCrossingGate slipCrossingGate = null,
-            LockCrossingGate lockCrossingGate = null)
+            LockCrossingGate lockCrossingGate = null, string internalIdentity = "", InternalMirror mirror = null)
         {
+            internalIdentity = internalIdentity ?? string.Empty;
             // MID-CHAIN CLAMP FIX (docs\clamp-chain-fix-report.md) - default, no-op value for every early
             // return below that this fix does not target (not triggered/not engaged/no G signal at all):
             // Aggregator.Compute of an all-zero Corners is itself all-zero, so `nativeAggregate.X * 1.0`
@@ -1534,6 +1781,13 @@ namespace QAdvanceFeedback.Core.Normalized
                 + (w1 >= LockCrossingGate.SaturatedWheelThreshold ? 1 : 0)
                 + (w2 >= LockCrossingGate.SaturatedWheelThreshold ? 1 : 0)
                 + (w3 >= LockCrossingGate.SaturatedWheelThreshold ? 1 : 0);
+            // The internal pass's own count, from the internal key's own values (Layer 3 Raw) - exactly
+            // what the active path counts when Plugin Internal is selected.
+            int saturatedWheelCountInternal =
+                (lw0 >= LockCrossingGate.SaturatedWheelThreshold ? 1 : 0)
+                + (lw1 >= LockCrossingGate.SaturatedWheelThreshold ? 1 : 0)
+                + (lw2 >= LockCrossingGate.SaturatedWheelThreshold ? 1 : 0)
+                + (lw3 >= LockCrossingGate.SaturatedWheelThreshold ? 1 : 0);
 
             double calibrationBasisConfigured = useAggregatedAllScale
                 ? aggregatedNativeConfigured
@@ -1554,6 +1808,10 @@ namespace QAdvanceFeedback.Core.Normalized
 
             sourceFallbackActive = false;
             scaleCeiling = scaleLearner.LearnedCeiling(gameId, carId, sourceIdentity, out scaleCeilingIsPrimaryTier);
+            // INTERNAL PASS - the same reads the active path makes when the internal source is selected.
+            // KeyedScaleLearner's tier resolution latches on a read, so a read is part of the learned
+            // state's history and is mirrored, not skipped.
+            if (mirror != null) scaleLearner.LearnedCeiling(gameId, carId, mirror.Identity, out _);
 
             // TRIGGER THRESHOLD (owner-requested restructure, and the owner's OWN clarification: this
             // gate applies at the SOURCE BOUNDARY, unconditionally, whatever the configured source is
@@ -1582,6 +1840,7 @@ namespace QAdvanceFeedback.Core.Normalized
                 lockCrossingGate?.Reset();
                 // FEATURE C - the anchor learner's own run-bracket tracking breaks for the same reason.
                 lockAnchorLearner?.ResetRun(gameId, carId, sourceIdentity);
+                ResetMirrorRun(mirror, lockAnchorLearner, gameId, carId);
                 return Corners.Zero;
             }
 
@@ -1607,6 +1866,15 @@ namespace QAdvanceFeedback.Core.Normalized
                 slipCrossingGate?.Reset();
                 lockCrossingGate?.Reset();
                 lockAnchorLearner?.ResetRun(gameId, carId, sourceIdentity);
+                ResetMirrorRun(mirror, lockAnchorLearner, gameId, carId);
+                // INTERNAL PASS - the same four Rescale reads the active path makes here when selected.
+                if (mirror != null)
+                {
+                    scaleLearner.Rescale(gameId, carId, mirror.Identity, lw0);
+                    scaleLearner.Rescale(gameId, carId, mirror.Identity, lw1);
+                    scaleLearner.Rescale(gameId, carId, mirror.Identity, lw2);
+                    scaleLearner.Rescale(gameId, carId, mirror.Identity, lw3);
+                }
                 // OUT OF SCOPE for the mid-chain clamp fix (this is KeyedScaleLearner.Rescale's own
                 // independent per-wheel calibration, not the severity-driven allScale/mean-relative-scale
                 // path the fix targets - see this class's own remarks). `allScale` stays at its neutral
@@ -1641,6 +1909,7 @@ namespace QAdvanceFeedback.Core.Normalized
                 slipCrossingGate?.Reset();
                 lockCrossingGate?.Reset();
                 lockAnchorLearner?.ResetRun(gameId, carId, sourceIdentity);
+                ResetMirrorRun(mirror, lockAnchorLearner, gameId, carId);
                 return Corners.Zero;
             }
 
@@ -1680,11 +1949,27 @@ namespace QAdvanceFeedback.Core.Normalized
                     physicalReference, gameId, carId, motion.MagnitudeG, calibrationBasisConfigured, smoothedLooseFraction,
                     atLimitLastG.Value, atLimitLastBasis ?? 0.0, physicalRatioNow)
                 : 0.0;
+            // INTERNAL PASS - the same detector on the internal key's own effort series (Layer 3 Raw) and
+            // its own previous basis; atLimitLastG is source-independent and read before it advances.
+            double atLimitWeightInternal = 0.0;
+            if (mirror != null)
+            {
+                atLimitWeightInternal = atLimitLastG.HasValue
+                    ? ComputeCornerAtLimitConfidence(
+                        physicalReference, gameId, carId, motion.MagnitudeG, calibrationBasisFallback, smoothedLooseFraction,
+                        atLimitLastG.Value, mirror.State.AtLimitLastBasis ?? 0.0, physicalRatioNow)
+                    : 0.0;
+                mirror.State.AtLimitLastBasis = calibrationBasisFallback;
+            }
             atLimitLastG = motion.MagnitudeG;
             atLimitLastBasis = calibrationBasisConfigured;
 
             if (observeAllowed && IsLongitudinallyIsolated(frame) && observeBucket != null)
             {
+                // INTERNAL PASS - the source-keyed grip learner is fed for the internal key too (its input
+                // is the car's achieved G, so the value is the one it would see when selected).
+                if (mirror != null)
+                    learners.Observe(gameId, carId, motion.MagnitudeG, mirror.Identity, observeBucket, speedKmh);
                 // Kept purely for the Diag.Lock/Slip.LearnedPeakG/LearnerConfidence diagnostics and
                 // RuntimeStore persistence continuity (docs\f1-normalization-fix-report.md) - its
                 // Ratio() is no longer queried for the live severity below (see this class's own
@@ -1697,7 +1982,13 @@ namespace QAdvanceFeedback.Core.Normalized
                 // gates ONLY the speed-bucket admission inside GripLearner.Observe (see that method's own
                 // remarks) - the flat, non-speed-aware peak this same call also feeds keeps updating
                 // unconditionally, exactly as before this fix.
-                physicalReference.Observe(gameId, carId, motion.MagnitudeG, PhysicalReferenceSourceIdentity, observeBucket, speedKmh, atLimitWeight);
+                // INTERNAL SOURCE ALWAYS LEARNS, NOT POLLUTED (Task G fix round 1): the shared reference's
+                // speed-bucket admission is the INTERNAL source's own corner-local confidence (Layer 3 Raw's
+                // effort series) whichever source is active, so this state - and everything read from it
+                // (the internal anchors' speed-aware u, ΔG collapse) - is a function of car motion and our
+                // own source only. Observed once. When the internal source is active, atLimitWeight IS it.
+                physicalReference.Observe(gameId, carId, motion.MagnitudeG, PhysicalReferenceSourceIdentity, observeBucket, speedKmh,
+                    mirror != null ? atLimitWeightInternal : atLimitWeight);
             }
 
             // DEFECT B FIX (docs\v1068-four-range-report.md) - MAX-GRIP CALIBRATION BASIS, RECONCILED
@@ -1804,11 +2095,11 @@ namespace QAdvanceFeedback.Core.Normalized
             // needs a continuous series to difference against - sampling it only at candidates would
             // measure the gaps between them instead.
             // WHAT A QUALIFIED FRAME TEACHES is the reading captured AT THE CROSSING, not this frame's
-            // own - see SlipCrossingGate.TeachingBasis for the measurement that forced this. These two
-            // locals default to the live bases, so the LOCK call (slipCrossingGate == null) passes
-            // exactly the values it always did, byte for byte.
+            // own - see SlipCrossingGate.TeachingBasis for the measurement that forced this. This local
+            // defaults to the live basis, so the LOCK call (slipCrossingGate == null) passes exactly the
+            // value it always did, byte for byte. (Its fallback twin, which taught the retired hidden
+            // key, is gone: the internal key is taught by the internal pass from its OWN gate's snapshot.)
             double smaxTeachingBasis = calibrationBasisConfigured;
-            double smaxTeachingFallbackBasis = calibrationBasisFallback;
 
             // ---- LOCK TRACTION-CROSSING GATE (docs\slip-smax-crossing-gate-design.md, section 9) ----
             //
@@ -1833,7 +2124,6 @@ namespace QAdvanceFeedback.Core.Normalized
                 {
                     smaxTeachingWeight = lockCrossingGate.TeachingWeight(atLimitWeight);
                     smaxTeachingBasis = lockCrossingGate.TeachingBasis(calibrationBasisConfigured);
-                    smaxTeachingFallbackBasis = lockCrossingGate.TeachingFallbackBasis(calibrationBasisFallback);
                     lockZeroWeightFold = smaxTeachingWeight <= 0.0;
                     lockCrossingGate.RecordCandidate(
                         KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty), qualified);
@@ -1850,10 +2140,44 @@ namespace QAdvanceFeedback.Core.Normalized
                 {
                     smaxTeachingWeight = slipCrossingGate.TeachingWeight;
                     smaxTeachingBasis = slipCrossingGate.TeachingBasis(calibrationBasisConfigured);
-                    smaxTeachingFallbackBasis = slipCrossingGate.TeachingFallbackBasis(calibrationBasisFallback);
                     slipZeroWeightFold = smaxTeachingWeight <= 0.0;
                     slipCrossingGate.RecordCandidate(
                         KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty), qualified);
+                }
+            }
+
+            // INTERNAL PASS - the same two gate blocks, on the internal key's own gate object and its own
+            // values (Layer 3 Raw is both the "configured" and the "fallback" series, exactly as when
+            // Plugin Internal is selected).
+            double smaxTeachingWeightInternal = isLockChannel ? atLimitWeightInternal : (physicallyAtLimit ? 1.0 : 0.0);
+            double smaxTeachingBasisInternal = calibrationBasisFallback;
+            bool zeroWeightFoldInternal = false;
+            if (mirror != null && isLockChannel && mirror.LockGate != null)
+            {
+                bool qualifiedInternal = mirror.LockGate.Observe(
+                    calibrationBasisFallback, calibrationBasisFallback, motion.MagnitudeG,
+                    atLimitWeightInternal > 0.0, dtSeconds, saturatedWheelCountInternal);
+                if (atLimitWeightInternal > 0.0)
+                {
+                    smaxTeachingWeightInternal = mirror.LockGate.TeachingWeight(atLimitWeightInternal);
+                    smaxTeachingBasisInternal = mirror.LockGate.TeachingBasis(calibrationBasisFallback);
+                    zeroWeightFoldInternal = smaxTeachingWeightInternal <= 0.0;
+                    mirror.LockGate.RecordCandidate(
+                        mirror.KeyFor(gameId, carId), qualifiedInternal);
+                }
+            }
+            if (mirror != null && !isLockChannel && mirror.SlipGate != null)
+            {
+                bool qualifiedInternal = mirror.SlipGate.Observe(
+                    calibrationBasisFallback, calibrationBasisFallback, motion.MagnitudeG,
+                    physicallyAtLimit, dtSeconds, saturatedWheelCountInternal);
+                if (physicallyAtLimit)
+                {
+                    smaxTeachingWeightInternal = mirror.SlipGate.TeachingWeight;
+                    smaxTeachingBasisInternal = mirror.SlipGate.TeachingBasis(calibrationBasisFallback);
+                    zeroWeightFoldInternal = smaxTeachingWeightInternal <= 0.0;
+                    mirror.SlipGate.RecordCandidate(
+                        mirror.KeyFor(gameId, carId), qualifiedInternal);
                 }
             }
 
@@ -1898,23 +2222,34 @@ namespace QAdvanceFeedback.Core.Normalized
                 scaleLearner.ObserveGeneral(gameId, carId, sourceIdentity, calibrationBasisConfigured);
             }
 
-            // SHAKEIT-SILENCE FALLBACK (docs\shakeit-silence-diagnosis-report.md) - keep the fallback's
-            // OWN calibration warm every qualifying frame, regardless of what source is actually
-            // configured (mirroring how physicalReference above is always fed regardless of source), so
-            // that WHEN the fallback below actually engages, Rescale is not itself starting cold.
+            // INTERNAL SOURCE ALWAYS LEARNS (docs\internal-source-learning-design.md) - the internal key's
+            // own calibration, kept warm every qualifying frame regardless of which source is active, so
+            // that WHEN the relative fallback below engages, Rescale is not itself starting cold. This
+            // used to feed a separate hidden key with the ACTIVE source's teaching weight; it is now the
+            // exact block above, run for the internal key with its own gate verdict, floor, snapshot and
+            // surface bucket - the same updates it receives when Plugin Internal is selected. Skipped
+            // when the internal source IS the active one (mirror == null): the block above already fed it.
             double layer3RawMean = layer3RawMeanEarly;
-            if (calibrationBasisFallback >= MinRawForCalibrationObservation)
+            if (mirror != null)
             {
-                // SAME GATE AS THE CONFIGURED KEY ABOVE - the fallback is this same channel's own Raw
-                // reading, so it must be taught at the same moments and with the same confidence, or the
-                // two keys would learn ceilings on different definitions and the divergence test between
-                // them (further down) would compare quantities that are not comparable.
-                if (slipZeroWeightFold || lockZeroWeightFold)
-                    scaleLearner.ObserveNonQualifyingAtPhysicalLimit(gameId, carId, RawFallbackSourceIdentity);
-                // Same snapshot-vs-live threshold split as the configured key above.
-                else if (smaxTeachingWeight > 0.0 && smaxTeachingFallbackBasis >= MinRawForCalibrationObservation)
-                    scaleLearner.ObserveAtPhysicalLimit(gameId, carId, RawFallbackSourceIdentity, smaxTeachingFallbackBasis, smaxTeachingWeight);
-                scaleLearner.ObserveGeneral(gameId, carId, RawFallbackSourceIdentity, calibrationBasisFallback);
+                double observationFloorInternal =
+                    scaleLearner.CalibrationObservationFloor(mirror.Identity, MinRawForCalibrationObservation);
+                if (calibrationBasisFallback >= observationFloorInternal)
+                {
+                    if (zeroWeightFoldInternal)
+                    {
+                        scaleLearner.ObserveNonQualifyingAtPhysicalLimit(gameId, carId, mirror.Identity);
+                        if (observeBucket != null)
+                            scaleLearner.ObserveNonQualifyingAtPhysicalLimit(gameId, carId, mirror.Identity, observeBucket);
+                    }
+                    else if (smaxTeachingWeightInternal > 0.0 && smaxTeachingBasisInternal >= observationFloorInternal)
+                    {
+                        scaleLearner.ObserveAtPhysicalLimit(gameId, carId, mirror.Identity, smaxTeachingBasisInternal, smaxTeachingWeightInternal);
+                        if (observeBucket != null)
+                            scaleLearner.ObserveAtPhysicalLimit(gameId, carId, mirror.Identity, smaxTeachingBasisInternal, smaxTeachingWeightInternal, observeBucket);
+                    }
+                    scaleLearner.ObserveGeneral(gameId, carId, mirror.Identity, calibrationBasisFallback);
+                }
             }
 
             // TIERED COLD-START REFERENCE SYSTEM (v1.0.7) - observeBucket (null when the surface is
@@ -1926,6 +2261,12 @@ namespace QAdvanceFeedback.Core.Normalized
             string tierSurfaceHint = observeBucket ?? SealedSurfaceBucket;
             double calibratedMean = scaleLearner.Rescale(gameId, carId, sourceIdentity, calibrationBasisConfigured, tierSurfaceHint);
             scaleCeiling = scaleLearner.LearnedCeiling(gameId, carId, sourceIdentity, out scaleCeilingIsPrimaryTier, tierSurfaceHint);
+            double? scaleCeilingInternal = null;
+            if (mirror != null)
+            {
+                scaleLearner.Rescale(gameId, carId, mirror.Identity, calibrationBasisFallback, tierSurfaceHint);
+                scaleCeilingInternal = scaleLearner.LearnedCeiling(gameId, carId, mirror.Identity, out _, tierSurfaceHint);
+            }
 
             // ---- MANUAL KEY DATA POINTS (v1.0.7.2) ----
             //
@@ -1964,7 +2305,13 @@ namespace QAdvanceFeedback.Core.Normalized
             // to Auto is instant.
             string manualGateKey = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty);
             if (manualGate != null)
+            {
                 manualGate.Observe(manualGateKey, dtSeconds, advancing: engaged && speedKmh.HasValue && speedKmh.Value > 0.0);
+                // INTERNAL PASS - the internal key earns its own manual-gate driving time too.
+                if (mirror != null)
+                    manualGate.Observe(mirror.KeyFor(gameId, carId), dtSeconds,
+                        advancing: engaged && speedKmh.HasValue && speedKmh.Value > 0.0);
+            }
 
             // `SMax > 0` is the whole test: a blank box ("---") never reaches here as Active, and a zero
             // or negative ceiling would divide the rescale by nothing.
@@ -2073,13 +2420,13 @@ namespace QAdvanceFeedback.Core.Normalized
                     fourRangeCurveActive = useFourRangeForSeverity;
                 }
 
-                // The SAME curve mechanism, kept warm for the SHAKEIT-SILENCE FALLBACK identity too (see
-                // RawFallbackSourceIdentity's own remarks) - mirrors how scaleLearner/physicalReference are
-                // always fed both identities, so the fallback blend below is never comparing a curve-mapped
-                // value against a Rescale-mapped one on the SAME frame for no reason other than which
-                // identity happened to warm up first.
-                double? smaxFallback = scaleLearner.LearnedCeiling(gameId, carId, RawFallbackSourceIdentity, out _);
-                if (TryBuildLockRangeCurveWithFallback(lockAnchorLearner, gameId, carId, RawFallbackSourceIdentity, smaxFallback, scaleLearner, out MonotoneCubicCurve rangeCurveFallback))
+                // The SAME curve mechanism, read for the internal key too (the relative fallback's
+                // comparison target - see LockInternalSourceIdentity), so the fallback blend below is never
+                // comparing a curve-mapped value against a Rescale-mapped one on the SAME frame for no reason
+                // other than which identity happened to warm up first. A READ only: the internal key's own
+                // anchors are taught by the internal pass below (or by this branch, when it is selected).
+                double? smaxFallback = scaleLearner.LearnedCeiling(gameId, carId, internalIdentity, out _);
+                if (TryBuildLockRangeCurveWithFallback(lockAnchorLearner, gameId, carId, internalIdentity, smaxFallback, scaleLearner, out MonotoneCubicCurve rangeCurveFallback))
                 {
                     lockFourRangeSeverityFallback = rangeCurveFallback.Evaluate(calibrationBasisFallback);
                 }
@@ -2089,11 +2436,8 @@ namespace QAdvanceFeedback.Core.Normalized
                     // SPEED-AWARE, NARROWLY (owner's explicit scoping - see LockAnchorLearner's own
                     // remarks): "that corner's own max-grip G" needs speedKmh; this ratio is used SOLELY
                     // to identify/validate the 30/60 anchors, never to decide what gets published.
-                    double uSpeedAwareSealed = physicalReference.Ratio(gameId, carId, motion.MagnitudeG, PhysicalReferenceSourceIdentity, SealedSurfaceBucket, applyColdStartCeiling: false, speedKmh: speedKmh, useStabilityGatedCeiling: false);
-                    double uSpeedAwareLoose = physicalReference.Ratio(gameId, carId, motion.MagnitudeG, PhysicalReferenceSourceIdentity, LooseSurfaceBucket, applyColdStartCeiling: false, speedKmh: speedKmh, useStabilityGatedCeiling: false);
-                    double uSpeedAware = Blend(uSpeedAwareSealed, uSpeedAwareLoose, smoothedLooseFraction);
+                    double uSpeedAware = SpeedAwareUtilization(physicalReference, gameId, carId, motion.MagnitudeG, speedKmh, smoothedLooseFraction);
                     lockAnchorLearner.Observe(gameId, carId, sourceIdentity, uSpeedAware, calibrationBasisConfigured, smaxConfigured);
-                    lockAnchorLearner.Observe(gameId, carId, RawFallbackSourceIdentity, uSpeedAware, calibrationBasisFallback, smaxFallback);
 
                     // PHYSICALLY-DERIVED ANCHORS (docs\cross-channel-smax-report.md) - buffer this frame
                     // for retrospective extraction when the braking event ends. Deliberately fed the SAME
@@ -2102,8 +2446,27 @@ namespace QAdvanceFeedback.Core.Normalized
                     // LockAnchorLearner.ObserveCornerFrame for why it cannot be.
                     lockAnchorLearner.ObserveCornerFrame(gameId, carId, sourceIdentity,
                         motion.MagnitudeG, calibrationBasisConfigured, atLimitWeight, smaxConfigured);
-                    lockAnchorLearner.ObserveCornerFrame(gameId, carId, RawFallbackSourceIdentity,
-                        motion.MagnitudeG, calibrationBasisFallback, atLimitWeight, smaxFallback);
+                }
+            }
+
+            // INTERNAL PASS - Lock anchors (S75/S90). The internal key takes the branch IT would take when
+            // selected - its own manual key data decides it, not the active source's - and, on the
+            // learning branch, receives the same Observe / ObserveCornerFrame calls with its own basis,
+            // its own ceiling and its own at-limit confidence. Placed after the active chain so every
+            // active-path read of the internal key above sees it as the previous frame left it, exactly
+            // as the retired hidden key was read.
+            if (mirror != null && lockAnchorLearner != null)
+            {
+                bool manualReadyInternal = mirror.ManualAnchors.Active && mirror.ManualAnchors.SMax > 0.0;
+                bool takesManualBranch = manualReadyInternal && useFourRangeForSeverity
+                    && TryBuildLockRangeCurve(mirror.ManualAnchors.S75, mirror.ManualAnchors.S90, mirror.ManualAnchors.SMax, out _);
+                if (!takesManualBranch && useFourRangeForSeverity && observeAllowed && IsLongitudinallyIsolated(frame))
+                {
+                    double? smaxInternal = manualReadyInternal ? mirror.ManualAnchors.SMax : scaleCeilingInternal;
+                    double uSpeedAware = SpeedAwareUtilization(physicalReference, gameId, carId, motion.MagnitudeG, speedKmh, smoothedLooseFraction);
+                    lockAnchorLearner.Observe(gameId, carId, mirror.Identity, uSpeedAware, calibrationBasisFallback, smaxInternal);
+                    lockAnchorLearner.ObserveCornerFrame(gameId, carId, mirror.Identity,
+                        motion.MagnitudeG, calibrationBasisFallback, atLimitWeightInternal, smaxInternal);
                 }
             }
 
@@ -2130,10 +2493,10 @@ namespace QAdvanceFeedback.Core.Normalized
             // RELATIVE FALLBACK (docs\relative-fallback-and-raw-default-report.md - superseding the
             // absolute "source < 2.0" trigger, see this class's own history note at the top of the file
             // for the full derivation and measured before/after numbers). Layer 3's Raw, calibrated onto
-            // the SAME canonical 0-100 band via the SAME KeyedScaleLearner (under the dedicated,
-            // always-warm RawFallbackSourceIdentity key) - a fair, like-for-like comparison against
-            // calibratedMean above, never a native-units one.
-            double calibratedRawFallback = scaleLearner.Rescale(gameId, carId, RawFallbackSourceIdentity, calibrationBasisFallback);
+            // the SAME canonical 0-100 band via the SAME KeyedScaleLearner (under our internal source's own,
+            // always-learning key - internalIdentity; formerly a separate hidden key) - a fair,
+            // like-for-like comparison against calibratedMean above, never a native-units one.
+            double calibratedRawFallback = scaleLearner.Rescale(gameId, carId, internalIdentity, calibrationBasisFallback);
 
             // Only ever a genuine signal to evaluate the disagreement against when Raw itself clears the
             // SAME "real, not noise/placeholder" bar this class already trusts elsewhere
@@ -2439,6 +2802,26 @@ namespace QAdvanceFeedback.Core.Normalized
         {
             curve = null;
             if (!smax.HasValue) return false;
+            if (!TryResolveLockAnchors(learner, gameId, carId, sourceIdentity, smax.Value, scaleLearner, out double s75, out double s90)) return false;
+            return TryBuildLockRangeCurve(s75, s90, smax.Value, out curve);
+        }
+
+        /// <summary>
+        /// THE S75 / S90 THE LOCK OUTPUT USES (owner, 2026-11-22) - for the settings page and the ShakeIt panel, so what is
+        /// shown is what is applied: the same chain <see cref="TryBuildLockRangeCurveWithFallback"/> builds its curve from,
+        /// and only a pair it can build from - so always S75 &lt; S90 &lt; SMax. False when no curve is buildable (the
+        /// output then rescales by SMax alone). Reads learner state only.
+        /// </summary>
+        public bool TryResolveLockAnchors(string gameId, string carId, string sourceIdentity, double smax, out double s75, out double s90) =>
+            TryResolveLockAnchors(LockAnchors, gameId, carId, sourceIdentity, smax, LockScaleLearner, out s75, out s90);
+
+        /// <summary>The first buildable S75 / S90 pair of the anchor chain (see <see cref="TryBuildLockRangeCurveWithFallback"/>).</summary>
+        private static bool TryResolveLockAnchors(
+            LockAnchorLearner learner, string gameId, string carId, string sourceIdentity, double smax,
+            KeyedScaleLearner scaleLearner, out double s75Out, out double s90Out)
+        {
+            s75Out = s90Out = 0.0;
+            if (learner == null) return false;
 
             // PHYSICALLY-ANCHORED ANCHORS, PREFERRED (docs\cross-channel-smax-report.md).
             //
@@ -2470,8 +2853,10 @@ namespace QAdvanceFeedback.Core.Normalized
             {
                 double s75Ratio = learner.PhysicalS75Ratio(gameId, carId, sourceIdentity, PhysicalS75SeedRatio);
                 double s90Ratio = learner.PhysicalS90Ratio(gameId, carId, sourceIdentity, PhysicalS90SeedRatio);
-                if (TryBuildLockRangeCurve(smax.Value * s75Ratio, smax.Value * s90Ratio, smax.Value, out curve))
-                    return true;
+                if (Buildable(smax * s75Ratio, smax * s90Ratio, smax, ref s75Out, ref s90Out)) return true;
+                // One learned ratio out of order with the other (S75 not under S90): the seeds for both, still this
+                // key's own SMax.
+                if (Buildable(smax * PhysicalS75SeedRatio, smax * PhysicalS90SeedRatio, smax, ref s75Out, ref s90Out)) return true;
             }
 
             // LEGACY CROSSING ANCHORS - retained so a key restored from persisted state, or one whose
@@ -2481,13 +2866,20 @@ namespace QAdvanceFeedback.Core.Normalized
             // pattern's contract, both of which are unchanged by this).
             double? s75 = learner.LearnedS75(gameId, carId, sourceIdentity);
             double? s90 = learner.LearnedS90(gameId, carId, sourceIdentity);
-            if (s75.HasValue && s90.HasValue && TryBuildLockRangeCurve(s75.Value, s90.Value, smax.Value, out curve))
-                return true;
+            if (s75.HasValue && s90.HasValue && Buildable(s75.Value, s90.Value, smax, ref s75Out, ref s90Out)) return true;
 
             double? s75Fallback = RatioOfSmaxFallback(smax, S75FallbackRatioOfSmax);
             double? s90Fallback = RatioOfSmaxFallback(smax, S90FallbackRatioOfSmax);
             return s75Fallback.HasValue && s90Fallback.HasValue
-                && TryBuildLockRangeCurve(s75Fallback.Value, s90Fallback.Value, smax.Value, out curve);
+                && Buildable(s75Fallback.Value, s90Fallback.Value, smax, ref s75Out, ref s90Out);
+        }
+
+        private static bool Buildable(double s75, double s90, double smax, ref double s75Out, ref double s90Out)
+        {
+            if (!TryBuildLockRangeCurve(s75, s90, smax, out _)) return false;
+            s75Out = s75;
+            s90Out = s90;
+            return true;
         }
 
         /// <summary>
@@ -2731,6 +3123,27 @@ namespace QAdvanceFeedback.Core.Normalized
                 AtLimitPlausibilityRatioCeiling - AtLimitPlausibilityRatioFloor, 0.0));
 
             return gPlateauOrFalling * effortSustained * gPlausibleMagnitude;
+        }
+
+        /// <summary>The speed-aware, surface-blended utilization the Lock anchor learner is fed - a pure
+        /// read of the shared physical reference (identical for every source on a frame).</summary>
+        private static double SpeedAwareUtilization(KeyedGripLearner physicalReference, string gameId, string carId,
+            double magnitudeG, double? speedKmh, double smoothedLooseFraction)
+        {
+            double sealedRatio = physicalReference.Ratio(gameId, carId, magnitudeG, PhysicalReferenceSourceIdentity, SealedSurfaceBucket, applyColdStartCeiling: false, speedKmh: speedKmh, useStabilityGatedCeiling: false);
+            double looseRatio = physicalReference.Ratio(gameId, carId, magnitudeG, PhysicalReferenceSourceIdentity, LooseSurfaceBucket, applyColdStartCeiling: false, speedKmh: speedKmh, useStabilityGatedCeiling: false);
+            return Blend(sealedRatio, looseRatio, smoothedLooseFraction);
+        }
+
+        /// <summary>The internal pass's half of a disengagement reset: its own gate, its own previous
+        /// at-limit basis and its own anchor run bracket - what the active path resets for itself.</summary>
+        private static void ResetMirrorRun(InternalMirror mirror, LockAnchorLearner lockAnchorLearner, string gameId, string carId)
+        {
+            if (mirror == null) return;
+            mirror.State.AtLimitLastBasis = null;
+            mirror.LockGate?.Reset();
+            mirror.SlipGate?.Reset();
+            lockAnchorLearner?.ResetRun(gameId, carId, mirror.Identity);
         }
 
         private static bool IsLongitudinallyIsolated(ITelemetryFrame frame)

@@ -114,7 +114,23 @@ namespace QAdvanceFeedback.Core
             foreach (string t in PublishedPropertyNames.Targets) yield return ProjectedSlipPrefix + t;
 
             foreach (string n in GForcePublishedNames.AllNames()) yield return n;
+
+            // Clutch Bite (docs\clutch-bite-design.md) - appended LAST, so every earlier name and CSV
+            // column keeps its position.
+            yield return ClutchBiteOutputName;
+
+            // Slip Angle (docs\slip-angle-design.md 9.8) - appended LAST, after Clutch Bite.
+            foreach (string n in SlipAngle.SlipAnglePublishedNames.ProductNames) yield return n;
         }
+
+        /// <summary>The Clutch Bite output, 0..100.</summary>
+        public const string ClutchBiteOutputName = "Clutch.Bite.Output";
+
+        /// <summary>Clutch Bite diagnostics, in CSV order.</summary>
+        public static readonly string[] ClutchDiagnosticNames =
+        {
+            "Diag.Clutch.Source", "Diag.Clutch.Input", "Diag.Clutch.BiteFinal", "Diag.Clutch.BiteLearned", "Diag.Clutch.BiteSamples",
+        };
 
         /// <summary>
         /// The internal/troubleshooting properties published ONLY when
@@ -227,6 +243,19 @@ namespace QAdvanceFeedback.Core
             // Appended at the END, mirroring every prior diagnostic addition to this method.
             yield return "Diag.Lock.ColdStartTier";
             yield return "Diag.Slip.ColdStartTier";
+
+            // ShakeIt's own built-in lock/slip, read through a native QAdvanceFeedback ShakeIt effect
+            // (docs\shakeit-native-effects-design.md) - appended at the END like every prior addition,
+            // and diagnostic-only, so the 62 product names are untouched.
+            yield return ShakeItEffects.ShakeItTapPropertyNames.TapActiveName;
+            foreach (string w in MotorsExportPropertyNames.WheelSuffixes) yield return ShakeItEffects.ShakeItTapPropertyNames.GetPublishedName(true, w);
+            foreach (string w in MotorsExportPropertyNames.WheelSuffixes) yield return ShakeItEffects.ShakeItTapPropertyNames.GetPublishedName(false, w);
+
+            // Clutch Bite (docs\clutch-bite-design.md) - appended at the END.
+            foreach (string n in ClutchDiagnosticNames) yield return n;
+
+            // Slip Angle (docs\slip-angle-design.md 9.8) - appended at the END.
+            foreach (string n in SlipAngle.SlipAnglePublishedNames.DiagnosticNames) yield return n;
         }
 
         /// <summary>

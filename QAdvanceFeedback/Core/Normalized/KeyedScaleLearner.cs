@@ -181,6 +181,37 @@ namespace QAdvanceFeedback.Core.Normalized
         /// Diagnostic only - nothing in the pipeline consumes this. It exists so a replay can report when
         /// cold start actually finished rather than inferring it from the ceiling's own movement.
         /// </summary>
+        /// <summary>True when this key's ceiling was loaded from the runtime file (an earlier session) but no
+        /// evidence came with it and none was gathered since - an older file (docs\learning-maturity-indicator-report.md).</summary>
+        public bool HasColdWithoutEvidence(string gameId, string carId, string sourceIdentity)
+        {
+            string key = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty);
+            if (!_coldCeiling.ContainsKey(key)) return false;
+            OnlineDistributionLearner primary = Find(_physicalAnchor, key);
+            return primary == null || primary.Count <= 0;
+        }
+
+        /// <summary>True once this key has any at-limit observation of its own (its first real data for the current
+        /// game, car and source) - the indicator then stops showing a value as purely borrowed.</summary>
+        public bool HasOwnEvidence(string gameId, string carId, string sourceIdentity)
+        {
+            OnlineDistributionLearner primary = Find(_physicalAnchor, KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty));
+            return primary != null && primary.Count > 0;
+        }
+
+        /// <summary>The Slip learner's view of Lock (the cross-channel fallback): the hand-over confidence of the
+        /// Lock key this Slip key would borrow from; 0 on the Lock learner, with no Lock reference, or for a
+        /// different source type.</summary>
+        public double CrossChannelLockConfidence(string gameId, string carId, string sourceIdentity)
+        {
+            if (_crossChannelLockLearner == null) return 0.0;
+            string lockIdentity = _crossChannelLockIdentityResolver != null
+                ? _crossChannelLockIdentityResolver(sourceIdentity)
+                : _crossChannelLockIdentity ?? sourceIdentity;
+            if (string.IsNullOrEmpty(lockIdentity)) return 0.0;
+            return ClampMath.To01(_crossChannelLockLearner.CeilingHandoverConfidence(gameId, carId, lockIdentity));
+        }
+
         public double CeilingHandoverConfidence(string gameId, string carId, string sourceIdentity)
         {
             string key = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, string.Empty);
@@ -194,58 +225,6 @@ namespace QAdvanceFeedback.Core.Normalized
                 ColdWarmBlend.ConcaveHotWeight(primary.Count, DispersionFor(key).CoefficientOfVariation, CalibrationConfidenceScaleSamples),
                 primary.Count);
             return ClampMath.To01(weight * PhysicalAnchorReadinessWeight(key));
-        }
-
-        /// <summary>
-        /// The best ceiling this learner holds for a given SOURCE, across every (game, car) it has ever
-        /// learned - or null if it has none.
-        /// <para/>
-        /// Exists for the settings page, which needs an answer BEFORE a game is running: the ordinary
-        /// lookups all need a (game, car) key, and with SimHub sitting on the menu there is no such key
-        /// yet - so the page would show a shipped default even with a parameters file full of real,
-        /// previously-learned evidence for exactly the source the driver has configured.
-        /// <para/>
-        /// BOTH STORES ARE SEARCHED, and this is the whole subtlety. The at-limit distributions
-        /// (<see cref="_physicalAnchor"/>) are SESSION-SCOPED - <see cref="ImportAll"/> restores only the
-        /// resulting ceiling, into <see cref="_coldCeiling"/>. A first version of this searched the
-        /// distributions alone and therefore found nothing at all after a restart, which is precisely
-        /// when the settings page needs it. Live evidence is preferred when this session has some;
-        /// otherwise the persisted ceiling answers.
-        /// <para/>
-        /// Among candidates the HIGHEST wins: these are ceilings, and a key that has seen a harder lock
-        /// has simply seen more of the source's range than one that has not.
-        /// </summary>
-        public double? PersistedCeilingForSource(string sourceIdentity)
-        {
-            if (string.IsNullOrEmpty(sourceIdentity)) return null;
-
-            double? live = null;
-            foreach (KeyValuePair<string, OnlineDistributionLearner> pair in _physicalAnchor)
-            {
-                if (!KeyMatchesSource(pair.Key, sourceIdentity)) continue;
-                double? ceiling = LearnedCeilingByKey(pair.Key, out _);
-                if (ceiling.HasValue && ceiling.Value > 0.0 && (!live.HasValue || ceiling.Value > live.Value))
-                    live = ceiling;
-            }
-            if (live.HasValue) return live;
-
-            double? persisted = null;
-            foreach (KeyValuePair<string, double> pair in _coldCeiling)
-            {
-                if (!KeyMatchesSource(pair.Key, sourceIdentity)) continue;
-                if (pair.Value > 0.0 && (!persisted.HasValue || pair.Value > persisted.Value))
-                    persisted = pair.Value;
-            }
-            return persisted;
-        }
-
-        /// <summary>Whether a learner key's own source segment is this source. Keys are
-        /// <c>game|#|car|#|source|#|surface</c> - see <see cref="KeyedGripLearner.MakeKey"/>.</summary>
-        private static bool KeyMatchesSource(string key, string sourceIdentity)
-        {
-            if (string.IsNullOrEmpty(key)) return false;
-            string[] parts = key.Split(new[] { "|#|" }, StringSplitOptions.None);
-            return parts.Length >= 3 && string.Equals(parts[2], sourceIdentity, StringComparison.OrdinalIgnoreCase);
         }
 
         public double? PhysicalAnchorLevel(string gameId, string carId, string sourceIdentity, double percentile)
@@ -677,6 +656,21 @@ namespace QAdvanceFeedback.Core.Normalized
             if (!string.IsNullOrEmpty(lockSourceIdentity)) _crossChannelLockIdentity = lockSourceIdentity;
         }
 
+        private Func<string, string> _crossChannelLockIdentityResolver;
+
+        /// <summary>
+        /// NO SOURCE FEEDS ANOTHER SOURCE'S LEARNING (docs\internal-source-learning-design.md, Task G round
+        /// 3): when set, decides per Slip key which Lock identity it may borrow from (null = no borrow) -
+        /// the engine installs <see cref="CrossChannelSourcePairing"/>, which pairs only the same source
+        /// type (internal - internal, ShakeIt - ShakeIt, Viper - Viper). It applies to every read, including
+        /// the per-key ceilings <see cref="ExportAll"/> persists. Null (the default, and every caller that
+        /// never sets it) keeps the identity set by <see cref="SetCrossChannelLockSourceIdentity"/>.
+        /// </summary>
+        public void SetCrossChannelLockIdentityResolver(Func<string, string> resolver)
+        {
+            _crossChannelLockIdentityResolver = resolver;
+        }
+
         /// <summary>
         /// Wires Lock's learner in as this (Slip) learner's cross-channel fallback source. Idempotent.
         /// <para/>
@@ -705,7 +699,16 @@ namespace QAdvanceFeedback.Core.Normalized
         {
             if (_crossChannelLockLearner == null) return anchor;
 
-            string lockIdentity = _crossChannelLockIdentity ?? sourceIdentity;
+            string lockIdentity;
+            if (_crossChannelLockIdentityResolver != null)
+            {
+                lockIdentity = _crossChannelLockIdentityResolver(sourceIdentity);
+                if (string.IsNullOrEmpty(lockIdentity)) return anchor;   // a different source type: no borrow
+            }
+            else
+            {
+                lockIdentity = _crossChannelLockIdentity ?? sourceIdentity;
+            }
             double? lockLevel = _crossChannelLockLearner.PhysicalAnchorLevel(
                 gameId, carId, lockIdentity, PhysicalAnchorCeilingPercentile);
             // IsFinite as well as > 0: `NaN <= 0.0` is FALSE, so a bare `<= 0.0` test lets a NaN through
@@ -732,6 +735,18 @@ namespace QAdvanceFeedback.Core.Normalized
         /// that.
         /// </summary>
         public const int MinPhysicalAnchorSamples = 20;
+
+        /// <summary>
+        /// THE HARD LEARNED-SMAX LIMIT (owner, 2026-11-19): an absolute 95 on the 0-100 source range.
+        /// Every ceiling this learner answers - <see cref="LearnedCeiling"/> (all tiers, borrowed or own),
+        /// <see cref="PublishedCeiling"/>, <see cref="PersistedCeiling"/>, <see cref="ExportAll"/> - is at
+        /// most this, and <see cref="ImportAll"/>/<see cref="LoadCold"/> clamp a stored value above it, so a
+        /// parameters file saved at 100 by an older version heals on the next start. The crossing gates
+        /// never teach above it either (<see cref="LockCrossingGate.LearnCeiling"/>), and the settings page
+        /// and ShakeIt panel clamp a typed SMax to it. A source that reads 100 has saturated: that is a
+        /// locked or spinning wheel, never the grip limit.
+        /// </summary>
+        public const double MaxLearnedCeiling = 95.0;
 
         /// <summary>
         /// THE SOFT SCALE REFERENCE for the primary tier's own live, concave confidence curve
@@ -877,19 +892,31 @@ namespace QAdvanceFeedback.Core.Normalized
         private readonly Dictionary<string, string> _resolvedReferenceKeyCache = new Dictionary<string, string>(StringComparer.Ordinal);
         private readonly Dictionary<string, double> _resolvedReferenceCeilingCache = new Dictionary<string, double>(StringComparer.Ordinal);
 
-        /// <summary>Splits a FULL, 4-part composite key (game|#|car|#|source|#|surface - see
-        /// <see cref="KeyedGripLearner.MakeKey"/>) into its four segments. Distinct from the older,
-        /// 2-segment-only <see cref="ParseKey"/> above (which only ever needed game/source for the
-        /// cross-car seed's own narrower key shape) - this resolver needs every dimension to classify a
-        /// candidate's tier.</summary>
+        /// <summary>The shared resolver (stateless) - see <see cref="ColdStartTierResolver"/>.</summary>
+        private static readonly ColdStartTierResolver TierResolver = new ColdStartTierResolver();
+
+        // Delegates over _physicalAnchor, created once per instance so a per-frame resolve allocates no
+        // new delegate. Semantics are exactly the pre-extraction scan's: a candidate needs a non-null
+        // primary-tier learner with Count > 0, and a usable decayed average (its ceiling) - Count is
+        // its sample count for the most-samples-wins rule.
+        private Func<string, bool> _hasPrimaryEvidence;
+        private ColdStartTierResolver.TryGetReference _tryGetPrimaryReference;
+
+        private bool HasPrimaryEvidence(string key)
+            => Find(_physicalAnchor, key) is OnlineDistributionLearner learner && learner.Count > 0;
+
+        /// <summary>Splits a FULL, 4-part composite key - see <see cref="ColdStartTierResolver.TryParseKey"/>.</summary>
         private static bool TryParseFullKey(string key, out string gameId, out string carId, out string sourceIdentity, out string surfaceBucket)
+            => ColdStartTierResolver.TryParseKey(key, out gameId, out carId, out sourceIdentity, out surfaceBucket);
+
+        private bool TryGetPrimaryReference(string key, out int samples, out double ceiling)
         {
-            string[] parts = (key ?? string.Empty).Split(new[] { "|#|" }, StringSplitOptions.None);
-            gameId = parts.Length > 0 ? parts[0] : string.Empty;
-            carId = parts.Length > 1 ? parts[1] : string.Empty;
-            sourceIdentity = parts.Length > 2 ? parts[2] : string.Empty;
-            surfaceBucket = parts.Length > 3 ? parts[3] : string.Empty;
-            return parts.Length >= 3;
+            OnlineDistributionLearner learner = Find(_physicalAnchor, key);
+            double? average = learner?.GetAverage();
+            if (!average.HasValue) { samples = 0; ceiling = 0.0; return false; }
+            samples = learner.Count;
+            ceiling = average.Value;
+            return true;
         }
 
         /// <summary>
@@ -932,7 +959,7 @@ namespace QAdvanceFeedback.Core.Normalized
             // for itself. Caught and fixed via a real failing scenario during this task's own
             // implementation.
             string ownKey = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity);
-            return ResolveReference(gameId, carId, sourceIdentity, currentSurfaceBucket ?? string.Empty, ownKey, lockToCache: false, out _);
+            return ResolveReference(gameId, carId, sourceIdentity, currentSurfaceBucket ?? string.Empty, ownKey, lockToCache: false, out _, out _);
         }
 
         /// <param name="lockToCache">
@@ -948,9 +975,11 @@ namespace QAdvanceFeedback.Core.Normalized
         /// scenario the whole feature exists to keep improving as soon as a reference becomes available,
         /// not to freeze at whatever (possibly Tier 1) answer happened to be true on the very first frame.
         /// </param>
-        private ColdStartTier ResolveReference(string gameId, string carId, string sourceIdentity, string currentSurfaceBucket, string ownKey, bool lockToCache, out double referenceCeiling)
+        /// <param name="borrowedKey">The reference candidate's own composite key (null at Tier 1) - read
+        /// back from the cache on a cache hit. Internal so the frozen-copy equivalence test can see it.</param>
+        internal ColdStartTier ResolveReference(string gameId, string carId, string sourceIdentity, string currentSurfaceBucket, string ownKey, bool lockToCache, out double referenceCeiling, out string borrowedKey)
         {
-            if (ForceTier1ForTesting) { referenceCeiling = 0.0; return ColdStartTier.Tier1; }
+            if (ForceTier1ForTesting) { referenceCeiling = 0.0; borrowedKey = null; return ColdStartTier.Tier1; }
 
             // CACHE KEY INCLUDES THE SURFACE HINT (not just ownKey): ownKey (the DEFAULT, unsurfaced
             // storage key - see LearnedCeilingForKey's own remarks) is the SAME string regardless of
@@ -967,71 +996,21 @@ namespace QAdvanceFeedback.Core.Normalized
             if (_resolvedTierCache.TryGetValue(cacheKey, out ColdStartTier cachedTier))
             {
                 referenceCeiling = _resolvedReferenceCeilingCache.TryGetValue(cacheKey, out double cachedCeiling) ? cachedCeiling : 0.0;
+                borrowedKey = _resolvedReferenceKeyCache.TryGetValue(cacheKey, out string cachedKey) ? cachedKey : null;
                 return cachedTier;
             }
 
-            ColdStartTier bestTier = ColdStartTier.Tier1;
-            string bestKey = null;
-            int bestSamples = -1;
-            double bestCeiling = 0.0;
-
-            // TIER 4 GUARD (this task's own explicit constraint #5 - "if the same surface already has
-            // parameters, the key is not cold and none of this applies"): if THIS EXACT surface (the
-            // caller's own hint) already has genuine primary-tier evidence of its own for this
-            // (game,car,source), it is not cold for Tier 4's purpose at all - a different-surface
-            // candidate must never be offered as a reference for it, regardless of how much evidence that
-            // OTHER surface has.
-            bool currentSurfaceAlreadyHasOwnEvidence = !string.IsNullOrEmpty(currentSurfaceBucket)
-                && Find(_physicalAnchor, KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, currentSurfaceBucket)) is OnlineDistributionLearner ownSurfaceLearner
-                && ownSurfaceLearner.Count > 0;
-
-            foreach (KeyValuePair<string, OnlineDistributionLearner> pair in _physicalAnchor)
-            {
-                if (string.Equals(pair.Key, ownKey, StringComparison.Ordinal)) continue;
-                if (pair.Value == null || pair.Value.Count <= 0) continue;
-                if (!TryParseFullKey(pair.Key, out string g, out string c, out string s, out string surf)) continue;
-                // SAME INPUT SOURCE ONLY - a Raw reference must never be used for a ShakeIt key or vice
-                // versa (this task's own explicit, load-bearing requirement).
-                if (!string.Equals(s, sourceIdentity ?? string.Empty, StringComparison.Ordinal)) continue;
-
-                ColdStartTier candidateTier;
-                if (!string.Equals(g, gameId ?? string.Empty, StringComparison.Ordinal)) candidateTier = ColdStartTier.Tier2;
-                else if (!string.Equals(c, carId ?? string.Empty, StringComparison.Ordinal)) candidateTier = ColdStartTier.Tier3;
-                else if (!string.IsNullOrEmpty(currentSurfaceBucket) && !currentSurfaceAlreadyHasOwnEvidence
-                    && !string.Equals(surf, currentSurfaceBucket, StringComparison.Ordinal))
-                {
-                    // TIER 4 ONLY WHEN THE CALLER GAVE A REAL SURFACE HINT (caught via a real failing test
-                    // during this task's own implementation): without knowing OUR OWN current surface, a
-                    // surface-tagged sibling entry for the SAME (game,car,source) cannot be safely told
-                    // apart from "this key's own additive alias under a different label" - see
-                    // ObserveAtPhysicalLimit's own remarks on that alias. A caller that never passes a
-                    // surface hint (the overwhelming majority of pre-existing callers/tests, including
-                    // every direct KeyedScaleLearner unit test) therefore never risks Tier 4
-                    // self-contamination - it simply never considers surface-tagged candidates at all,
-                    // falling back to at most Tier 3.
-                    candidateTier = ColdStartTier.Tier4;
-                }
-                else continue; // identical in every dimension (or no real surface hint to compare) - not a candidate.
-
-                if (candidateTier < bestTier) continue; // only the MOST specific tier with any candidate wins.
-
-                double? average = pair.Value.GetAverage();
-                if (!average.HasValue) continue;
-                int samples = pair.Value.Count;
-
-                bool better = candidateTier > bestTier
-                    || samples > bestSamples
-                    || (samples == bestSamples && bestKey != null && string.CompareOrdinal(pair.Key, bestKey) < 0);
-                if (better)
-                {
-                    bestTier = candidateTier;
-                    bestKey = pair.Key;
-                    bestSamples = samples;
-                    bestCeiling = average.Value;
-                }
-            }
+            // THE CANDIDATE SCAN is the shared ColdStartTierResolver (slip-angle plan, Task 8 - extracted
+            // behaviour-preservingly, proven bit-identical against a frozen copy of the code that used to
+            // live here). Only the cache policy below stays this class's own.
+            ColdStartTier bestTier = TierResolver.Resolve(gameId, carId, sourceIdentity, currentSurfaceBucket, ownKey,
+                _hasPrimaryEvidence ?? (_hasPrimaryEvidence = HasPrimaryEvidence),
+                _physicalAnchor.Keys,
+                _tryGetPrimaryReference ?? (_tryGetPrimaryReference = TryGetPrimaryReference),
+                out string bestKey, out double bestCeiling);
 
             referenceCeiling = bestCeiling;
+            borrowedKey = bestKey;
             if (lockToCache)
             {
                 _resolvedTierCache[cacheKey] = bestTier;
@@ -1094,6 +1073,7 @@ namespace QAdvanceFeedback.Core.Normalized
         {
             GetOrCreate(_physicalAnchor, gameId, carId, sourceIdentity, surfaceBucket)
                 .AddNonQualifyingObservation();
+            MarkEvidenceDirty(KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity, surfaceBucket));
         }
 
         public void ObserveAtPhysicalLimit(string gameId, string carId, string sourceIdentity, double rawValue, double observationWeight = 1.0, string surfaceBucket = "")
@@ -1124,6 +1104,7 @@ namespace QAdvanceFeedback.Core.Normalized
             WelfordAccumulator dispersion = _hotDispersion.TryGetValue(key, out WelfordAccumulator existing) ? existing : WelfordAccumulator.Empty;
             dispersion.Observe(rawValue);
             _hotDispersion[key] = dispersion;
+            MarkEvidenceDirty(key);
 
             // NOTE: this used to also seed _crossCarSeed here - see this class's own "TIERED COLD-START
             // REFERENCE SYSTEM" remarks above for why that is now superseded by ResolveReference (which
@@ -1141,7 +1122,7 @@ namespace QAdvanceFeedback.Core.Normalized
         {
             if (!ClampMath.IsFinite(coldCeiling) || coldCeiling <= 0.0) return;
             string key = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity);
-            _coldCeiling[key] = coldCeiling;
+            _coldCeiling[key] = AtMostMaxLearned(coldCeiling);
             _hotDispersion[key] = WelfordAccumulator.Empty;
         }
 
@@ -1156,6 +1137,12 @@ namespace QAdvanceFeedback.Core.Normalized
             string key = KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity);
             if (!_coldCeiling.TryGetValue(key, out double cold)) return hot; // no persisted reference - behaves exactly as before this feature
             if (!hot.HasValue) return cold;
+            // RESTART = CONTINUE (owner, 2026-11-21; docs\learning-maturity-indicator-report.md): when this key's evidence
+            // came back from the runtime file, the learning itself carries the history - blending it with the saved
+            // ceiling as well would count that history twice and pin a restarted session halfway to the old value
+            // (measured on the owner's logs: up to 40 points from an uninterrupted run). Only a key from an older file
+            // (a ceiling but no evidence) keeps the cold / warm blend.
+            if (_evidenceRestored.Contains(key)) return hot;
 
             WelfordAccumulator dispersion = DispersionFor(key);
             double weight = ColdWarmBlend.HotWeight(dispersion.Count, dispersion.CoefficientOfVariation);
@@ -1242,8 +1229,131 @@ namespace QAdvanceFeedback.Core.Normalized
             {
                 if (string.IsNullOrEmpty(pair.Key) || pair.Value == null) continue;
                 if (!ClampMath.IsFinite(pair.Value.ColdCeiling) || pair.Value.ColdCeiling <= 0.0) continue;
-                _coldCeiling[pair.Key] = pair.Value.ColdCeiling;
+                // Clamped, not rejected: a file saved at 100 by an older version still carries this key's
+                // real history, and 95 is the closest value the hard limit allows.
+                _coldCeiling[pair.Key] = AtMostMaxLearned(pair.Value.ColdCeiling);
                 _hotDispersion[pair.Key] = WelfordAccumulator.Empty;
+            }
+        }
+
+        // ------------------------------------------------------------------ SMax evidence (RuntimeDocument v14)
+
+        /// <summary>Keys whose evidence changed since the last <see cref="ExportEvidence"/> - only these are
+        /// re-snapshotted, so a save costs what was driven, not everything ever learned.</summary>
+        private readonly HashSet<string> _evidenceDirty = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>Keys whose evidence was restored from the runtime file: they publish their learning directly
+        /// (see <see cref="PublishedCeiling"/>).</summary>
+        private readonly HashSet<string> _evidenceRestored = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>The latest snapshot per key (loaded or exported). Snapshots are never mutated once made,
+        /// so the background writer can serialise them while the data thread keeps learning.</summary>
+        private readonly Dictionary<string, ScaleEvidenceState> _evidenceSnapshots = new Dictionary<string, ScaleEvidenceState>(StringComparer.Ordinal);
+
+        private void MarkEvidenceDirty(string key)
+        {
+            if (!string.IsNullOrEmpty(key)) _evidenceDirty.Add(key);
+        }
+
+        /// <summary>
+        /// THE EVIDENCE BEHIND SMax, for the runtime file (docs\learning-maturity-indicator-report.md): per key,
+        /// the at-limit distribution, the general distribution and the at-limit spread, so a restart CONTINUES
+        /// learning instead of starting from zero - the ceiling and its maturity come back where they were.
+        /// Matured evidence is kept too: it is bounded by its own decay and the saved-bucket cap, and dropping
+        /// it would put the maturity back to zero after every restart. Data thread only; throttled by the caller.
+        /// </summary>
+        public Dictionary<string, ScaleEvidenceState> ExportEvidence()
+        {
+            foreach (string key in _evidenceDirty)
+            {
+                OnlineDistributionLearner primary = Find(_physicalAnchor, key);
+                OnlineDistributionLearner general = Find(_generalDistribution, key);
+                WelfordAccumulator spread = DispersionFor(key);
+                if (primary == null && general == null && spread.Count <= 0) { _evidenceSnapshots.Remove(key); continue; }
+                _evidenceSnapshots[key] = new ScaleEvidenceState
+                {
+                    AtLimit = primary?.ExportState(),
+                    General = general?.ExportState(),
+                    SpreadCount = spread.Count,
+                    SpreadMean = spread.Mean,
+                    SpreadM2 = spread.M2,
+                    Latches = ExportLatches(key),
+                };
+            }
+            _evidenceDirty.Clear();
+            return new Dictionary<string, ScaleEvidenceState>(_evidenceSnapshots, StringComparer.Ordinal);
+        }
+
+        /// <summary>The borrowing latch of one key (see <see cref="ResolveReference"/>'s write-once cache): the tier and
+        /// reference it settled on when it got its own first evidence, per surface hint. Saved with the evidence so a
+        /// restart leans on the same reference as the session it continues (owner, 2026-11-21: restart = continue).</summary>
+        private List<ScaleTierLatch> ExportLatches(string key)
+        {
+            string prefix = key + "|surf#";
+            List<ScaleTierLatch> latches = null;
+            foreach (KeyValuePair<string, ColdStartTier> kv in _resolvedTierCache)
+            {
+                if (!kv.Key.StartsWith(prefix, StringComparison.Ordinal)) continue;
+                (latches ?? (latches = new List<ScaleTierLatch>())).Add(new ScaleTierLatch
+                {
+                    Surface = kv.Key.Substring(prefix.Length),
+                    Tier = (int)kv.Value,
+                    ReferenceKey = _resolvedReferenceKeyCache.TryGetValue(kv.Key, out string rk) ? rk : null,
+                    ReferenceCeiling = _resolvedReferenceCeilingCache.TryGetValue(kv.Key, out double rc) ? rc : 0.0,
+                });
+            }
+            return latches;
+        }
+
+        private void ImportLatches(string key, List<ScaleTierLatch> latches)
+        {
+            if (latches == null) return;
+            foreach (ScaleTierLatch latch in latches)
+            {
+                if (latch == null || latch.Tier < (int)ColdStartTier.Tier1 || latch.Tier > (int)ColdStartTier.Tier4) continue;
+                string cacheKey = key + "|surf#" + (latch.Surface ?? string.Empty);
+                var tier = (ColdStartTier)latch.Tier;
+                _resolvedTierCache[cacheKey] = tier;
+                if (tier != ColdStartTier.Tier1 && !string.IsNullOrEmpty(latch.ReferenceKey)
+                    && ClampMath.IsFinite(latch.ReferenceCeiling) && latch.ReferenceCeiling > 0.0)
+                {
+                    _resolvedReferenceKeyCache[cacheKey] = latch.ReferenceKey;
+                    _resolvedReferenceCeilingCache[cacheKey] = AtMostMaxLearned(latch.ReferenceCeiling);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Restores <see cref="ExportEvidence"/>'s sections. Call AFTER <see cref="ImportAll"/> (which clears
+        /// the spread of every cold key). A malformed distribution is skipped on its own; the rest of the key
+        /// still loads. Keys loaded here are re-saved unchanged until driven again.
+        /// </summary>
+        public void ImportEvidence(IDictionary<string, ScaleEvidenceState> data)
+        {
+            if (data == null) return;
+            foreach (KeyValuePair<string, ScaleEvidenceState> pair in data)
+            {
+                if (string.IsNullOrEmpty(pair.Key) || pair.Value == null) continue;
+                ScaleEvidenceState s = pair.Value;
+                bool any = false;
+                if (s.AtLimit != null)
+                {
+                    var primary = new OnlineDistributionLearner();
+                    if (primary.ImportState(s.AtLimit)) { _physicalAnchor[pair.Key] = primary; any = true; }
+                }
+                if (s.General != null)
+                {
+                    var general = new OnlineDistributionLearner();
+                    if (general.ImportState(s.General)) { _generalDistribution[pair.Key] = general; any = true; }
+                }
+                WelfordAccumulator spread = WelfordAccumulator.FromState(s.SpreadCount, s.SpreadMean, s.SpreadM2);
+                if (spread.Count > 0) { _hotDispersion[pair.Key] = spread; any = true; }
+                ImportLatches(pair.Key, s.Latches);
+                if (any)
+                {
+                    _evidenceSnapshots[pair.Key] = s;
+                    _evidenceRestored.Add(pair.Key);
+                }
             }
         }
 
@@ -1280,6 +1390,7 @@ namespace QAdvanceFeedback.Core.Normalized
             OnlineDistributionLearner secondary = GetOrCreate(_generalDistribution, gameId, carId, sourceIdentity);
             // See ObserveAtPhysicalLimit's own note on why the former 7000-sample feed cap is gone.
             secondary.AddValue(rawValue);
+            MarkEvidenceDirty(KeyedGripLearner.MakeKey(gameId, carId, sourceIdentity));
         }
 
         /// <summary>This source's own learned near-the-limit ceiling, in the SOURCE'S OWN native units -
@@ -1308,6 +1419,17 @@ namespace QAdvanceFeedback.Core.Normalized
         /// ceiling is read/written, only which surface the resolver compares Tier-4 candidates against.
         /// </param>
         private double? LearnedCeilingForKey(string gameId, string carId, string sourceIdentity, string key, string currentSurfaceBucket, out bool isPrimaryTier)
+        {
+            // THE HARD LIMIT (see MaxLearnedCeiling) - applied once here, so every tier below (own
+            // primary P90, own general percentile, borrowed Tier 1-4, cross-channel) is covered.
+            double? ceiling = LearnedCeilingForKeyUncapped(gameId, carId, sourceIdentity, key, currentSurfaceBucket, out isPrimaryTier);
+            return ceiling.HasValue ? AtMostMaxLearned(ceiling.Value) : ceiling;
+        }
+
+        private static double AtMostMaxLearned(double ceiling)
+            => ceiling > MaxLearnedCeiling ? MaxLearnedCeiling : ceiling;
+
+        private double? LearnedCeilingForKeyUncapped(string gameId, string carId, string sourceIdentity, string key, string currentSurfaceBucket, out bool isPrimaryTier)
         {
             OnlineDistributionLearner primary = Find(_physicalAnchor, key);
             if (primary != null && primary.Count > 0)
@@ -1388,7 +1510,7 @@ namespace QAdvanceFeedback.Core.Normalized
                 // ResolveReference's own remarks on the write-once cache) - a later, unrelated car
                 // maturing elsewhere must not retroactively change THIS key's own already-settling
                 // calibration.
-                ColdStartTier tier = ResolveReference(gameId, carId, sourceIdentity, currentSurfaceBucket ?? string.Empty, key, lockToCache: true, out double referenceCeiling);
+                ColdStartTier tier = ResolveReference(gameId, carId, sourceIdentity, currentSurfaceBucket ?? string.Empty, key, lockToCache: true, out double referenceCeiling, out _);
                 if (tier != ColdStartTier.Tier1)
                 {
                     // CONTINUITY WITH THE ZERO-EVIDENCE BRANCH (caught via a real failing test during this
@@ -1507,7 +1629,7 @@ namespace QAdvanceFeedback.Core.Normalized
             // lockToCache: FALSE - this key has NO primary-tier evidence of its own yet; keep re-scanning
             // every call so a reference that appears moments after this key's very first (still-cold)
             // query can start helping immediately (see ResolveReference's own remarks).
-            ColdStartTier zeroEvidenceTier = ResolveReference(gameId, carId, sourceIdentity, currentSurfaceBucket ?? string.Empty, key, lockToCache: false, out double zeroEvidenceCeiling);
+            ColdStartTier zeroEvidenceTier = ResolveReference(gameId, carId, sourceIdentity, currentSurfaceBucket ?? string.Empty, key, lockToCache: false, out double zeroEvidenceCeiling, out _);
             if (zeroEvidenceTier != ColdStartTier.Tier1)
             {
                 isPrimaryTier = false; // borrowed, not this key's own primary evidence.
@@ -1589,6 +1711,9 @@ namespace QAdvanceFeedback.Core.Normalized
             _resolvedTierCache.Clear();
             _resolvedReferenceKeyCache.Clear();
             _resolvedReferenceCeilingCache.Clear();
+            _evidenceDirty.Clear();
+            _evidenceSnapshots.Clear();
+            _evidenceRestored.Clear();
         }
 
         /// <summary>VESTIGIAL as of v1.0.7 (see this class's own "TIERED COLD-START REFERENCE SYSTEM"
@@ -1620,5 +1745,28 @@ namespace QAdvanceFeedback.Core.Normalized
     {
         public double ColdCeiling;
         public bool ColdIsPrimaryTier;
+    }
+
+    /// <summary>The evidence behind one key's SMax (RuntimeDocument v14, see
+    /// <see cref="KeyedScaleLearner.ExportEvidence"/>): its at-limit and general distributions and the at-limit
+    /// spread. Counts are <c>long</c> on disk and clamped to the in-memory caps on load.</summary>
+    public sealed class ScaleEvidenceState
+    {
+        public OnlineDistributionState AtLimit;
+        public OnlineDistributionState General;
+        public long SpreadCount;
+        public double SpreadMean;
+        public double SpreadM2;
+        /// <summary>The key's borrowing latch per surface hint (usually one to three entries; null when none).</summary>
+        public List<ScaleTierLatch> Latches;
+    }
+
+    /// <summary>One borrowing latch: the tier a key settled on and, when it borrowed, from which key and at what ceiling.</summary>
+    public sealed class ScaleTierLatch
+    {
+        public string Surface;
+        public int Tier;
+        public string ReferenceKey;
+        public double ReferenceCeiling;
     }
 }

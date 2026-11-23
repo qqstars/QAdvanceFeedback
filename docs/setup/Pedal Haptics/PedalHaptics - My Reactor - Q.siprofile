@@ -1,0 +1,505 @@
+{
+  "CarChoices": [],
+  "IncludeOutputSettingsInProfile": false,
+  "UnmuteEffectsAfterSimhubRestart": true,
+  "EffectsContainers": [
+    {
+      "ContainerType": "GroupContainer",
+      "IsEnabled": true,
+      "Gain": 100.0,
+      "Description": "QAdvanceFeedback Effects",
+      "EffectsContainers": [
+        {
+          "ContainerType": "QAdvanceFeedbackWheelLockContainer",
+          "IsEnabled": true,
+          "Gain": 75.238095238095639,
+          "SettingsStore": {
+            "Settings": [
+              {
+                "Channels": {
+                  "All": {
+                    "Channels": {
+                      "0": {
+                        "IsEnabled": false
+                      },
+                      "1": {
+                        "IsEnabled": true
+                      },
+                      "2": {
+                        "IsEnabled": false
+                      }
+                    }
+                  }
+                },
+                "TypeName": "DeviceChannelActivationSettings"
+              }
+            ]
+          },
+          "ContainerId": "673aee74-723f-46c9-a7aa-d8054423c2d9",
+          "AggregationMode": "Mono",
+          "Filter": {
+            "FilterType": "QAdvanceProjectionFilter"
+          },
+          "Output": {
+            "UseHighFrequency": true,
+            "HighFrequency": 20,
+            "WhiteNoise": 10,
+            "UseWhiteNoise": false,
+            "FrequencyBasedOnPreFilter": false,
+            "UsePrehemptiveMode": false,
+            "Frequency": 40,
+            "OutputType": "ToneOutput"
+          }
+        },
+        {
+          "ContainerType": "QAdvanceFeedbackWheelSlipContainer",
+          "IsEnabled": true,
+          "Gain": 74.0,
+          "SettingsStore": {
+            "Settings": [
+              {
+                "Channels": {
+                  "All": {
+                    "Channels": {
+                      "0": {
+                        "IsEnabled": false
+                      },
+                      "1": {
+                        "IsEnabled": false
+                      },
+                      "2": {
+                        "IsEnabled": true
+                      }
+                    }
+                  },
+                  "FrontLeft": {
+                    "Channels": {
+                      "0": {
+                        "IsEnabled": true
+                      },
+                      "1": {
+                        "IsEnabled": true
+                      },
+                      "2": {
+                        "IsEnabled": true
+                      }
+                    }
+                  },
+                  "FrontRight": {
+                    "Channels": {
+                      "0": {
+                        "IsEnabled": true
+                      },
+                      "1": {
+                        "IsEnabled": true
+                      },
+                      "2": {
+                        "IsEnabled": true
+                      }
+                    }
+                  },
+                  "RearLeft": {
+                    "Channels": {
+                      "0": {
+                        "IsEnabled": true
+                      },
+                      "1": {
+                        "IsEnabled": true
+                      },
+                      "2": {
+                        "IsEnabled": true
+                      }
+                    }
+                  },
+                  "RearRight": {
+                    "Channels": {
+                      "0": {
+                        "IsEnabled": true
+                      },
+                      "1": {
+                        "IsEnabled": true
+                      },
+                      "2": {
+                        "IsEnabled": true
+                      }
+                    }
+                  }
+                },
+                "TypeName": "DeviceChannelActivationSettings"
+              }
+            ]
+          },
+          "ContainerId": "b2f89294-d607-4be2-8982-41d69276b2d9",
+          "AggregationMode": "Mono",
+          "Filter": {
+            "FilterType": "QAdvanceProjectionFilter"
+          },
+          "Output": {
+            "UseHighFrequency": true,
+            "HighFrequency": 25,
+            "WhiteNoise": 10,
+            "UseWhiteNoise": false,
+            "FrequencyBasedOnPreFilter": false,
+            "UsePrehemptiveMode": false,
+            "Frequency": 45,
+            "OutputType": "ToneOutput"
+          }
+        },
+        {
+          "ContainerType": "QAdvanceFeedbackSlipAngleContainer",
+          "IsEnabled": true,
+          "Gain": 61.000000000000284,
+          "Description": "Throttle",
+          "SettingsStore": {
+            "Settings": [
+              {
+                "Channels": {
+                  "All": {
+                    "Channels": {
+                      "0": {
+                        "IsEnabled": false
+                      },
+                      "1": {
+                        "IsEnabled": false
+                      },
+                      "2": {
+                        "IsEnabled": true
+                      }
+                    }
+                  }
+                },
+                "TypeName": "DeviceChannelActivationSettings"
+              }
+            ]
+          },
+          "ContainerId": "41d8b7bb-a8da-4679-bf34-916f6dede07b",
+          "Filter": {
+            "FilterType": "QAdvanceSlipAngleProjectionFilter"
+          },
+          "Output": {
+            "UseHighFrequency": true,
+            "HighFrequency": 25,
+            "WhiteNoise": 10,
+            "UseWhiteNoise": false,
+            "FrequencyBasedOnPreFilter": false,
+            "UsePrehemptiveMode": false,
+            "Frequency": 40,
+            "OutputType": "ToneOutput"
+          }
+        },
+        {
+          "ContainerType": "QAdvanceFeedbackSlipAngleContainer",
+          "IsEnabled": true,
+          "Gain": 50.238095238095639,
+          "Description": "Brake",
+          "SettingsStore": {
+            "Settings": [
+              {
+                "Channels": {
+                  "All": {
+                    "Channels": {
+                      "0": {
+                        "IsEnabled": false
+                      },
+                      "1": {
+                        "IsEnabled": true
+                      },
+                      "2": {
+                        "IsEnabled": false
+                      }
+                    }
+                  }
+                },
+                "TypeName": "DeviceChannelActivationSettings"
+              }
+            ]
+          },
+          "ContainerId": "50d7f203-fae9-4e06-a5e5-410066d23bb9",
+          "Filter": {
+            "FilterType": "QAdvanceSlipAngleProjectionFilter"
+          },
+          "Output": {
+            "UseHighFrequency": true,
+            "HighFrequency": 25,
+            "WhiteNoise": 10,
+            "UseWhiteNoise": false,
+            "FrequencyBasedOnPreFilter": false,
+            "UsePrehemptiveMode": false,
+            "Frequency": 40,
+            "OutputType": "ToneOutput"
+          }
+        },
+        {
+          "ContainerType": "QAdvanceFeedbackClutchBiteContainer",
+          "IsEnabled": true,
+          "Gain": 100.0,
+          "SettingsStore": {
+            "Settings": [
+              {
+                "Channels": {
+                  "All": {
+                    "Channels": {
+                      "0": {
+                        "IsEnabled": true
+                      },
+                      "1": {
+                        "IsEnabled": false
+                      },
+                      "2": {
+                        "IsEnabled": false
+                      }
+                    }
+                  }
+                },
+                "TypeName": "DeviceChannelActivationSettings"
+              }
+            ]
+          },
+          "ContainerId": "9236a4b2-b4a1-45ed-90d6-7676540d90ce",
+          "Filter": null,
+          "Output": {
+            "UseHighFrequency": true,
+            "HighFrequency": 15,
+            "WhiteNoise": 10,
+            "UseWhiteNoise": false,
+            "FrequencyBasedOnPreFilter": false,
+            "UsePrehemptiveMode": false,
+            "Frequency": 40,
+            "OutputType": "ToneOutput"
+          }
+        }
+      ],
+      "ContainerId": "cbacd4f7-1e8c-4479-9785-e7772db38419",
+      "Filter": null,
+      "Output": null
+    },
+    {
+      "ContainerType": "RPMContainer",
+      "IsEnabled": true,
+      "Gain": 39.952380952380423,
+      "SettingsStore": {
+        "Settings": [
+          {
+            "Channels": {
+              "All": {
+                "Channels": {
+                  "0": {
+                    "IsEnabled": false
+                  },
+                  "1": {
+                    "IsEnabled": false
+                  },
+                  "2": {
+                    "IsEnabled": true
+                  }
+                }
+              }
+            },
+            "TypeName": "DeviceChannelActivationSettings"
+          }
+        ]
+      },
+      "ContainerId": "97f7d388-0577-4b38-bf3f-a710c6eda741",
+      "Filter": {
+        "ControlPoints": [
+          "5;39.89006971189",
+          "18.5798816568047;47.3828791498075",
+          "38;0",
+          "93;43",
+          "100;58",
+          "86;0"
+        ],
+        "CurveFitting": 0,
+        "FilterType": "SplineFilter"
+      },
+      "Output": {
+        "UseHighFrequency": true,
+        "HighFrequency": 30,
+        "WhiteNoise": 40,
+        "UseWhiteNoise": false,
+        "FrequencyBasedOnPreFilter": true,
+        "UsePrehemptiveMode": false,
+        "Frequency": 50,
+        "OutputType": "ToneOutput"
+      }
+    },
+    {
+      "ContainerType": "ABSActiveEffectContainer",
+      "IsEnabled": false,
+      "Gain": 100.0,
+      "SettingsStore": {
+        "Settings": [
+          {
+            "Channels": {
+              "All": {
+                "Channels": {
+                  "0": {
+                    "IsEnabled": false
+                  },
+                  "1": {
+                    "IsEnabled": true
+                  },
+                  "2": {
+                    "IsEnabled": false
+                  }
+                }
+              }
+            },
+            "TypeName": "DeviceChannelActivationSettings"
+          }
+        ]
+      },
+      "ContainerId": "5f0e8f29-ced3-467b-9865-e4ce68af1653",
+      "Filter": {
+        "Duration": 80,
+        "FilterType": "PulseFilter"
+      },
+      "Output": {
+        "UsePrehemptiveMode": true,
+        "Frequency": 20,
+        "OutputType": "SingleToneOutput"
+      }
+    },
+    {
+      "ContainerType": "TCActiveEffectContainer",
+      "IsEnabled": false,
+      "Gain": 100.0,
+      "SettingsStore": {
+        "Settings": [
+          {
+            "Channels": {
+              "All": {
+                "Channels": {
+                  "0": {
+                    "IsEnabled": false
+                  },
+                  "1": {
+                    "IsEnabled": false
+                  },
+                  "2": {
+                    "IsEnabled": true
+                  }
+                }
+              }
+            },
+            "TypeName": "DeviceChannelActivationSettings"
+          }
+        ]
+      },
+      "ContainerId": "f288a759-0c8e-4583-8dde-3e078df2c59e",
+      "Filter": {
+        "Duration": 80,
+        "FilterType": "PulseFilter"
+      },
+      "Output": {
+        "UsePrehemptiveMode": false,
+        "Frequency": 20,
+        "OutputType": "SingleToneOutput"
+      }
+    },
+    {
+      "ContainerType": "SpeedContainer",
+      "IsEnabled": false,
+      "Gain": 50.0,
+      "LowSpeed": 5,
+      "HighSpeed": 120,
+      "AutoMaxSpeed": true,
+      "MaxSpeedPercent": 90.0,
+      "SettingsStore": {
+        "Settings": [
+          {
+            "Channels": {
+              "All": {
+                "Channels": {
+                  "0": {
+                    "IsEnabled": false
+                  },
+                  "1": {
+                    "IsEnabled": false
+                  },
+                  "2": {
+                    "IsEnabled": true
+                  }
+                }
+              }
+            },
+            "TypeName": "DeviceChannelActivationSettings"
+          }
+        ]
+      },
+      "ContainerId": "4a12a103-2d65-4e55-b804-f37e8c43e2df",
+      "Filter": {
+        "GammaValue": 1.0,
+        "FilterType": "SimpleGammaFilter"
+      },
+      "Output": {
+        "UseHighFrequency": false,
+        "HighFrequency": 50,
+        "WhiteNoise": 10,
+        "UseWhiteNoise": false,
+        "FrequencyBasedOnPreFilter": false,
+        "UsePrehemptiveMode": false,
+        "Frequency": 50,
+        "OutputType": "ToneOutput"
+      }
+    },
+    {
+      "ContainerType": "LocalizedSpeedContainer",
+      "IsEnabled": false,
+      "Gain": 50.0,
+      "LowSpeed": 5,
+      "HighSpeed": 120,
+      "AutoMaxSpeed": true,
+      "MaxSpeedPercent": 90.0,
+      "OnlyInTurns": false,
+      "Curvature": 50,
+      "SettingsStore": {
+        "Settings": [
+          {
+            "Channels": {
+              "All": {
+                "Channels": {
+                  "0": {
+                    "IsEnabled": false
+                  },
+                  "1": {
+                    "IsEnabled": false
+                  },
+                  "2": {
+                    "IsEnabled": true
+                  }
+                }
+              }
+            },
+            "TypeName": "DeviceChannelActivationSettings"
+          }
+        ]
+      },
+      "ContainerId": "288efa6a-5c59-4df2-ad78-10a8aa30f984",
+      "AggregationMode": "Mono",
+      "Filter": {
+        "GammaValue": 1.0,
+        "FilterType": "SimpleGammaFilter"
+      },
+      "Output": {
+        "UseHighFrequency": false,
+        "HighFrequency": 50,
+        "WhiteNoise": 10,
+        "UseWhiteNoise": false,
+        "FrequencyBasedOnPreFilter": false,
+        "UsePrehemptiveMode": false,
+        "Frequency": 50,
+        "OutputType": "ToneOutput"
+      }
+    }
+  ],
+  "AutoCalibrationRatio2": 100,
+  "OutputMode": 3,
+  "GlobalGain": 100.0,
+  "UseProfileGain": true,
+  "LastLoaded": "0001-01-01T00:00:00",
+  "Name": "My Reactor - Q",
+  "ProfileId": "394a4397-769f-44a0-925a-c5229dc9f716",
+  "GameCode": null,
+  "CarChoice": null
+}

@@ -1,14 +1,17 @@
 namespace QAdvanceFeedback.Core.MotorsExport
 {
     /// <summary>
-    /// The exact shape of the SimHub property names the "ShakeIt Motors" plugin registers when a
-    /// "Wheels lock"/"Wheels slip" effect has "Export output value as a property" ticked (see
-    /// <c>docs\shakeit-export-guide.md</c> for the full walkthrough).
+    /// RETIRED AS A READ PATH (2026-11-19, docs\shakeit-source-design.md 5): nothing reads these
+    /// properties any more - the ShakeIt source takes SimHub's built-in values through our native ShakeIt
+    /// effect. The names now only FORM THE SHAKEIT SOURCE'S IDENTITY
+    /// (<c>Core.ShakeItEffects.ShakeItSourceResolution.ShakeItIdentity</c>, so everything learned under it
+    /// carries over) and the ShakeIt preset rows; <see cref="WheelSuffixes"/> is also used widely.
     /// <para/>
-    /// <see cref="PluginTypeName"/> and the full property-name shape built by
-    /// <see cref="GetWheelPropertyName"/> below MUST match SimHub's own real, registered names exactly
-    /// - these are not this project's own naming choice, they are SimHub's public property-lookup API
-    /// surface for a plugin that wants to read a ShakeIt Motors export.
+    /// History: they are the exact shape of the SimHub property names the "ShakeIt Motors" plugin
+    /// registers when a "Wheels lock"/"Wheels slip" effect has "Export output value as a property" ticked
+    /// (<c>docs\shakeit-export-guide.md</c>, kept for history). <see cref="PluginTypeName"/> and the shape
+    /// built by <see cref="GetWheelPropertyName"/> match SimHub's real registered names exactly; changing
+    /// them would change the ShakeIt identity and orphan its learned data.
     /// </summary>
     public static class MotorsExportPropertyNames
     {

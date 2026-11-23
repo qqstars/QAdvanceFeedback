@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using Newtonsoft.Json;
 using QAdvanceFeedback.Core.Health;
 using QAdvanceFeedback.Core.Normalized;
+using QAdvanceFeedback.Core.Runtime;
 using Xunit;
 
 namespace QAdvanceFeedback.Tests
@@ -513,6 +515,95 @@ namespace QAdvanceFeedback.Tests
             Assert.DoesNotContain("AutoCalibrationData", json);
             Assert.DoesNotContain("IsReady", json);
             Assert.DoesNotContain("Completion", json);
+        }
+
+        // ---- Version 12 (slip-angle plan, Task 15): the Slip Angle learner section.
+
+        [Fact]
+        public void Loads_v11_document_without_slip_angle_section()
+        {
+            File.WriteAllText(_path,
+                "{ \"Version\": 11, \"LockLearners\": { \"GameA|#|Car1\": { \"PeakG\": 2.5, \"Samples\": 300 } }, \"SlipLearners\": {} }");
+
+            var exception = Record.Exception(() => _store = new RuntimeStore(_path, flushInterval: NoAutoFlush));
+            Assert.Null(exception);
+
+            _store.LoadSlipAngleLearners(out var slipAngle);
+            Assert.NotNull(slipAngle);
+            Assert.Empty(slipAngle);
+            _store.LoadLockLearners(out var lockData);
+            Assert.Equal(2.5, lockData["GameA|#|Car1"].PeakG, 9);
+
+            // An OLDER file is rewritten in the current format by the first write after the restart (owner,
+            // 2026-11-22), keeping what it held; a current file is not rewritten for nothing (ParametersFileWriterTests).
+            _store.Flush();
+            RuntimeDocument rewritten = JsonConvert.DeserializeObject<RuntimeDocument>(File.ReadAllText(_path));
+            Assert.Equal(new RuntimeDocument().Version, rewritten.Version);
+            Assert.Equal(2.5, rewritten.LockLearners["GameA|#|Car1"].PeakG, 9);
+        }
+
+        [Fact]
+        public void A_null_slip_angle_section_loads_as_empty()
+        {
+            File.WriteAllText(_path, "{ \"Version\": 12, \"SlipAngleLearners\": null }");
+            _store = new RuntimeStore(_path, flushInterval: NoAutoFlush);
+            _store.LoadSlipAngleLearners(out var slipAngle);
+            Assert.NotNull(slipAngle);
+            Assert.Empty(slipAngle);
+        }
+
+        [Fact]
+        public void Slip_angle_learners_survive_a_real_write_and_reopen()
+        {
+            var state = new Core.SlipAngle.SlipAngleLearnerState
+            {
+                Bins = new Core.SlipAngle.GripCurveBins().Export(),
+                CrossingSnapshots = new[] { 7.123456789012345, 8.1 },
+                CrossingCount = 2,
+                PeakConfirmed = true,
+                Max = Core.Normalized.CorroboratedLevelState.Seeded(8.3),
+                Observations = 51,
+                Corners = 3,
+                PriorScale = 1.0,
+                BestHistory = new[] { 6.5 },
+            };
+            const string key = "GameA|#|Car1|#|Native/all|#|sealed";
+            var keyState = new Core.SlipAngle.SlipAngleKeyState
+            {
+                Learner = state, PublishedMin = 4.1, PublishedBest = 6.4, PublishedMax = 8.3, ColdTier = 4,
+            };
+
+            _store = new RuntimeStore(_path, flushInterval: NoAutoFlush);
+            _store.SaveSlipAngleLearners(new Dictionary<string, Core.SlipAngle.SlipAngleKeyState> { [key] = keyState });
+            _store.LoadSlipAngleLearners(out var beforeFlush);
+            Assert.Same(keyState, beforeFlush[key]);
+            _store.Flush();
+            _store.Dispose();
+
+            _store = new RuntimeStore(_path, flushInterval: NoAutoFlush);
+            _store.LoadSlipAngleLearners(out var reopened);
+            Core.SlipAngle.SlipAngleLearnerState back = reopened[key].Learner;
+            Assert.Equal(6.4, reopened[key].PublishedBest);
+            Assert.Equal(4, reopened[key].ColdTier);
+            Assert.Equal(state.CrossingSnapshots, back.CrossingSnapshots);
+            Assert.Equal(8.3, back.Max.Level);
+            Assert.True(back.PeakConfirmed);
+            Assert.Equal(51, back.Observations);
+            Assert.Equal(Core.SlipAngle.GripCurveBins.BinCount, back.Bins.P90.Length);
+            Assert.Contains("\"SlipAngleLearners\"", File.ReadAllText(_path));
+        }
+
+        [Fact]
+        public void Clear_discards_slip_angle_learners()
+        {
+            _store = new RuntimeStore(_path, flushInterval: NoAutoFlush);
+            _store.SaveSlipAngleLearners(new Dictionary<string, Core.SlipAngle.SlipAngleKeyState>
+            {
+                ["k"] = new Core.SlipAngle.SlipAngleKeyState(),
+            });
+            _store.Clear();
+            _store.LoadSlipAngleLearners(out var data);
+            Assert.Empty(data);
         }
 
         private static bool SpinWaitForFile(string path, TimeSpan timeout)

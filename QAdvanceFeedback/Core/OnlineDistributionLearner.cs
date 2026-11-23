@@ -351,5 +351,194 @@ namespace QAdvanceFeedback.Core
             _decayedWeightedSum = 0.0;
             _decayedWeight = 0.0;
         }
+
+        // ------------------------------------------------------------------ persistence (v1.2, SMax evidence)
+
+        /// <summary>A loaded OLD-format distribution (bucket lists, runtime file v14) with more buckets than this is
+        /// rejected (a hand-edited or corrupt file must not cost load time).</summary>
+        public const int MaxLoadedBuckets = 1024;
+
+        /// <summary>
+        /// THE SUMMARY points (owner, 2026-11-21: single values, no arrays): the percentiles saved. Densest where the
+        /// learners read - P90 (SMax), P95 and P99 (the general distribution's ceiling); a rebuilt learner answers each
+        /// of them exactly (see <see cref="ImportState"/>).
+        /// </summary>
+        public static readonly double[] SummaryPercentiles = { 5, 10, 20, 30, 40, 50, 60, 70, 75, 80, 85, 90, 93, 95, 97, 99 };
+
+        /// <summary>
+        /// A SUMMARY of the distribution for the runtime file (owner, 2026-11-21): the counts, the decayed average, the
+        /// zero and positive weights in equivalent recent samples (the newest sample = 1), and eight percentiles of the
+        /// positive part - single values, no bucket lists. <see cref="ImportState"/> rebuilds a small distribution with
+        /// the same percentiles and the same total weight, so the ceiling, the readiness and the confidence come back
+        /// the same, and new samples blend into it. The returned object is new and never touched again.
+        /// </summary>
+        public OnlineDistributionState ExportState()
+        {
+            double unit = _weightScale * HistogramDecayPerSample;
+            var state = new OnlineDistributionState
+            {
+                Count = _count,
+                DecayedWeightedSum = _decayedWeightedSum,
+                DecayedWeight = _decayedWeight,
+                Values = null,
+                Weights = null,
+            };
+            if (!(unit > 0.0)) return state;
+
+            var positive = new List<KeyValuePair<double, double>>();
+            double zero = 0.0, total = 0.0;
+            foreach (KeyValuePair<double, double> kv in _histogram)
+            {
+                if (kv.Key > 0.0) { positive.Add(kv); total += kv.Value; }
+                else zero += kv.Value;
+            }
+            state.ZeroWeight = Math.Round(zero / unit, 6);
+            state.PositiveWeight = Math.Round(total / unit, 6);
+            if (!(total > 0.0)) return state;
+            positive.Sort((a, b) => a.Key.CompareTo(b.Key));
+            double Q(double percentile)
+            {
+                // The learner's own nearest-rank rule (GetPercentile), on the stored weights.
+                double target = (total - 1.0) * (percentile / 100.0);
+                double acc = 0.0;
+                foreach (KeyValuePair<double, double> kv in positive)
+                {
+                    acc += kv.Value;
+                    if (target < acc) return kv.Key;
+                }
+                return positive[positive.Count - 1].Key;
+            }
+            state.P5 = Q(5); state.P10 = Q(10); state.P20 = Q(20); state.P30 = Q(30); state.P40 = Q(40); state.P50 = Q(50);
+            state.P60 = Q(60); state.P70 = Q(70); state.P75 = Q(75); state.P80 = Q(80); state.P85 = Q(85); state.P90 = Q(90);
+            state.P93 = Q(93); state.P95 = Q(95); state.P97 = Q(97); state.P99 = Q(99);
+            return state;
+        }
+
+        /// <summary>Sub-buckets each gap between two saved percentiles is rebuilt with.</summary>
+        public const int SummarySubBuckets = 8;
+
+        /// <summary>
+        /// Rebuilds a SMOOTH distribution from the eight saved percentiles (owner, 2026-11-21): each gap between two
+        /// percentiles gets its share of the weight spread evenly over <see cref="SummarySubBuckets"/> values between
+        /// them (plus a lower and an upper tail), and each saved percentile keeps a thin bucket of its own placed so the
+        /// learner's nearest-rank rule ((W - 1) x p / 100) answers exactly that value at any total weight W. Smooth
+        /// matters for what happens NEXT: eight lumps alone pinned a restored P90 until new samples outweighed a whole
+        /// lump (measured: a Slip SMax stuck at its saved 65.4 where the uninterrupted run moved on to 50.1).
+        /// </summary>
+        private static void RebuildSummary(Dictionary<double, double> histogram, double[] points, double total)
+        {
+            double[] sorted = (double[])points.Clone();
+            Array.Sort(sorted);   // a hand-edited file could break the order; the learner only needs it ascending
+            int n = sorted.Length;
+            double thin = Math.Min(1.0, total * 0.01);
+            double[] target = new double[n];
+            for (int i = 0; i < n; i++) target[i] = Math.Max(0.0, (total - 1.0) * SummaryPercentiles[i] / 100.0);
+
+            void Add(double value, double weight)
+            {
+                if (!(weight > 0.0) || !ClampMath.IsFinite(value) || value <= 0.0) return;
+                double v = Math.Round(value, 4);
+                histogram.TryGetValue(v, out double acc);
+                histogram[v] = acc + weight;
+            }
+            void Spread(double from, double to, double weight)
+            {
+                if (!(weight > 0.0)) return;
+                if (!(to > from)) { Add(Math.Max(from, to), weight); return; }
+                double each = weight / SummarySubBuckets;
+                for (int k = 0; k < SummarySubBuckets; k++) Add(from + (to - from) * (k + 0.5) / SummarySubBuckets, each);
+            }
+
+            double cumulative = 0.0;
+            // Lower tail: below P10, down to as far below it as the P10-P30 gap.
+            double lowStart = Math.Max(sorted[0] * 0.5, sorted[0] - (sorted[1] - sorted[0]));
+            Spread(lowStart, sorted[0], Math.Max(0.0, target[0] - thin / 2.0 - cumulative));
+            cumulative = Math.Max(cumulative, target[0] - thin / 2.0);
+            for (int i = 0; i < n; i++)
+            {
+                Add(sorted[i], thin);                // the percentile itself: target[i] lands inside this bucket
+                cumulative += thin;
+                double next = i + 1 < n ? target[i + 1] - thin / 2.0 : total;
+                double upper = i + 1 < n ? sorted[i + 1] : sorted[i] + Math.Max(sorted[i] - sorted[i - 1], sorted[i] * 0.01);
+                Spread(sorted[i], upper, Math.Max(0.0, next - cumulative));
+                cumulative = Math.Max(cumulative, next);
+            }
+        }
+
+        /// <summary>
+        /// Restores <see cref="ExportState"/>'s summary (or an OLD v14 bucket list), replacing whatever this learner
+        /// held. A summary is rebuilt as one bucket per percentile carrying its share of the saved positive weight (plus
+        /// the zero weight), so <see cref="GetPercentile"/> answers the saved P50 / P90 / P95 / P99 and
+        /// <see cref="PositiveSampleCount"/> the saved total. Returns false (learner untouched) for anything malformed:
+        /// a non-finite or negative value or weight, non-finite averages, mismatched or oversized old bucket lists.
+        /// The count is clamped into [0, <see cref="SampleCountSaturationCap"/>].
+        /// </summary>
+        public bool ImportState(OnlineDistributionState state)
+        {
+            if (state == null) return false;
+            if (!ClampMath.IsFinite(state.DecayedWeightedSum) || state.DecayedWeightedSum < 0.0) return false;
+            if (!ClampMath.IsFinite(state.DecayedWeight) || state.DecayedWeight < 0.0) return false;
+
+            var histogram = new Dictionary<double, double>();
+            List<double> values = state.Values, weights = state.Weights;
+            if (values != null && values.Count > 0)
+            {
+                // OLD FORMAT (v14 bucket lists): read once; the next save writes the summary.
+                if (weights == null || values.Count != weights.Count || values.Count > MaxLoadedBuckets) return false;
+                for (int i = 0; i < values.Count; i++)
+                {
+                    double v = values[i], w = weights[i];
+                    if (!ClampMath.IsFinite(v) || v < 0.0) return false;
+                    if (!ClampMath.IsFinite(w) || w <= 0.0) return false;
+                    histogram.TryGetValue(v, out double acc);
+                    histogram[v] = acc + w;
+                }
+            }
+            else
+            {
+                if (!ClampMath.IsFinite(state.ZeroWeight) || state.ZeroWeight < 0.0) return false;
+                if (!ClampMath.IsFinite(state.PositiveWeight) || state.PositiveWeight < 0.0) return false;
+                if (state.ZeroWeight > 0.0) histogram[0.0] = state.ZeroWeight;
+                if (state.PositiveWeight > 0.0)
+                {
+                    double[] points = { state.P5, state.P10, state.P20, state.P30, state.P40, state.P50, state.P60, state.P70,
+                                        state.P75, state.P80, state.P85, state.P90, state.P93, state.P95, state.P97, state.P99 };
+                    foreach (double v in points)
+                        if (!ClampMath.IsFinite(v) || v <= 0.0) return false;
+                    RebuildSummary(histogram, points, state.PositiveWeight);
+                }
+            }
+
+            Reset();
+            foreach (KeyValuePair<double, double> kv in histogram) _histogram[kv.Key] = kv.Value;
+            // Weights are in equivalent samples (the newest = 1): that is a scale of 1 / decay.
+            _weightScale = 1.0 / HistogramDecayPerSample;
+            long count = state.Count;
+            _count = count <= 0 ? 0 : count >= SampleCountSaturationCap ? SampleCountSaturationCap : (int)count;
+            _decayedWeightedSum = state.DecayedWeightedSum;
+            _decayedWeight = state.DecayedWeight;
+            return true;
+        }
+    }
+
+    /// <summary>The runtime file's SUMMARY of one <see cref="OnlineDistributionLearner"/> (see
+    /// <see cref="OnlineDistributionLearner.ExportState"/>): single values only. Plain fields for Newtonsoft.</summary>
+    public sealed class OnlineDistributionState
+    {
+        /// <summary>Observations counted (saturates in memory at the learner's cap; long on disk).</summary>
+        public long Count;
+        public double DecayedWeightedSum;
+        public double DecayedWeight;
+        /// <summary>Weight of the zero readings and of the positive part, in equivalent recent samples.</summary>
+        public double ZeroWeight;
+        public double PositiveWeight;
+        /// <summary>Percentiles of the positive part (see <see cref="OnlineDistributionLearner.SummaryPercentiles"/>).</summary>
+        public double P5, P10, P20, P30, P40, P50, P60, P70, P75, P80, P85, P90, P93, P95, P97, P99;
+        /// <summary>OLD FORMAT only (runtime file v14 bucket lists) - read on load, never written again.</summary>
+        public List<double> Values;
+        public List<double> Weights;
+
+        public bool ShouldSerializeValues() => Values != null && Values.Count > 0;
+        public bool ShouldSerializeWeights() => Weights != null && Weights.Count > 0;
     }
 }

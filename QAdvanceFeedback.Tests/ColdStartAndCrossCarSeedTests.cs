@@ -80,7 +80,12 @@ namespace QAdvanceFeedback.Tests
             // the limit. What this test still proves is unchanged and is the point of it: the Tier 3 borrow
             // reaches a brand-new car at FULL strength, so CarB reads CarA's calibration rather than the
             // raw, uncalibrated 90 a true Tier 1 identity read would have given.
-            Assert.Equal(88.9, carBOutput, 1);
+            //
+            // RE-BASELINED AGAIN FOR THE WALK-BACK-STAYS-INSIDE-THE-RISE FIX (2026-11-19). The helper's
+            // ramp falls from the held 90 to 81 and then rises 81 -> 82.8 -> ... -> 90. The 81 frame is
+            // where the rise STARTED (it fell into it), so the walk no longer lands on it: the highest-G
+            // frame inside the rise is 90 * 0.92 = 82.8, and 90 * 80/82.8 = 87.0.
+            Assert.Equal(87.0, carBOutput, 1);
         }
 
         /// <summary>

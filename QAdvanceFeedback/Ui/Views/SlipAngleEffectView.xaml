@@ -1,0 +1,110 @@
+<UserControl x:Class="QAdvanceFeedbackViews.SlipAngleEffectView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mah="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro"
+             xmlns:c="clr-namespace:QAdvanceFeedbackControls"
+             xmlns:v="clr-namespace:QAdvanceFeedbackViews"
+             v:ViewModelLifetime.Activate="True"
+             Grid.IsSharedSizeScope="True">
+  <!-- The Slip Angle ShakeIt panel (docs\slip-angle-design.md 9.10), bound to a SlipAngleEffectViewModel.
+       Laid out like the WheelLock panel: every row shares ONE label column (SharedSizeGroup "Label"), so
+       every dropdown, editor and toggle (its ON/OFF text first) starts at the same x in every language. ShakeIt shows the
+       read-only graph (SlipAngleGraphView) directly below this panel. -->
+  <UserControl.Resources>
+    <v:VisibleWhenConverter x:Key="VisibleWhen"/>
+    <Style x:Key="RowGrid" TargetType="Grid">
+      <Setter Property="Margin" Value="0,0,0,6"/>
+    </Style>
+    <Style x:Key="RowLabel" TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+      <Setter Property="MaxWidth" Value="220"/>
+      <Setter Property="Margin" Value="0,0,8,0"/>
+    </Style>
+  </UserControl.Resources>
+
+  <StackPanel Margin="0,0,0,6" v:LabelColumnSync.Group="{Binding}" IsEnabled="{Binding Available}">
+    <TextBlock Text="{Binding FallbackWarningText}" Visibility="{Binding ShowFallbackWarning, Converter={StaticResource VisibleWhen}}"
+               TextWrapping="Wrap" FontWeight="Bold" Foreground="DarkOrange" Margin="0,0,0,6"/>
+    <TextBlock Text="{Binding NoDataText}" Visibility="{Binding ShowNoData, Converter={StaticResource VisibleWhen}}"
+               TextWrapping="Wrap" FontWeight="Bold" Margin="0,0,0,6"/>
+
+    <!-- Trigger by + the threshold(s) it uses -->
+    <Grid Style="{StaticResource RowGrid}">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <TextBlock Text="{v:Loc SlipAngle.TriggerBy.Label}" Style="{StaticResource RowLabel}"/>
+      <ComboBox Grid.Column="1" MinWidth="220" HorizontalAlignment="Left"
+                ItemsSource="{Binding TriggerByChoices}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                SelectedValue="{Binding TriggerBy}"/>
+    </Grid>
+    <Grid Style="{StaticResource RowGrid}" Visibility="{Binding ShowBrakeThreshold, Converter={StaticResource VisibleWhen}}">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <TextBlock Text="{v:Loc SlipAngle.Threshold.Brake}" Style="{StaticResource RowLabel}"/>
+      <c:NumericEditor Grid.Column="1" Value="{Binding BrakeThreshold}" Width="120" HorizontalAlignment="Left"
+                       Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
+    </Grid>
+    <Grid Style="{StaticResource RowGrid}" Visibility="{Binding ShowThrottleThreshold, Converter={StaticResource VisibleWhen}}">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <TextBlock Text="{v:Loc SlipAngle.Threshold.Throttle}" Style="{StaticResource RowLabel}"/>
+      <c:NumericEditor Grid.Column="1" Value="{Binding ThrottleThreshold}" Width="120" HorizontalAlignment="Left"
+                       Minimum="0" Maximum="100" Interval="1" StringFormat="0"/>
+    </Grid>
+
+    <!-- Key data points: Min/Best/Max on Raw.All, read-only (text box AND +/-) under Auto -->
+    <StackPanel Margin="0,6,0,0">
+      <TextBlock Text="{Binding KeyDataHeader}" FontWeight="Bold" Margin="0,0,0,4" TextWrapping="Wrap"/>
+      <!-- Unit dropdown (owner, 2026-11-22): always shown; entries depend on the game. Restore default only when changed. -->
+      <StackPanel Orientation="Horizontal" Margin="0,0,0,6" Visibility="{Binding ShowUnitChoice, Converter={StaticResource VisibleWhen}}">
+        <ComboBox ItemsSource="{Binding UnitChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedUnitChoice}"
+                  MinWidth="240" ToolTip="{v:Loc SlipAngle.Unit.ToolTip}"/>
+        <Button Content="{v:Loc SlipAngle.Unit.Reset}" Command="{Binding ResetUnitCommand}" Margin="6,0,0,0" Padding="12,2"
+                Visibility="{Binding ShowUnitReset, Converter={StaticResource VisibleWhen}}"
+                ToolTip="{v:Loc SlipAngle.Unit.Reset.ToolTip}"/>
+      </StackPanel>
+      <Grid Style="{StaticResource RowGrid}">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <TextBlock Text="{v:Loc KeyData.AutoGenerate.Label}" Style="{StaticResource RowLabel}"/>
+        <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding Auto}" HorizontalAlignment="Left" VerticalAlignment="Center"
+                          OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
+      </Grid>
+      <Grid Style="{StaticResource RowGrid}">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <TextBlock Text="{v:Loc SlipAngle.KeyData.Max.Label}" Style="{StaticResource RowLabel}"/>
+        <!-- Learning indicator RIGHT of the box (owner): Auto only, collapsed (no space) under Manual. -->
+        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
+          <c:NumericEditor Value="{Binding Max}" IsEnabled="{Binding ValuesEditable}" Width="120"
+                           Minimum="0.5" Maximum="45" Interval="0.1" StringFormat="0.0" Watermark="---"/>
+          <v:LearningLed DataContext="{Binding MaxIndicator}" Margin="6,0,0,0"/>
+        </StackPanel>
+      </Grid>
+      <Grid Style="{StaticResource RowGrid}">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <TextBlock Text="{v:Loc SlipAngle.KeyData.Best.Label}" Style="{StaticResource RowLabel}"/>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
+          <c:NumericEditor Value="{Binding Best}" IsEnabled="{Binding ValuesEditable}" Width="120"
+                           Minimum="0.5" Maximum="45" Interval="0.1" StringFormat="0.0" Watermark="---"/>
+          <v:LearningLed DataContext="{Binding BestIndicator}" Margin="6,0,0,0"/>
+        </StackPanel>
+      </Grid>
+      <Grid Style="{StaticResource RowGrid}">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <TextBlock Text="{v:Loc SlipAngle.KeyData.Min.Label}" Style="{StaticResource RowLabel}"/>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
+          <c:NumericEditor Value="{Binding Min}" IsEnabled="{Binding ValuesEditable}" Width="120"
+                           Minimum="0.5" Maximum="45" Interval="0.1" StringFormat="0.0" Watermark="---"/>
+          <v:LearningLed DataContext="{Binding MinIndicator}" Margin="6,0,0,0"/>
+        </StackPanel>
+      </Grid>
+      <TextBlock Text="{Binding StartText}" Visibility="{Binding StartText, Converter={StaticResource VisibleWhen}}"
+                   TextWrapping="Wrap" Opacity="0.7" Margin="0,2,0,0"/>
+      <TextBlock Text="{Binding KeyDataStatus}" Visibility="{Binding KeyDataStatus, Converter={StaticResource VisibleWhen}}"
+                 TextWrapping="Wrap" Foreground="Red" Margin="0,2,0,0"/>
+    </StackPanel>
+
+    <TextBlock Text="{Binding LearningStatus}" Visibility="{Binding LearningStatus, Converter={StaticResource VisibleWhen}}"
+               TextWrapping="Wrap" Opacity="0.7" Margin="0,4,0,0"/>
+    <TextBlock Text="{v:Loc ShakeItPanel.SharedNote}" TextWrapping="Wrap" Opacity="0.7" Margin="0,4,0,0"/>
+    <TextBlock Text="{Binding Status}" Visibility="{Binding Status, Converter={StaticResource VisibleWhen}}"
+               TextWrapping="Wrap" Opacity="0.7" Margin="0,4,0,0"/>
+  </StackPanel>
+</UserControl>

@@ -1,9 +1,9 @@
 ﻿namespace QAdvanceFeedback.Settings
 {
     /// <summary>
-    /// Per-channel (Wheel Lock / Wheel Slip) toggle between the plugin's own configurable per-wheel
-    /// sources and SimHub's own ShakeIt Motors export - see
-    /// <c>Core.MotorsExport.MotorsExportPropertyNames</c> and <c>docs\shakeit-export-guide.md</c>.
+    /// Per-channel (Wheel Lock / Wheel Slip) choice between the plugin's own configurable per-wheel
+    /// sources and the preset sources (ShakeIt Built-in, Viper) - see <c>docs\shakeit-source-design.md</c>
+    /// for the ShakeIt one.
     /// <para/>
     /// The enum member name <see cref="ShakeIt"/> is kept exactly as shipped (not renamed alongside
     /// the internal <c>Core.MotorsExport</c> types it used to share a name with) because it is
@@ -17,11 +17,14 @@
         /// buttons.</summary>
         Manual = 0,
 
-        /// <summary>Reads the four wheels straight from SimHub's own ShakeIt Motors "Wheels lock"/
-        /// "Wheels slip" effect export (with "Use legacy IRacing algorythm" enabled, per the guide),
-        /// via plain property references to the fixed names in
-        /// <c>Core.MotorsExport.MotorsExportPropertyNames</c> - no per-wheel script configuration is
-        /// shown while this mode is selected.</summary>
+        /// <summary>"ShakeIt Built-in": reads SimHub's own ShakeIt lock/slip calculation through our
+        /// native effect (<c>ShakeItBuiltInTap</c>) - never the retired ShakeIt Motors export properties
+        /// (docs\shakeit-source-design.md 5). Per channel, while ShakeIt is not set up or the game is not
+        /// supported, it reads Raw under Raw's identity (<c>Core.ShakeItEffects.ShakeItSourceResolution</c>).
+        /// Its four stored rows still hold the legacy export property names
+        /// (<c>Core.MotorsExport.MotorsExportPropertyNames</c>): they are the ShakeIt learning identity, kept
+        /// for continuity, and are not read as properties. No per-wheel script configuration is shown while
+        /// this mode is selected.</summary>
         ShakeIt = 1,
 
         /// <summary>

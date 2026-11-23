@@ -236,5 +236,23 @@ namespace QAdvanceFeedback.Core
         }
 
         public static readonly WelfordAccumulator Empty = default;
+
+        /// <summary>The running sum of squared deviations (persisted with <see cref="Count"/> and <see cref="Mean"/>).</summary>
+        public double M2 => _m2;
+
+        /// <summary>
+        /// Restores a persisted accumulator (docs\learning-maturity-indicator-report.md). The saved count is a
+        /// <c>long</c> clamped into [0, <see cref="CountSaturationCap"/>]; a non-finite mean or a negative /
+        /// non-finite M2 gives <see cref="Empty"/>, as does a count of zero.
+        /// </summary>
+        public static WelfordAccumulator FromState(long count, double mean, double m2)
+        {
+            if (count <= 0 || !ClampMath.IsFinite(mean) || !ClampMath.IsFinite(m2) || m2 < 0.0) return Empty;
+            var acc = new WelfordAccumulator();
+            acc._count = count >= CountSaturationCap ? CountSaturationCap : (int)count;
+            acc._mean = mean;
+            acc._m2 = m2;
+            return acc;
+        }
     }
 }

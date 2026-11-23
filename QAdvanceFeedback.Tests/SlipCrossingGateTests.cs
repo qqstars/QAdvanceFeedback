@@ -236,7 +236,7 @@ namespace QAdvanceFeedback.Tests
             Assert.True(gate.TeachingBasis(0.0) > 0.0);
 
             gate.Reset();
-            Assert.Equal(99.0, gate.TeachingBasis(99.0), 6);
+            Assert.Equal(90.0, gate.TeachingBasis(90.0), 6);
         }
 
         // ---------------------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 using GameReaderCommon;
 using QAdvanceFeedback.Core;
+using QAdvanceFeedback.Core.SlipAngle;
 using SimHub.Plugins;
 
 namespace QAdvanceFeedback
@@ -42,5 +43,16 @@ namespace QAdvanceFeedback
         /// readings absent (null), never a fabricated zero.
         /// </summary>
         RawWheelTelemetrySnapshot CaptureRawTelemetry(GameData data, PluginManager pluginManager);
+
+        /// <summary>
+        /// The per-frame Slip Angle inputs read from the game's own raw data
+        /// (<see cref="SlipAngleRawSourceTable"/>): native per-wheel slip angle in degrees, whether the
+        /// game has been promoted to native this session, kerbs and raw per-wheel surface.
+        /// <paramref name="sample"/> is the one <see cref="Read"/> returned for the same
+        /// <paramref name="data"/> (speed, lateral G and dt come from it). Feeds the session's native
+        /// promotion, so call it once per frame. Must never throw; returns
+        /// <see cref="SlipAngleInput.Empty"/>-like input when nothing is readable.
+        /// </summary>
+        SlipAngleInput ReadSlipAngleInput(GameData data, PluginManager pluginManager, ITelemetrySample sample);
     }
 }
