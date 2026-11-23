@@ -101,5 +101,36 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(shipped.GForce.FixedAccelMaxG, viaFactory.GForce.FixedAccelMaxG, 6);
             Assert.Equal(shipped.General.EnableDiagnostics, viaFactory.General.EnableDiagnostics);
         }
+
+        [Fact]
+        public void Fresh_settings_have_slip_angle_defaults()
+        {
+            var s = new QAdvanceFeedbackSettings();
+            Assert.NotNull(s.SlipAngle);
+            Assert.Equal(0.85, s.SlipAngle.WeightMax);
+        }
+
+        [Fact]
+        public void RestoreDefaults_preserves_slip_angle_key_data_instance()
+        {
+            var s = new QAdvanceFeedbackSettings();
+            var keyData = s.SlipAngle.KeyData;
+            s.RestoreDefaults();
+            Assert.Same(keyData, s.SlipAngle.KeyData);
+        }
+
+        [Fact]
+        public void RestoreDefaults_preserves_slip_angle_custom_sources_like_lock_and_slip()
+        {
+            // R36: the Custom source is the driver's work - kept for Slip Angle exactly as for Lock/Slip.
+            var s = new QAdvanceFeedbackSettings();
+            var custom = new WheelSourceSet { FrontLeft = "My.SlipAngle.FL", ScriptTypeRearRight = ScriptType.NCalc };
+            s.SlipAngle.CustomSources = custom;
+            s.SlipAngle.WeightMax = 0.4;
+            s.RestoreDefaults();
+            Assert.Same(custom, s.SlipAngle.CustomSources);
+            Assert.Equal("My.SlipAngle.FL", s.SlipAngle.CustomSources.FrontLeft);
+            Assert.Equal(SlipAngleChannelSettings.DefaultWeightMax, s.SlipAngle.WeightMax);   // the rest is reset
+        }
     }
 }

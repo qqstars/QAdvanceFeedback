@@ -88,49 +88,56 @@ namespace QAdvanceFeedback.Tests
         }
 
         [Fact]
-        public void A_skipped_tick_never_loses_the_data_it_skipped()
+        public void The_timer_is_one_shot_and_re_armed_only_after_its_write_finishes()
         {
-            // The claim is taken BEFORE SnapshotIfDirty, so skipping leaves the dirty flag set and the
-            // next write carries the newer state. Taking it the other way round would clear the flag
-            // and drop the snapshot on the floor.
+            // Owner's pattern (2026-11-21): due 5 s, period infinite; the tick writes inside try/finally and the
+            // finally re-arms it - so writes never overlap and the next one counts from the end of the last.
             string source = StoreSource();
-            int claim = source.IndexOf("Interlocked.CompareExchange(ref _backgroundWriteInFlight", StringComparison.Ordinal);
-            int snapshot = source.IndexOf("_cache.SnapshotIfDirty()", claim, StringComparison.Ordinal);
-
-            Assert.True(claim > 0, "the in-flight claim is missing");
-            Assert.True(snapshot > claim,
-                "the in-flight claim must be taken BEFORE the snapshot, or a skipped tick loses data");
-        }
-
-        [Fact]
-        public void The_claim_is_released_on_every_path_including_failure()
-        {
-            // A leaked claim would silently stop all background flushing for the rest of the session.
-            string source = StoreSource();
+            Assert.Contains("new Timer(_ => FlushTick(), null, _interval, Timeout.InfiniteTimeSpan)", source);
             int tick = source.IndexOf("private void FlushTick", StringComparison.Ordinal);
-            int end = source.IndexOf("\n        private void WriteAtomic", tick, StringComparison.Ordinal);
+            int end = source.IndexOf("\n        private void WriteIfDirty", tick, StringComparison.Ordinal);
             string body = source.Substring(tick, end - tick);
-
-            Assert.Contains("finally { Interlocked.Exchange(ref _backgroundWriteInFlight, 0); }", body);
-            // ...and on the "nothing was dirty" early return too.
-            Assert.Equal(2, CountOccurrences(body, "Interlocked.Exchange(ref _backgroundWriteInFlight, 0)"));
+            int write = body.IndexOf("WriteIfDirty();", StringComparison.Ordinal);
+            int rearm = body.IndexOf("_timer?.Change(_interval, Timeout.InfiniteTimeSpan)", StringComparison.Ordinal);
+            int fin = body.IndexOf("finally", StringComparison.Ordinal);
+            Assert.True(write > 0 && fin > write && rearm > fin, "the re-arm must sit in the finally after the write");
+            Assert.DoesNotContain("Task.Run", source);
         }
 
         [Fact]
-        public void Both_Flush_and_Dispose_wait_for_the_background_write()
+        public void A_failed_write_leaves_everything_dirty_for_the_next_tick()
         {
             string source = StoreSource();
+            int start = source.IndexOf("private void WriteIfDirty", StringComparison.Ordinal);
+            int end = source.IndexOf("\n        /// <summary>", start, StringComparison.Ordinal);
+            string body = source.Substring(start, end - start);
+            Assert.Contains("lock (_writeLock)", body);
+            Assert.Contains("_cache.MarkDirty();", body);
+            Assert.Contains("_fileStale = true;", body);
+        }
 
-            foreach (string method in new[] { "public void Flush()", "public void Dispose()" })
-            {
-                int start = source.IndexOf(method, StringComparison.Ordinal);
-                Assert.True(start > 0, method + " not found");
-                int end = source.IndexOf("\n        }", start, StringComparison.Ordinal);
-                Assert.Contains("WaitForBackgroundWrite()", source.Substring(start, end - start));
-            }
+        [Fact]
+        public void Shutdown_stops_and_disposes_the_timer_then_writes_the_last_time_and_hooks_the_host()
+        {
+            string source = StoreSource();
+            int start = source.IndexOf("private void Shutdown()", StringComparison.Ordinal);
+            int end = source.IndexOf("\n        }", start, StringComparison.Ordinal);
+            string body = source.Substring(start, end - start);
+            int stop = body.IndexOf("_timer.Change(Timeout.Infinite, Timeout.Infinite)", StringComparison.Ordinal);
+            int dispose = body.IndexOf("_timer.Dispose(done)", StringComparison.Ordinal);
+            int write = body.IndexOf("WriteIfDirty();", StringComparison.Ordinal);
+            Assert.True(stop > 0 && dispose > stop && write > dispose, "stop, then dispose (waiting), then the last write");
+            Assert.Contains("AppDomain.CurrentDomain.DomainUnload += OnHostUnloading;", source);
+            Assert.Contains("AppDomain.CurrentDomain.ProcessExit += OnHostUnloading;", source);
+        }
 
-            // Bounded, so a wedged disk degrades rather than hanging the host's shutdown.
-            Assert.Contains("inFlight.Wait(BackgroundWriteWaitTimeout)", source);
+        [Fact]
+        public void Dispose_alone_writes_the_last_seconds()
+        {
+            using (var store = new RuntimeStore(Path_(), flushInterval: TimeSpan.FromMinutes(10)))
+                store.SaveLockScaleLearners(Learners("k", 4321.0));   // no Flush
+
+            Assert.Contains("4321", File.ReadAllText(Path_()));
         }
 
         private static int CountOccurrences(string text, string value)

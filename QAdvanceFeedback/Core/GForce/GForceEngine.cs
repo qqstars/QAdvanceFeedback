@@ -104,9 +104,9 @@ namespace QAdvanceFeedback.Core.GForce
         /// (owner's own hardware testing: the animation reads more clearly at 1.2). Raising this gain
         /// LOWERS the observed rate at which the sweep saturates against
         /// <see cref="MaxStageProgressPerSecond"/> (at 1.2, that's ~4.2/s), shrinking the felt distinction
-        /// between a gentle and a violent input beyond that point.
+        /// between a gentle and a violent input beyond that point. Default 1.0 -> 0.6 (owner, 2026-11-20).
         /// </summary>
-        public double TransientGain { get; set; } = 1.0;
+        public double TransientGain { get; set; } = 0.6;
 
         /// <summary>See <see cref="GForceEngine"/>'s class remarks (braking's MIDDLE pad, Bottom Rear) -
         /// UNCHANGED meaning/default from the previous pass, now doubling as the staged model's own MID
@@ -178,6 +178,14 @@ namespace QAdvanceFeedback.Core.GForce
         // disagreeing here is intentional, not a drift bug: this property alone is only ever the
         // pre-settings-applied value.
         public bool IntegrateWheelLockAndSlip { get; set; } = false;
+
+        /// <summary>"Integrate Slip Angle" (docs\slip-angle-design.md section 10): lets the projected Slip
+        /// Angle open the same shake gate and compete for the same drive as lock/slip. Bare-constructor
+        /// default OFF for exactly the reason <see cref="IntegrateWheelLockAndSlip"/>'s is (an inert engine
+        /// unless configured); the settings-layer default is ON and
+        /// <see cref="Settings.GForceSettings.ApplyTo"/> pushes it. With this OFF (or an angle of 0) every
+        /// output is identical to the lock/slip-only engine.</summary>
+        public bool IntegrateSlipAngle { get; set; } = false;
 
         private double _shakeFrequencyHz = 10.0;
 
@@ -304,6 +312,16 @@ namespace QAdvanceFeedback.Core.GForce
         {
             get => _wheelSlipShakeScale;
             set => _wheelSlipShakeScale = value >= 0.0 ? value : 0.0;
+        }
+
+        private double _wheelSlipAngleShakeScale = 1.5;
+
+        /// <summary>Default 1.5 (150%) - the Slip Angle twin of <see cref="WheelLockShakeScale"/>; see
+        /// <see cref="Settings.GForceSettings.WheelSlipAngleShakeScale"/>.</summary>
+        public double WheelSlipAngleShakeScale
+        {
+            get => _wheelSlipAngleShakeScale;
+            set => _wheelSlipAngleShakeScale = value >= 0.0 ? value : 0.0;
         }
 
         /// <summary>Upper bound enforced by <see cref="TransitionAnimationScale"/>'s own setter -
@@ -563,11 +581,13 @@ namespace QAdvanceFeedback.Core.GForce
         /// threshold.</param>
         /// <param name="decelTransitionScale">The deceleration/braking chain's own equivalent of
         /// <paramref name="accelTransitionScale"/>.</param>
+        /// <param name="slipAngleAll0100">The final projected Slip Angle (All channel, 0-100, already
+        /// drift-attenuated). Only read when <see cref="IntegrateSlipAngle"/> is on.</param>
         public GForceOutput Compute(
             ITelemetrySample sample, double accelMaxG, double decelMaxG,
             double wheelLockAll0100 = 0.0, double wheelSlipAll0100 = 0.0,
             double? accelTransitionScale = null, double? decelTransitionScale = null,
-            double latMaxG = 1.5)
+            double latMaxG = 1.5, double slipAngleAll0100 = 0.0)
         {
             if (sample == null) return GForceOutput.Empty;
 
@@ -585,10 +605,21 @@ namespace QAdvanceFeedback.Core.GForce
             // "shake above 20" means the same 20 the driver sees on the Wheel Lock/Slip tabs however the
             // scales are set. Still Max(lock, slip), like the drive itself.
             double gateValue = Math.Max(ClampMath.To0100(wheelLockAll0100), ClampMath.To0100(wheelSlipAll0100));
-            bool aboveThreshold = IntegrateWheelLockAndSlip && gateValue >= ShakeTriggerThreshold;
+            double angle0100 = ClampMath.To0100(slipAngleAll0100);
 
-            double shakeContribution = AdvanceShake(
-                aboveThreshold, Math.Max(lockContribution, slipContribution), dtSeconds);
+            // SLIP ANGLE (docs\slip-angle-design.md section 10): a second, independent way through the
+            // same gate (again on the UNSCALED value), and a third candidate for the same drive. Each
+            // source only takes part while its own toggle is on, so with Slip Angle off - or at 0 - the
+            // gate and drive are exactly the lock/slip-only ones.
+            bool aboveThreshold =
+                (IntegrateWheelLockAndSlip && gateValue >= ShakeTriggerThreshold)
+                || (IntegrateSlipAngle && angle0100 >= ShakeTriggerThreshold);
+
+            double drive = 0.0;
+            if (IntegrateWheelLockAndSlip) drive = Math.Max(lockContribution, slipContribution);
+            if (IntegrateSlipAngle) drive = Math.Max(drive, WheelSlipAngleShakeScale * (angle0100 / 100.0));
+
+            double shakeContribution = AdvanceShake(aboveThreshold, drive, dtSeconds);
 
             double? longG = sample.New?.LongitudinalG;
             double? lateralGForFallback = sample.New?.LateralG;
@@ -1142,7 +1173,7 @@ namespace QAdvanceFeedback.Core.GForce
         /// </summary>
         private double AdvanceShake(bool aboveThreshold, double liveContribution, double dtSeconds)
         {
-            if (!IntegrateWheelLockAndSlip)
+            if (!IntegrateWheelLockAndSlip && !IntegrateSlipAngle)
             {
                 _shakeActive = false;
                 _shakeReleasing = false;

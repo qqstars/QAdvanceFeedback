@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
-using System.Threading.Tasks;
 using Newtonsoft.Json;
 using QAdvanceFeedback.Core.Health;
 using QAdvanceFeedback.Core.Normalized;
@@ -30,15 +29,20 @@ namespace QAdvanceFeedback
     /// <item><see cref="SaveLockLearners"/>/<see cref="SaveSlipLearners"/>/<see cref="LoadLockLearners"/>/
     /// <see cref="LoadSlipLearners"/> touch ONLY the in-memory cache - never the filesystem - so
     /// the hot per-frame path (the learner updates every qualifying frame) never stalls on disk I/O.</item>
-    /// <item>A single background <see cref="Timer"/> flushes the cache to
-    /// <c>QAdvanceFeedback.Parameters.json</c> every <see cref="DefaultFlushInterval"/>, and only
-    /// when the cache is actually dirty - an unchanged cache is never rewritten. The write itself runs
-    /// via <see cref="Task.Run(Action)"/>, off whatever thread the timer callback lands on.</item>
+    /// <item>THE WRITER (owner, 2026-11-21; docs\parameters-file-format-report.md): one ONE-SHOT
+    /// <see cref="Timer"/> (due <see cref="DefaultFlushInterval"/>, period infinite). Its tick writes synchronously
+    /// inside try/finally, and the finally re-arms it for another 5 seconds - so the next write is counted from the
+    /// END of the previous one, two writes can never overlap and nothing ever queues. Only changed sections are
+    /// regenerated (<see cref="RuntimeDocumentWriter"/>), and a write whose sections all came out as before is
+    /// skipped.</item>
+    /// <item>Shutdown (<see cref="Dispose"/>, AppDomain unload, process exit - whichever comes first, once): the timer
+    /// is stopped (due infinite), disposed - waiting for a tick in progress - and the very last write is made.</item>
+    /// <item>Startup recovery: a leftover temporary file next to a present parameters file is a write that never
+    /// finished - deleted; with the parameters file missing, a temporary file that parses is renamed into its place.</item>
     /// <item>The runtime file is read once, at construction (plugin Init). A missing or corrupt file
     /// degrades to a fresh, empty document rather than throwing out of the constructor.</item>
-    /// <item>Writes are atomic: a temp file is written and swapped in with <see cref="File.Move"/>
-    /// only once complete, under a lock so the timer's periodic flush and an explicit
-    /// <see cref="Flush"/> (from End()) can never interleave their temp-file dance.</item>
+    /// <item>Writes are atomic and durable (<see cref="AtomicFile"/>: the temporary file is flushed to the disk, then
+    /// swapped in with one replace), under one write lock shared by the timer, <see cref="Flush"/> and shutdown.</item>
     /// <item><see cref="Flush"/> performs a SYNCHRONOUS write-if-dirty, so <c>Plugin.End</c>'s call
     /// chain is guaranteed to have written the last few seconds of learning before the process is
     /// allowed to exit.</item>
@@ -54,21 +58,23 @@ namespace QAdvanceFeedback
         private readonly string _path;
         private readonly Action<string> _logWarning;
         private readonly RuntimeCache _cache = new RuntimeCache();
-        private readonly object _fileLock = new object();
+        /// <summary>One write at a time - the timer's tick, <see cref="Flush"/>, <see cref="Clear"/> and the final
+        /// write at shutdown all take it, so the newest snapshot is always the last one on disk.</summary>
+        private readonly object _writeLock = new object();
         private readonly Timer _timer;
+        private readonly TimeSpan _interval;
+        private readonly RuntimeDocumentWriter _writer = new RuntimeDocumentWriter();
 
-        /// <summary>0 = no background write outstanding, 1 = one is queued or running. Claimed with
-        /// Interlocked so the timer thread can never start a second - see <see cref="FlushTick"/>.</summary>
-        private int _backgroundWriteInFlight;
+        /// <summary>A write failed: the next one regenerates every section and writes even if nothing changed since.
+        /// Under <see cref="_writeLock"/>.</summary>
+        private bool _fileStale;
 
-        /// <summary>The most recently started background write, so <see cref="Flush"/> and
-        /// <see cref="Dispose"/> can wait for it instead of racing it.</summary>
-        private volatile Task _backgroundWrite;
+        /// <summary>0 = running, 1 = shut down (the timer stopped and the last write made).</summary>
+        private int _shutDown;
 
-        /// <summary>How long <see cref="WaitForBackgroundWrite"/> will wait. Generous enough for a
-        /// multi-megabyte write to a busy disk, short enough that a wedged one cannot hang shutdown.</summary>
-        private static readonly TimeSpan BackgroundWriteWaitTimeout = TimeSpan.FromSeconds(10);
-        private bool _disposed;
+        /// <summary>How long shutdown waits for a tick already writing. Generous enough for a multi-megabyte
+        /// write to a busy disk, short enough that a wedged one cannot hang the host's shutdown.</summary>
+        private static readonly TimeSpan TickWaitTimeout = TimeSpan.FromSeconds(10);
         private string _loggedFlushTickFault;
 
         private readonly double _legacyLockPeakG;
@@ -91,14 +97,26 @@ namespace QAdvanceFeedback
 
             RuntimeDocument document = LoadFromDisk(path, legacyPath, logInfo, logWarning,
                 out bool importedFromLegacy, out _legacyLockPeakG, out _legacyLockSamples,
-                out _legacySlipPeakG, out _legacySlipSamples);
+                out _legacySlipPeakG, out _legacySlipSamples, out int loadedVersion);
 
             _cache.Load(document);
-            if (importedFromLegacy) _cache.MarkDirty();
+            // An older file is rewritten in the current format by the first tick (5 s after start), not left as it
+            // was until enough new driving happens to save every section again (owner, 2026-11-22: "the parameter
+            // file, were not updated, when restart the simhub").
+            LoadedOlderVersion = loadedVersion > 0 && loadedVersion < document.Version;
+            if (importedFromLegacy || LoadedOlderVersion) _cache.MarkDirty();
 
-            TimeSpan interval = flushInterval ?? DefaultFlushInterval;
-            _timer = new Timer(_ => FlushTick(), null, interval, interval);
+            _interval = flushInterval ?? DefaultFlushInterval;
+            // ONE-SHOT: due after the interval, never periodic - FlushTick re-arms it once its write is done.
+            _timer = new Timer(_ => FlushTick(), null, _interval, Timeout.InfiniteTimeSpan);
+            AppDomain.CurrentDomain.DomainUnload += OnHostUnloading;
+            AppDomain.CurrentDomain.ProcessExit += OnHostUnloading;
         }
+
+        /// <summary>The file read at startup was written by an older version: every section is written back in the
+        /// current format by the first tick. Learners whose saved shape changed (the Slip Angle learners, v15) are
+        /// re-exported by the plugin right after their import, so that write carries the new shape.</summary>
+        public bool LoadedOlderVersion { get; }
 
         public void LoadLockLearners(out Dictionary<string, GripLearnerState> data) => _cache.LoadLockLearners(out data);
 
@@ -114,6 +132,22 @@ namespace QAdvanceFeedback
         public void LoadSlipScaleLearners(out Dictionary<string, ScaleLearnerState> data) => _cache.LoadSlipScaleLearners(out data);
 
         public void SaveSlipScaleLearners(Dictionary<string, ScaleLearnerState> data) => _cache.SaveSlipScaleLearners(data);
+
+        // Clutch Bite (docs\clutch-bite-design.md).
+        public void LoadClutchBiteLearners(out Dictionary<string, Core.Clutch.ClutchBiteLearnerState> data) => _cache.LoadClutchBiteLearners(out data);
+        public void SaveClutchBiteLearners(Dictionary<string, Core.Clutch.ClutchBiteLearnerState> data) => _cache.SaveClutchBiteLearners(data);
+        public string LoadLastClutchKey() => _cache.LoadLastClutchKey();
+        public void SaveLastClutchKey(string key) => _cache.SaveLastClutchKey(key);
+
+        // Restart display (docs\architecture.md): the last (game, car) the key data was shown for.
+        public bool TryLoadLastKeyDataContext(out string gameId, out string carId) => _cache.TryLoadLastKeyDataContext(out gameId, out carId);
+        public void SaveLastKeyDataContext(string gameId, string carId) => _cache.SaveLastKeyDataContext(gameId, carId);
+
+        // Slip Angle restart display (docs\full-mvvm-plan.md 3.5): the last (game, car, identity tier).
+        public bool TryLoadLastSlipAngleContext(out string gameId, out string carId, out Core.SourceNativeness tier) =>
+            _cache.TryLoadLastSlipAngleContext(out gameId, out carId, out tier);
+        public void SaveLastSlipAngleContext(string gameId, string carId, Core.SourceNativeness tier) =>
+            _cache.SaveLastSlipAngleContext(gameId, carId, tier);
 
         public void LoadSurfaceSupport(out Dictionary<string, bool> data) => _cache.LoadSurfaceSupport(out data);
 
@@ -166,6 +200,29 @@ namespace QAdvanceFeedback
         public void SaveShakeItGameBounds(Dictionary<string, Core.RawCalculator.Calibration.GameCalibrationBounds> data)
             => _cache.SaveShakeItGameBounds(data);
 
+        /// <summary>Version 12 (docs\slip-angle-design.md 9.5.9) - the Slip Angle learners. Like every
+        /// Save here this touches only the in-memory cache: the DATA thread exports
+        /// (<c>KeyedSlipAngleLearner.SaveIfDue</c>) and saves; the timer thread only snapshots the cache.</summary>
+        public void LoadSlipAngleLearners(out Dictionary<string, Core.SlipAngle.SlipAngleKeyState> data)
+            => _cache.LoadSlipAngleLearners(out data);
+
+        public void SaveSlipAngleLearners(Dictionary<string, Core.SlipAngle.SlipAngleKeyState> data)
+            => _cache.SaveSlipAngleLearners(data);
+
+        /// <summary>Version 13 - the Slip Angle speed-aware lateral G bands (same threading as the learners).</summary>
+        public void LoadSlipAngleSpeedBands(out Dictionary<string, Core.SlipAngle.SlipAngleSpeedBandSetState> data)
+            => _cache.LoadSlipAngleSpeedBands(out data);
+
+        public void SaveSlipAngleSpeedBands(Dictionary<string, Core.SlipAngle.SlipAngleSpeedBandSetState> data)
+            => _cache.SaveSlipAngleSpeedBands(data);
+
+        /// <summary>Version 14 - the evidence behind each key's SMax (Lock or Slip), saved throttled.</summary>
+        public void LoadScaleEvidence(bool isLock, out Dictionary<string, ScaleEvidenceState> data)
+            => _cache.LoadScaleEvidence(isLock, out data);
+
+        public void SaveScaleEvidence(bool isLock, Dictionary<string, ScaleEvidenceState> data)
+            => _cache.SaveScaleEvidence(isLock, data);
+
         public void LoadShakeItSourceTimestamps(out Dictionary<string, long> data)
             => _cache.LoadShakeItSourceTimestamps(out data);
 
@@ -214,40 +271,10 @@ namespace QAdvanceFeedback
         /// its "flush once more before exit" guarantee.</summary>
         public void Flush()
         {
-            // LET ANY BACKGROUND WRITE FINISH FIRST, so this one is unambiguously last.
-            //
-            // Without this, a snapshot queued by FlushTick a moment earlier could still be sitting in
-            // the thread pool when Flush ran. Flush would take _fileLock, write the newest state, and
-            // then the older queued snapshot would get the lock and write ITSELF over the top -
-            // silently reverting the final seconds of a session with no crash and no error. Plug.End
-            // calls Flush on the way down, which is exactly when that matters most.
-            WaitForBackgroundWrite();
-
-            RuntimeDocument snapshot = _cache.SnapshotIfDirty();
-            if (snapshot == null) return;
-            WriteAtomic(snapshot);
-        }
-
-        /// <summary>
-        /// Block until the background write started by <see cref="FlushTick"/> has finished, or the
-        /// wait budget runs out.
-        /// <para/>
-        /// SAFE TO BLOCK ON: the task only ever takes <c>_fileLock</c> (and
-        /// <see cref="HealthRegistry"/>'s own gate inside a catch), and no caller of this method holds
-        /// either, so there is no cycle to deadlock on. The timeout exists so a wedged disk degrades
-        /// into "we gave up waiting" rather than hanging the host's shutdown.
-        /// </summary>
-        private void WaitForBackgroundWrite()
-        {
-            Task inFlight = _backgroundWrite;
-            if (inFlight == null || inFlight.IsCompleted) return;
-
-            try { inFlight.Wait(BackgroundWriteWaitTimeout); }
-            catch (AggregateException)
-            {
-                // WriteAtomic already logged and reported whatever went wrong; a faulted write must
-                // not take the caller down with it.
-            }
+            // The write lock makes this unambiguously last: a tick already writing finishes first, and this
+            // snapshot - taken inside the lock - is the newest. (The old design queued writes on the thread pool,
+            // where an older snapshot could land on top of the final one.)
+            WriteIfDirty();
         }
 
         /// <summary>Discards all learned data, in memory and on disk.</summary>
@@ -256,7 +283,7 @@ namespace QAdvanceFeedback
             _cache.Clear();
             Flush();
 
-            lock (_fileLock)
+            lock (_writeLock)
             {
                 if (!string.IsNullOrEmpty(_path) && File.Exists(_path)) File.Delete(_path);
             }
@@ -270,7 +297,7 @@ namespace QAdvanceFeedback
         /// callback: it takes down the entire host process. <see cref="_cache"/>.SnapshotIfDirty is
         /// ordinary in-memory dictionary/state work today and not expected to throw, but "not expected
         /// to" is exactly the gap this project's own report calls out - this handler must survive
-        /// ANY exception, not just the ones <see cref="WriteAtomic"/> already anticipates from disk
+        /// ANY exception, not just the ones <see cref="WriteIfDirty"/> already anticipates from disk
         /// I/O. Logged once (not per-tick) via the same distinct-message dedup <c>QAdvanceFeedback.
         /// DataUpdate</c> uses, so a persistent fault does not spam the log every
         /// <see cref="DefaultFlushInterval"/>.
@@ -279,33 +306,7 @@ namespace QAdvanceFeedback
         {
             try
             {
-                // ONE BACKGROUND WRITE AT A TIME, AND THE CLAIM IS TAKEN FIRST.
-                //
-                // This used to fire Task.Run unconditionally every interval with nothing to stop them
-                // overlapping. Each queued task pins its own full document clone AND the multi-megabyte
-                // JSON string serialised from it - the owner's real parameters file is 3.25 MB - and
-                // they then queue behind each other on _fileLock. If one write ever takes longer than
-                // the interval, which a multi-megabyte file being scanned by antivirus on every write
-                // comfortably can, the queue grows without bound and so does memory. That is the only
-                // mechanism in this plugin capable of taking a whole machine down, and it matches the
-                // owner's report of exactly that.
-                //
-                // Skipping a tick loses nothing: the claim is taken BEFORE SnapshotIfDirty, so when we
-                // skip we never clear the dirty flag and the next tick writes the newer state.
-                if (Interlocked.CompareExchange(ref _backgroundWriteInFlight, 1, 0) != 0) return;
-
-                RuntimeDocument snapshot = _cache.SnapshotIfDirty();
-                if (snapshot == null)
-                {
-                    Interlocked.Exchange(ref _backgroundWriteInFlight, 0);
-                    return;
-                }
-
-                _backgroundWrite = Task.Run(() =>
-                {
-                    try { WriteAtomic(snapshot); }
-                    finally { Interlocked.Exchange(ref _backgroundWriteInFlight, 0); }
-                });
+                WriteIfDirty();
             }
             catch (Exception e)
             {
@@ -318,48 +319,72 @@ namespace QAdvanceFeedback
                 HealthRegistry.Report(HealthSubsystems.BackgroundFlush, HealthSeverity.Degraded,
                     "Health.Impact.BackgroundFlush", e.ToString());
             }
+            finally
+            {
+                // RE-ARM: the next write is due one interval after THIS one finished (owner's pattern) - never
+                // while shutting down, and a timer disposed meanwhile is simply left alone.
+                if (Volatile.Read(ref _shutDown) == 0)
+                {
+                    try { _timer?.Change(_interval, Timeout.InfiniteTimeSpan); }
+                    catch (ObjectDisposedException) { }
+                }
+            }
         }
 
-        private void WriteAtomic(RuntimeDocument snapshot)
+        /// <summary>
+        /// The one write path: under <see cref="_writeLock"/>, snapshot the cache if anything was saved since, regenerate
+        /// only the changed sections, and write the file - unless every regenerated section came out exactly as already
+        /// written. A failed write marks everything dirty again and the file stale, so the next tick retries in full.
+        /// </summary>
+        private void WriteIfDirty()
         {
-            if (string.IsNullOrEmpty(_path)) return;
-            try
+            lock (_writeLock)
             {
-                // The ShakeIt calibration types get short JSON names and drop their live-only
-                // members - see ShakeItCalibrationContractResolver. The reader below MUST use the
-                // same settings or every calibration reads back empty.
-                string json = JsonConvert.SerializeObject(
-                    snapshot, ShakeItCalibrationContractResolver.Settings(Formatting.Indented));
+                RuntimeDocument snapshot = _cache.SnapshotIfDirty(out HashSet<string> sections);
+                if (snapshot == null || string.IsNullOrEmpty(_path)) return;
+                bool written = false;
+                try
+                {
+                    // The ShakeIt calibration types get short JSON names and drop their live-only members - see
+                    // ShakeItCalibrationContractResolver; the writer uses the same settings as the reader.
+                    string json = _writer.Compose(snapshot, _fileStale ? null : sections, out bool changed);
+                    if (!changed && !_fileStale) { written = true; return; }   // the file already holds exactly this
 
-                // ATOMIC AND DURABLE - see Core.Runtime.AtomicFile. This file is rewritten every few
-                // seconds for a whole session, so the delete-then-move window it replaces was being
-                // entered constantly; a forced restart landing in one lost the entire learning history.
-                lock (_fileLock) AtomicFile.WriteAllText(_path, json);
-            }
-            catch (IOException e)
-            {
-                _logWarning?.Invoke("QAdvanceFeedback: parameters save failed - " + e.Message);
-                HealthRegistry.Report(HealthSubsystems.RuntimePersistence, HealthSeverity.Degraded,
-                    "Health.Impact.RuntimePersistence", e.ToString());
-            }
-            catch (UnauthorizedAccessException e)
-            {
-                _logWarning?.Invoke("QAdvanceFeedback: parameters save denied - " + e.Message);
-                HealthRegistry.Report(HealthSubsystems.RuntimePersistence, HealthSeverity.Degraded,
-                    "Health.Impact.RuntimePersistence", e.ToString());
-            }
-            // Belt-and-suspenders (pipeline-exception-safety report): this method now also runs
-            // detached inside Task.Run, off FlushTick's own guarded call on the Timer thread (see
-            // FlushTick's remarks) - a JsonException from SerializeObject, or an ArgumentException/
-            // PathTooLongException/NotSupportedException from CreateDirectory/WriteAllText/Move (none
-            // of which derive from IOException or UnauthorizedAccessException) must not escape onto
-            // that detached Task either, so it is caught and logged here too rather than left to
-            // become an unobserved task exception.
-            catch (Exception e)
-            {
-                _logWarning?.Invoke("QAdvanceFeedback: parameters save failed unexpectedly - " + e.Message);
-                HealthRegistry.Report(HealthSubsystems.RuntimePersistence, HealthSeverity.Degraded,
-                    "Health.Impact.RuntimePersistence", e.ToString());
+                    // ATOMIC AND DURABLE - see Core.Runtime.AtomicFile: flushed to the disk, then swapped in with one
+                    // replace, so the file is never missing (the owner-reported 2026-10-02 defect).
+                    AtomicFile.WriteAllText(_path, json);
+                    written = true;
+                    _fileStale = false;
+                }
+                catch (IOException e)
+                {
+                    _logWarning?.Invoke("QAdvanceFeedback: parameters save failed - " + e.Message);
+                    HealthRegistry.Report(HealthSubsystems.RuntimePersistence, HealthSeverity.Degraded,
+                        "Health.Impact.RuntimePersistence", e.ToString());
+                }
+                catch (UnauthorizedAccessException e)
+                {
+                    _logWarning?.Invoke("QAdvanceFeedback: parameters save denied - " + e.Message);
+                    HealthRegistry.Report(HealthSubsystems.RuntimePersistence, HealthSeverity.Degraded,
+                        "Health.Impact.RuntimePersistence", e.ToString());
+                }
+                // Belt-and-suspenders (pipeline-exception-safety report): a JsonException from serialising, or an
+                // ArgumentException/PathTooLongException/NotSupportedException from the file calls, must not escape
+                // onto the timer thread either.
+                catch (Exception e)
+                {
+                    _logWarning?.Invoke("QAdvanceFeedback: parameters save failed unexpectedly - " + e.Message);
+                    HealthRegistry.Report(HealthSubsystems.RuntimePersistence, HealthSeverity.Degraded,
+                        "Health.Impact.RuntimePersistence", e.ToString());
+                }
+                finally
+                {
+                    if (!written)
+                    {
+                        _fileStale = true;
+                        _cache.MarkDirty();   // nothing is lost: the next tick writes it all
+                    }
+                }
             }
         }
 
@@ -375,11 +400,14 @@ namespace QAdvanceFeedback
             string path, string legacyPath, Action<string> logInfo, Action<string> logWarning,
             out bool importedFromLegacy,
             out double legacyLockPeakG, out int legacyLockSamples,
-            out double legacySlipPeakG, out int legacySlipSamples)
+            out double legacySlipPeakG, out int legacySlipSamples, out int loadedVersion)
         {
             importedFromLegacy = false;
+            loadedVersion = 0;
             legacyLockPeakG = 0.0; legacyLockSamples = 0;
             legacySlipPeakG = 0.0; legacySlipSamples = 0;
+
+            RecoverTemporaryFile(path, logInfo, logWarning);
 
             try
             {
@@ -387,7 +415,11 @@ namespace QAdvanceFeedback
                 {
                     var loaded = JsonConvert.DeserializeObject<RuntimeDocument>(
                         File.ReadAllText(path), ShakeItCalibrationContractResolver.Settings(Formatting.None));
-                    if (loaded != null) return Normalise(loaded);
+                    if (loaded != null)
+                    {
+                        loadedVersion = loaded.Version;
+                        return Normalise(loaded);
+                    }
                 }
             }
             catch (Exception e) when (e is IOException || e is JsonException || e is UnauthorizedAccessException)
@@ -428,12 +460,46 @@ namespace QAdvanceFeedback
             return new RuntimeDocument();
         }
 
+        /// <summary>
+        /// STARTUP RECOVERY (owner, 2026-11-21). The temporary file is the write in progress
+        /// (<see cref="AtomicFile.TemporarySuffix"/>). Both present: the swap never happened, so the parameters file is
+        /// the last complete write - the temporary one is deleted. Parameters file missing but a temporary file present:
+        /// if the temporary file parses as a parameters document it is renamed into place and used; if it does not, it is
+        /// left alone (the next write overwrites it) and the plugin starts fresh. Never throws.
+        /// </summary>
+        private static void RecoverTemporaryFile(string path, Action<string> logInfo, Action<string> logWarning)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            string temporary = path + AtomicFile.TemporarySuffix;
+            try
+            {
+                AtomicFile.Recovery result = AtomicFile.RecoverTemporary(path, text =>
+                {
+                    try
+                    {
+                        return JsonConvert.DeserializeObject<RuntimeDocument>(
+                            text, ShakeItCalibrationContractResolver.Settings(Formatting.None)) != null;
+                    }
+                    catch (JsonException) { return false; }
+                });
+                if (result == AtomicFile.Recovery.Restored)
+                    logInfo?.Invoke("QAdvanceFeedback: parameters file recovered from its temporary file (" + temporary + ")");
+                else if (result == AtomicFile.Recovery.Unusable)
+                    logWarning?.Invoke("QAdvanceFeedback: an unreadable temporary parameters file was ignored (" + temporary + ")");
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                logWarning?.Invoke("QAdvanceFeedback: parameters temporary-file recovery failed - " + e.Message);
+            }
+        }
+
         /// <summary>A hand-edited or partially-written new-shape file can deserialise successfully but
         /// leave either dictionary null (Newtonsoft does not run field initialisers for a property
         /// present-but-null in the source JSON) - normalised back to empty here so every downstream
         /// caller can rely on "never null", same guarantee <see cref="RuntimeCache"/> already gives.</summary>
         private static RuntimeDocument Normalise(RuntimeDocument document)
         {
+            document.Version = new RuntimeDocument().Version;   // it is written back in the current format
             document.LockLearners ??= new Dictionary<string, GripLearnerState>();
             document.SlipLearners ??= new Dictionary<string, GripLearnerState>();
             document.GForceAccelLearnedMaxima ??= new Dictionary<string, double>();
@@ -446,21 +512,44 @@ namespace QAdvanceFeedback
             document.SlipPhysicalReference ??= new Dictionary<string, GripLearnerState>();
             document.LockScaleCrossCarSeed ??= new Dictionary<string, ScaleLearnerState>();
             document.SlipScaleCrossCarSeed ??= new Dictionary<string, ScaleLearnerState>();
+            document.ClutchBiteLearners ??= new Dictionary<string, Core.Clutch.ClutchBiteLearnerState>();
+            document.SlipAngleLearners ??= new Dictionary<string, Core.SlipAngle.SlipAngleKeyState>();
+            document.SlipAngleSpeedBands ??= new Dictionary<string, Core.SlipAngle.SlipAngleSpeedBandSetState>();
+            document.LockScaleEvidence ??= new Dictionary<string, ScaleEvidenceState>();
+            document.SlipScaleEvidence ??= new Dictionary<string, ScaleEvidenceState>();
             return document;
         }
 
-        /// <summary>Stops the background timer. Does NOT flush - callers that want a guaranteed
-        /// final write must call <see cref="Flush"/> first (see <c>Plugin.End</c>).</summary>
-        public void Dispose()
-        {
-            if (_disposed) return;
-            _disposed = true;
-            _timer?.Dispose();
+        /// <summary>Shuts down (see <see cref="Shutdown"/>): stops the timer and makes the very last write.</summary>
+        public void Dispose() => Shutdown();
 
-            // Stop the timer FIRST so nothing new can start, then let any write already in flight
-            // finish. Disposing while one is mid-write would otherwise let it complete after the
-            // caller believes shutdown is done - and, worse, after their final Flush.
-            WaitForBackgroundWrite();
+        private void OnHostUnloading(object sender, EventArgs e) => Shutdown();
+
+        /// <summary>
+        /// SHUTDOWN, exactly once, whichever comes first - <see cref="Dispose"/> (Plugin.End), AppDomain unload or
+        /// process exit (owner, 2026-11-21): the timer is stopped (due infinite, period infinite), disposed - waiting
+        /// up to <see cref="TickWaitTimeout"/> for a tick that is writing - and the very last write is made. Saves
+        /// after this reach the cache only.
+        /// </summary>
+        private void Shutdown()
+        {
+            if (Interlocked.Exchange(ref _shutDown, 1) != 0) return;
+            AppDomain.CurrentDomain.DomainUnload -= OnHostUnloading;
+            AppDomain.CurrentDomain.ProcessExit -= OnHostUnloading;
+            try
+            {
+                _timer.Change(Timeout.Infinite, Timeout.Infinite);
+                var done = new ManualResetEvent(false);
+                // Disposed only when the wait completed: a tick still running past the timeout signals it later.
+                if (_timer.Dispose(done) && done.WaitOne(TickWaitTimeout)) done.Dispose();
+            }
+            catch (ObjectDisposedException) { }
+
+            try { WriteIfDirty(); }
+            catch (Exception e)
+            {
+                _logWarning?.Invoke("QAdvanceFeedback: final parameters save failed - " + e.Message);
+            }
         }
     }
 }

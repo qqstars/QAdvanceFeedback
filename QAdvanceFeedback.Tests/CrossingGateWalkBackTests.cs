@@ -109,14 +109,17 @@ namespace QAdvanceFeedback.Tests
             // Index 1 is an EARLIER, separate phase: its basis (60) is higher than index 2's (45), so
             // the rise ending at index 6 does not include it. Its G (1.09) is the highest in the window
             // and sits INSIDE the 10% band, so only the rise rule can keep the walk off it. If the walk
-            // escaped, the snapshot would be 60 rather than 45.
+            // escaped, the snapshot would be 60.
+            // The dip itself (index 2, 45) is where this rise STARTED - not part of it (SMax 100/90/70
+            // fix, 2026-11-19: the walk only steps onto frames that rose from their own predecessor), so
+            // the highest-G frame inside the rise is index 3, basis 55.
             double[] basis = { 30, 60, 45, 55, 62, 70, 74 };
             double[] g = { 1.20, 1.09, 1.06, 1.05, 1.04, 1.02, 1.00 };
 
             double? taught = RunLock(basis, g);
             _out.WriteLine($"taught {taught}");
             Assert.NotNull(taught);
-            Assert.Equal(45.0, taught.Value, 3);
+            Assert.Equal(55.0, taught.Value, 3);
         }
 
         [Fact]

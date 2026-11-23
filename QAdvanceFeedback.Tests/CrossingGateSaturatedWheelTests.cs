@@ -81,11 +81,13 @@ namespace QAdvanceFeedback.Tests
         public void The_reported_FH6_braking_zone_taught_98_before_the_guard()
         {
             // THE DEFECT, reproduced from the owner's own capture. With the guard off the gate fires at
-            // frame 7617 and snapshots 98.249 - which is bit-for-bit the SMax the log published.
+            // frame 7617 and snapshots 98.249 - which is bit-for-bit the SMax the log published. Since the
+            // learn ceiling (2026-11-19) even that snapshot can only TEACH 95 - the guard keeps it out
+            // entirely, the ceiling bounds it if the guard is ever switched off.
             double? taught = RunLock(Fh6Basis, Fh6G, Fh6Pegged, threshold: 0);
             _out.WriteLine($"guard off -> {(taught.HasValue ? taught.Value.ToString("F3") : "no crossing")}");
             Assert.NotNull(taught);
-            Assert.Equal(98.249, taught.Value, 3);
+            Assert.Equal(LockCrossingGate.LearnCeiling, taught.Value, 3);
         }
 
         [Fact]
@@ -176,7 +178,8 @@ namespace QAdvanceFeedback.Tests
 
             _out.WriteLine($"unreported saturation -> {taught}");
             Assert.NotNull(taught);
-            Assert.Equal(98.249, taught.Value, 3);
+            // The 98.249 snapshot, bounded by the learn ceiling.
+            Assert.Equal(LockCrossingGate.LearnCeiling, taught.Value, 3);
         }
 
         [Fact]

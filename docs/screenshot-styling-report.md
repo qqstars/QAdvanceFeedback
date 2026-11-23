@@ -17,6 +17,15 @@ against the OS theme's own built-in generic dictionary (Aero/Aero2) when nothing
 that OS-theme fallback is exactly what "default WPF chrome" in the brief means. It is not a crash or
 a missing-resource exception; it is a silently-wrong resource resolution.
 
+> **Update, 2026-10-09 — reference bump to SimHub 9.13.2.** `lib\` now carries 9.13.2
+> (`SimHub.Plugins.dll` version `1.0.9776.38956`). Everything below was measured against 9.11.22's
+> `1.0.9708.30848`, and the two findings that matter were re-verified on the new assembly:
+> the four `genericsh*.baml` names are **still absent**, so the conclusion and the fix stand; and
+> `MahApps.Metro.dll` is **byte-identical** between the two releases (still `1.5.0.23`), so every
+> MahApps resource path and key quoted below is unchanged. The embedded-entry COUNT (218) was not
+> re-measured and will have moved - it is incidental to the argument. See
+> `docs/packaging-report.md` for why the bump was taken.
+
 ## Investigation: the brief's named SimHub dictionaries do not exist in this assembly
 
 The brief's "already found" section named `styles/simhubstyles.baml`, `themes/generic.baml`,
@@ -172,8 +181,10 @@ sessions - see the older `docs\screenshot-capture-rule.md` /
    screenshot-rendering purpose (every call through it is already exception-safe and degrades to "not
    available"), but it must not be copied into any other tooling that expects a real, working
    `PluginManager`.
-3. **MahApps dictionary versions are pinned to the copy in `lib\`** (`1.5.0.23`, matching SimHub
-   9.11.22). A future `tools\fetch-simhub-refs.sh` run against a different SimHub version could ship a
+3. **MahApps dictionary versions are pinned to the copy in `lib\`** (`1.5.0.23`, shipped unchanged by
+   SimHub 9.11.22 and 9.13.2 alike - the DLL is byte-identical across the two, so the 2026-10-09
+   reference bump did not disturb any of this). A future `tools\fetch-simhub-refs.sh` run against a
+   different SimHub version could ship a
    different MahApps version whose resource paths/keys have moved; the harness's `--dump-resources`
    mode is there specifically to re-verify this quickly if screenshots start looking wrong again after
    a version bump.

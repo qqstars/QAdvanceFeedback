@@ -1,0 +1,97 @@
+<UserControl x:Class="QAdvanceFeedbackViews.WheelChannelKeyDataView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mah="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro"
+             xmlns:local="clr-namespace:QAdvanceFeedbackControls"
+             xmlns:v="clr-namespace:QAdvanceFeedbackViews"
+             v:ViewModelLifetime.Activate="True">
+  <!-- KEY DATA POINTS (v1.0.7.2) of a Wheel Lock / Wheel Slip tab, bound to a KeyDataPageViewModel; the
+       tab view places it inside the Sources group, between the source rows and the Custom cold-start
+       reference, exactly where the old page had it. Applies and saves at once - never through Apply.
+       Four columns, one Grid, so labels / controls / learned hints / descriptions all line up down the
+       section. The learned-value hint has its own fixed-width monospace column precisely so "10.5" and
+       "9.3" align. Columns 0 and 1 join the tab's shared label / editor groups (LockAlign / LockEditor,
+       SlipAlign / SlipEditor - bound, since this one view serves both tabs) so the Custom reference editors
+       below line up with these. The page's implicit styles reach in here. -->
+  <UserControl.Resources>
+    <v:VisibleWhenConverter x:Key="VisibleWhen"/>
+  </UserControl.Resources>
+  <StackPanel>
+    <TextBlock Text="{Binding Header}" FontWeight="Bold" Margin="4,14,4,4"/>
+    <TextBlock Text="{v:Loc KeyData.ShadowingRaw.Note}" TextWrapping="Wrap" FontWeight="Bold" Foreground="#FFCC4400" Margin="4,0,4,4"
+               Visibility="{Binding ShowShadowNote, Converter={StaticResource VisibleWhen}}"/>
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto" SharedSizeGroup="ChannelAlign"/>
+        <ColumnDefinition Width="Auto" SharedSizeGroup="ChannelEditor"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+
+      <TextBlock     Grid.Row="0" Grid.Column="0" Text="{v:Loc KeyData.AutoGenerate.Label}"/>
+      <mah:ToggleSwitch  Grid.Row="0" Grid.Column="1" IsChecked="{Binding Auto}" HorizontalAlignment="Left" Margin="4"
+                         OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
+      <TextBlock     Grid.Row="0" Grid.Column="3" Text="{v:Loc KeyData.AutoGenerate.Desc}" TextWrapping="Wrap" FontStyle="Italic"/>
+
+      <!-- Per-Game is meaningless under Auto: hidden rather than disabled (owner). -->
+      <TextBlock     Grid.Row="1" Grid.Column="0" Text="{v:Loc KeyData.PerGame.Label}"
+                     Visibility="{Binding ShowPerGame, Converter={StaticResource VisibleWhen}}"/>
+      <mah:ToggleSwitch  Grid.Row="1" Grid.Column="1" IsChecked="{Binding PerGame}" HorizontalAlignment="Left" Margin="4"
+                         OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"
+                         Visibility="{Binding ShowPerGame, Converter={StaticResource VisibleWhen}}"/>
+      <TextBlock     Grid.Row="1" Grid.Column="3" Text="{v:Loc KeyData.PerGame.Desc}" TextWrapping="Wrap" FontStyle="Italic"
+                     Visibility="{Binding ShowPerGame, Converter={StaticResource VisibleWhen}}"/>
+
+      <TextBlock         Grid.Row="2" Grid.Column="0" Text="{Binding SMaxLabel}"/>
+      <!-- Learning indicator LEFT of the box (owner): Auto only, collapsed (no space) under Manual. -->
+      <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
+        <v:LearningLed DataContext="{Binding SMaxIndicator}" Margin="4,0,2,0"/>
+        <local:NumericEditor Value="{Binding SMax}" IsEnabled="{Binding ValuesEditable}"
+                             Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" Watermark="---"/>
+      </StackPanel>
+      <TextBlock         Grid.Row="2" Grid.Column="2" Text="{Binding SMaxLearnedText}" FontFamily="Consolas" Width="150"
+                         Visibility="{Binding ShowLearnedHints, Converter={StaticResource VisibleWhen}}"/>
+      <TextBlock         Grid.Row="2" Grid.Column="3" Text="{Binding SMaxDesc}" TextWrapping="Wrap" FontStyle="Italic"/>
+
+      <!-- Max-Grip-Only hides the two lower anchors entirely - they are derived, not configured. -->
+      <TextBlock         Grid.Row="3" Grid.Column="0" Text="{Binding S90Label}"
+                         Visibility="{Binding ShowLowerAnchors, Converter={StaticResource VisibleWhen}}"/>
+      <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left"
+                  Visibility="{Binding ShowLowerAnchors, Converter={StaticResource VisibleWhen}}">
+        <v:LearningLed DataContext="{Binding S90Indicator}" Margin="4,0,2,0"/>
+        <local:NumericEditor Value="{Binding S90}" IsEnabled="{Binding ValuesEditable}"
+                             Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" Watermark="---"/>
+      </StackPanel>
+      <TextBlock         Grid.Row="3" Grid.Column="2" Text="{Binding S90LearnedText}" FontFamily="Consolas" Width="150"
+                         Visibility="{Binding ShowLowerLearnedHints, Converter={StaticResource VisibleWhen}}"/>
+      <TextBlock         Grid.Row="3" Grid.Column="3" Text="{Binding S90Desc}" TextWrapping="Wrap" FontStyle="Italic"
+                         Visibility="{Binding ShowLowerAnchors, Converter={StaticResource VisibleWhen}}"/>
+
+      <TextBlock         Grid.Row="4" Grid.Column="0" Text="{Binding S75Label}"
+                         Visibility="{Binding ShowLowerAnchors, Converter={StaticResource VisibleWhen}}"/>
+      <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left"
+                  Visibility="{Binding ShowLowerAnchors, Converter={StaticResource VisibleWhen}}">
+        <v:LearningLed DataContext="{Binding S75Indicator}" Margin="4,0,2,0"/>
+        <local:NumericEditor Value="{Binding S75}" IsEnabled="{Binding ValuesEditable}"
+                             Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" Watermark="---"/>
+      </StackPanel>
+      <TextBlock         Grid.Row="4" Grid.Column="2" Text="{Binding S75LearnedText}" FontFamily="Consolas" Width="150"
+                         Visibility="{Binding ShowLowerLearnedHints, Converter={StaticResource VisibleWhen}}"/>
+      <TextBlock         Grid.Row="4" Grid.Column="3" Text="{Binding S75Desc}" TextWrapping="Wrap" FontStyle="Italic"
+                         Visibility="{Binding ShowLowerAnchors, Converter={StaticResource VisibleWhen}}"/>
+    </Grid>
+    <!-- Shown only when there is something to undo (owner, 2026-09-30) - independent of Auto/Manual,
+         since it resets that choice itself. -->
+    <Button Content="{v:Loc KeyData.ResetToDefault}" Command="{Binding ResetCommand}" Padding="16,4" HorizontalAlignment="Left"
+            Visibility="{Binding ShowReset, Converter={StaticResource VisibleWhen}}"/>
+    <TextBlock Text="{Binding Status}" TextWrapping="Wrap" FontStyle="Italic" Foreground="#C62828" Margin="4,4,4,0"
+               Visibility="{Binding Status, Converter={StaticResource VisibleWhen}}"/>
+  </StackPanel>
+</UserControl>

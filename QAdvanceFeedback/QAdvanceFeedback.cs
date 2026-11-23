@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Windows.Controls;
 using System.Windows.Media;
 using GameReaderCommon;
@@ -8,6 +9,7 @@ using QAdvanceFeedback.Core.Health;
 using QAdvanceFeedback.Core.Projection;
 using QAdvanceFeedback.Core.Normalized;
 using QAdvanceFeedback.Core.RawCalculator;
+using QAdvanceFeedback.Core.SlipAngle;
 using QAdvanceFeedback.Settings;
 using SimHub.Plugins;
 
@@ -30,7 +32,7 @@ namespace QAdvanceFeedback
     // receiver, not GetType() - PropertyPublisher.Register is generic in the concrete plugin type
     // (TPlugin) for exactly this reason (see its own remarks) - a plain IPlugin parameter there would
     // silently publish everything under "IPlugin.*" regardless of this class's name.
-    public sealed class QAdvanceFeedback : IPlugin, IDataPlugin, IWPFSettingsV2
+    public sealed partial class QAdvanceFeedback : IPlugin, IDataPlugin, IWPFSettingsV2
     {
         // Renamed per the owner's request (was plugin.QAdvanceFeedback.*.json) - the OLD names are
         // kept as constants purely so ConfigStore/RuntimeStore can import a still-present old file
@@ -88,6 +90,19 @@ namespace QAdvanceFeedback
                && channel.SourceMode == SourceMode.Viper
                && !string.IsNullOrWhiteSpace(gameId)
                && !Core.Viper.ViperSupportedGames.IsSupported(gameId, _viperDocument.SupportedGames);
+
+        /// <summary>
+        /// Whether a channel configured for the ShakeIt Built-in source is reading - and keying its data
+        /// as - Raw right now: the published state for that channel is NotSetUp or NotSupported
+        /// (docs\shakeit-source-design.md §4; <see cref="Core.ShakeItEffects.ShakeItSourceResolution.FallsBackToRaw"/>).
+        /// The ShakeIt twin of <see cref="ViperSourceBlocked"/>, for the settings page. SetUpIdle (no game,
+        /// or the first in-game moment before values arrive) is not blocked, for the same "no game is not
+        /// an unsupported game" reason.
+        /// </summary>
+        public bool ShakeItSourceBlocked(WheelChannelSettings channel, bool isLockChannel)
+            => channel != null
+               && channel.SourceMode == SourceMode.ShakeIt
+               && Core.ShakeItEffects.ShakeItSourceResolution.FallsBackToRaw(ShakeItSourceState.For(isLockChannel));
 
         private QAdvanceFeedbackSettings _settings;
 
@@ -154,88 +169,52 @@ namespace QAdvanceFeedback
                 : ManualAnchors.None;
         }
 
-        /// <summary>
-        /// Keep the settings page's "[Learned Value: xx.x]" hints current while it is open.
-        /// <para/>
-        /// Costs nothing when the page is closed (the weak reference simply fails to resolve), and reads
-        /// only already-computed learner state - it never drives learning or output. The values pushed
-        /// are the SAME ones the Normalized layer would publish under Auto, which is what makes the hint
-        /// meaningful as a reference while the driver is typing a manual value.
-        /// </summary>
-        /// <summary>How often the settings page's learned readouts are refreshed. Matches the cadence
-        /// the G-Force learned readout already uses - a learned ceiling moves far too slowly to be worth
-        /// marshalling onto the UI thread every frame, and rewriting the value boxes 60 times a second
-        /// would be churn the driver cannot even perceive.</summary>
+        /// <summary>How often the settings page is told to re-read the learned key data while driving.
+        /// Matches the cadence the G-Force learned readout already uses - a learned ceiling moves far too
+        /// slowly to be worth marshalling onto the UI thread every frame.</summary>
         private const double KeyDataPushIntervalSeconds = 1.0;
 
         private double _secondsSinceKeyDataPush;
 
-        /// <summary>The last game id handed to the settings page, so the dispatcher is touched only when
-        /// it actually changes. Cleared when a new page is created, so a freshly opened page is told
-        /// immediately rather than waiting for a game switch that may never come.</summary>
+        /// <summary>The last game id the settings page was told about, so it is told only when the answer
+        /// actually changes. Cleared when the page is created, so it is told at once.</summary>
         private string _lastGameIdPushedToUi;
 
         /// <summary>
-        /// Tell the settings page which game is running, regardless of whether it is being DRIVEN.
+        /// Tell the settings page the running game changed, regardless of whether it is being DRIVEN
+        /// (<see cref="SettingsPageStateChanged"/>; the page reads <see cref="CurrentGameId"/>).
         /// <para/>
-        /// Called above <see cref="DataUpdate"/>'s learning gate - see the remarks there for why. Sends
-        /// nothing but the id: the learned values still ride the 1 Hz push, which is correctly gated,
-        /// because a paused game has nothing new to teach.
+        /// Called above <see cref="DataUpdate"/>'s learning gate - see the remarks there for why. The
+        /// learned values still ride the 1 Hz notification, which is correctly gated, because a paused
+        /// game has nothing new to teach.
         /// </summary>
         private void PushCurrentGameToSettingsUi(string gameId)
         {
             if (string.Equals(gameId, _lastGameIdPushedToUi, StringComparison.Ordinal)) return;
-
-            Settings.SettingsControl control;
-            if (_settingsControl == null || !_settingsControl.TryGetTarget(out control) || control == null) return;
-
+            if (_settingsPage == null) return;
             _lastGameIdPushedToUi = gameId;
-            control.Dispatcher.BeginInvoke((Action)(() => control.UpdateCurrentGame(gameId)));
+            RaiseSettingsPageStateChanged();
         }
 
-        private void PushLearnedKeyDataPointsToSettingsUi(
-            string gameId, string carId, string lockSourceIdentity, string slipSourceIdentity, double dtSeconds)
+        /// <summary>
+        /// Keep the settings page's learned readouts ("[Learned Value: xx.x]", the Auto values, the manual
+        /// gate) current while driving: once a second the page is told to re-read them through the one
+        /// display rule (<see cref="GetLearnedKeyDataForDisplay"/>, <see cref="ManualGateReadyForDisplay"/>) -
+        /// the same values the ShakeIt panels read. Costs nothing before a page exists; reads only
+        /// already-computed learner state - it never drives learning or output.
+        /// </summary>
+        private void PushLearnedKeyDataPointsToSettingsUi(double dtSeconds)
         {
-            Settings.SettingsControl control;
-            if (_settingsControl == null || !_settingsControl.TryGetTarget(out control) || control == null)
+            if (_settingsPage == null)
             {
-                _secondsSinceKeyDataPush = 0.0;   // no page open - start the clock fresh when one appears
+                _secondsSinceKeyDataPush = 0.0;   // no page yet - start the clock fresh when one appears
                 return;
             }
 
             if (ClampMath.IsFinite(dtSeconds) && dtSeconds > 0.0) _secondsSinceKeyDataPush += dtSeconds;
             if (_secondsSinceKeyDataPush < KeyDataPushIntervalSeconds) return;
             _secondsSinceKeyDataPush = 0.0;
-
-            bool ignored;
-            double? lockSMax = _normalizedEngine.LockScaleLearner.LearnedCeiling(gameId, carId, lockSourceIdentity, out ignored);
-            double? slipSMax = _normalizedEngine.SlipScaleLearner.LearnedCeiling(gameId, carId, slipSourceIdentity, out ignored);
-
-            // Lock's lower anchors are MEASURED (ratios learned per corner); Slip's are DERIVED, because
-            // it has nothing to measure them from - see KeyDataPointSettings.DeriveLowerAnchors.
-            double? lockS90 = null, lockS75 = null;
-            if (lockSMax.HasValue && lockSMax.Value > 0.0)
-            {
-                lockS90 = lockSMax.Value * _normalizedEngine.LockAnchors.PhysicalS90Ratio(
-                    gameId, carId, lockSourceIdentity, KeyDataPointSettings.DerivedS90Fraction);
-                lockS75 = lockSMax.Value * _normalizedEngine.LockAnchors.PhysicalS75Ratio(
-                    gameId, carId, lockSourceIdentity, KeyDataPointSettings.DerivedS75Fraction);
-            }
-
-            double? slipS90 = null, slipS75 = null;
-            if (slipSMax.HasValue && slipSMax.Value > 0.0)
-            {
-                double a90, a75;
-                KeyDataPointSettings.DeriveLowerAnchors(slipSMax.Value, out a90, out a75);
-                slipS90 = a90; slipS75 = a75;
-            }
-
-            control.Dispatcher.BeginInvoke((Action)(() => control.UpdateLearnedKeyDataPoints(
-                gameId, lockSourceIdentity, slipSourceIdentity, _keyDataRevision,
-                lockSMax, lockS90, lockS75,
-                _normalizedEngine.ManualGateReady(gameId, carId, lockSourceIdentity, isLockChannel: true),
-                slipSMax, slipS90, slipS75,
-                _normalizedEngine.ManualGateReady(gameId, carId, slipSourceIdentity, isLockChannel: false))));
+            RaiseSettingsPageStateChanged();
         }
 
         /// <summary>
@@ -257,6 +236,7 @@ namespace QAdvanceFeedback
             if (_settings == null) return;
             _lastCarIdForKeyData = carId;
             _lastGameIdForKeyData = gameId;
+            _runtimeStore?.SaveLastKeyDataContext(gameId, carId);   // no-op unless it changed
 
             bool changed = false;
             changed |= TrySeedKeyDataSlot(_settings.Lock.KeyDataPoints, gameId, lockSourceIdentity,
@@ -267,8 +247,9 @@ namespace QAdvanceFeedback
                 _settings.Slip.NormalizePattern, isLockChannel: false);
 
             if (!changed) return;
-            ConfigStore.Save(_configPath, _settings, LogWarning);
+            SaveConfig();
             _keyDataRevision++;
+            RaiseSettingsPageStateChanged();   // the page reloads the seeded slot
         }
 
         private bool TrySeedKeyDataSlot(KeyDataPointSettings keyData, string gameId, string sourceIdentity,
@@ -279,20 +260,17 @@ namespace QAdvanceFeedback
             if (keyData.GetPerGame(sourceIdentity) && string.IsNullOrEmpty(gameId)) return false;
             if (keyData.IsSeeded(gameId, sourceIdentity)) return false;
 
-            bool ignored;
-            KeyedScaleLearner learner = isLockChannel
-                ? _normalizedEngine.LockScaleLearner : _normalizedEngine.SlipScaleLearner;
-            double? learnedSMax = learner.LearnedCeiling(gameId, _lastCarIdForKeyData, sourceIdentity, out ignored);
-            if (!learnedSMax.HasValue || learnedSMax.Value <= 0.0) return false;
+            // The one display rule - so the seed writes exactly what the page and panels were showing.
+            KeyDataTriple learned = KeyDataPanelModel.LearnedKeyData(
+                _normalizedEngine, isLockChannel, gameId, _lastCarIdForKeyData, sourceIdentity);
+            if (learned == null) return false;
 
-            double sMax = Math.Round(learnedSMax.Value, 1);
+            double sMax = learned.SMax;
             double s90, s75;
             if (isLockChannel && pattern == NormalizePattern.Mapping)
             {
-                s90 = Math.Round(sMax * _normalizedEngine.LockAnchors.PhysicalS90Ratio(
-                    gameId, _lastCarIdForKeyData, sourceIdentity, KeyDataPointSettings.DerivedS90Fraction), 1);
-                s75 = Math.Round(sMax * _normalizedEngine.LockAnchors.PhysicalS75Ratio(
-                    gameId, _lastCarIdForKeyData, sourceIdentity, KeyDataPointSettings.DerivedS75Fraction), 1);
+                s90 = learned.S90;
+                s75 = learned.S75;
             }
             else
             {
@@ -315,39 +293,89 @@ namespace QAdvanceFeedback
         private int _keyDataRevision;
 
         /// <summary>
-        /// The learned ceiling the settings page should display for a channel, WITHOUT needing a game to
-        /// be running.
+        /// The learned key data the settings page and the ShakeIt panels display for a channel's source,
+        /// WITHOUT needing a game to be running - by the one display rule
+        /// (<see cref="KeyDataPanelModel.LearnedKeyData"/>).
         /// <para/>
-        /// Prefers the key currently being driven, which is the precise answer. Falls back to the best
-        /// entry the parameters file holds for this same source - so a driver who opens the settings on
-        /// the SimHub menu still sees what the plugin learned last time, rather than a shipped default
-        /// that its own evidence has long since superseded.
+        /// RESTART DISPLAY (owner, 2026-11-19). The context is the (game, car) being driven, or - on the
+        /// SimHub menu after a restart - the one persisted last time
+        /// (<see cref="RuntimeStore.TryLoadLastKeyDataContext"/>). With that context the exact persist key
+        /// is formed: if the parameters file holds it, its value is shown; otherwise the cold-start
+        /// default. Never the best value of some OTHER game or car for the same source (the old
+        /// <c>PersistedCeilingForSource</c> fallback did that). Null with no context at all: the page and
+        /// the panels then show the source's shipped default.
         /// </summary>
-        public double? GetLearnedCeilingForDisplay(bool isLockChannel, string sourceIdentity)
+        public KeyDataTriple GetLearnedKeyDataForDisplay(bool isLockChannel, string sourceIdentity)
         {
-            KeyedScaleLearner learner = isLockChannel
-                ? _normalizedEngine.LockScaleLearner : _normalizedEngine.SlipScaleLearner;
-
-            if (!string.IsNullOrEmpty(_lastGameIdForKeyData))
+            try
             {
-                bool ignored;
-                double? current = learner.LearnedCeiling(
-                    _lastGameIdForKeyData, _lastCarIdForKeyData, sourceIdentity, out ignored);
-                if (current.HasValue && current.Value > 0.0) return current;
+                lock (_engineLock)
+                {
+                    if (_lastGameIdForKeyData == null) return null;
+                    return KeyDataPanelModel.LearnedKeyData(
+                        _normalizedEngine, isLockChannel, _lastGameIdForKeyData, _lastCarIdForKeyData, sourceIdentity);
+                }
             }
-
-            return learner.PersistedCeilingForSource(sourceIdentity);
+            catch (Exception e)
+            {
+                SimHub.Logging.Current.Error("QAdvanceFeedback: GetLearnedKeyDataForDisplay failed - " + e);
+                return null;
+            }
         }
 
         /// <summary>The game the last frame reported - paired with <see cref="_lastCarIdForKeyData"/>.</summary>
         private string _lastGameIdForKeyData;
 
-        /// <summary>The live settings page, if one is open - see GetWPFSettingsControl for why weak.</summary>
-        private WeakReference<Settings.SettingsControl> _settingsControl;
+        /// <summary>
+        /// THE DISPLAY FOLLOWS THE KEY AT ONCE (owner, 2026-11-22): a game or car change moves the key data display
+        /// to the new key immediately - at the menu, paused, before any learnable frame - so a key with no real data
+        /// shows its borrowed cold start (the half LED and "Borrowed from ...") straight away instead of the previous
+        /// game's own values until the first driven frame. DISPLAY ONLY: no learner is touched, and the driven frame
+        /// (<see cref="AutoPersistSeededKeyDataPoints"/>) still sets the same context from the frame it learns from.
+        /// No game reported keeps the last context (the restart display). A car that is not known yet (a new game at
+        /// its menu) is shown as no car; within the same game an unknown car keeps the last one.
+        /// </summary>
+        private void FollowKeyDataDisplayContext(string gameId, string carId)
+        {
+            if (string.IsNullOrEmpty(gameId)) return;
+            bool sameGame = string.Equals(gameId, _lastGameIdForKeyData, StringComparison.Ordinal);
+            string car = !string.IsNullOrEmpty(carId) ? carId : sameGame ? _lastCarIdForKeyData ?? string.Empty : string.Empty;
+            if (sameGame && string.Equals(car, _lastCarIdForKeyData ?? string.Empty, StringComparison.Ordinal)) return;
+            _lastGameIdForKeyData = gameId;
+            _lastCarIdForKeyData = car;
+            _runtimeStore?.SaveLastKeyDataContext(gameId, car);
+            RaiseSettingsPageStateChanged();
+        }
+
+        /// <summary>
+        /// The maturity behind <see cref="GetLearnedKeyDataForDisplay"/> - same context, same key - for the
+        /// settings page's and the ShakeIt panels' learning indicators (docs\learning-maturity-indicator-report.md).
+        /// Read from the UI thread under the engine lock, like the learned values themselves (see <see cref="DataUpdate"/>:
+        /// the "last cached answer" this used to fall back to on a collision is what froze the Lock LED). Null with no
+        /// context.
+        /// </summary>
+        public KeyDataMaturity GetLearnedKeyDataMaturityForDisplay(bool isLockChannel, string sourceIdentity)
+        {
+            try
+            {
+                lock (_engineLock)
+                {
+                    if (_lastGameIdForKeyData == null || string.IsNullOrEmpty(sourceIdentity)) return null;
+                    return KeyDataPanelModel.LearnedKeyDataMaturity(
+                        _normalizedEngine, isLockChannel, _lastGameIdForKeyData, _lastCarIdForKeyData, sourceIdentity);
+                }
+            }
+            catch (Exception e)
+            {
+                SimHub.Logging.Current.Error("QAdvanceFeedback: GetLearnedKeyDataMaturityForDisplay failed - " + e);
+                return null;
+            }
+        }
 
         private readonly NormalizedWheelLockSlipEngine _normalizedEngine = new NormalizedWheelLockSlipEngine();
         private readonly GForceEngine _gforceEngine = new GForceEngine();
         private readonly WheelSourceResolver _sourceResolver = new WheelSourceResolver();
+
         private readonly PropertyPublisher _publisher = new PropertyPublisher();
         private readonly CsvExportWriter _csv = new CsvExportWriter();
 
@@ -373,6 +401,134 @@ namespace QAdvanceFeedback
         /// <summary>Exposed so the settings UI edits/saves the SAME live object this plugin reads
         /// from every frame - matching the sibling project's own convention.</summary>
         public QAdvanceFeedbackSettings Settings => _settings;
+
+        /// <summary>The running plugin, for the native ShakeIt effects SimHub constructs itself
+        /// (docs\shakeit-native-effects-design.md). Null before Init and after End.</summary>
+        public static QAdvanceFeedback Instance { get; private set; }
+
+        /// <summary>The game SimHub reports, paused or in menus included (empty when none) - selects the
+        /// Per-Game key data slot for the ShakeIt panels, exactly as the settings page's own game push does.</summary>
+        public string CurrentGameId => _currentGameId;
+        private volatile string _currentGameId;
+
+        /// <summary>Whether the Wheel Lock / Wheel Slip Raw branch selected this frame is a native signal or a
+        /// fallback estimate (Unknown with no game running). A change is broadcast once as
+        /// <see cref="SettingField.SourceAvailability"/>; read the values after that notification.</summary>
+        public SourceNativeness CurrentLockNativeness => Nativeness.Lock;
+        public SourceNativeness CurrentSlipNativeness => Nativeness.Slip;
+        private readonly NativenessBroadcaster _nativeness;
+        private NativenessBroadcaster Nativeness => _nativeness;
+
+        /// <summary>Whether each channel's ShakeIt Built-in source can work now (docs\shakeit-source-design.md
+        /// §3–4), per channel because ShakeIt's lock and slip support differ per game (direct-mode lock vs
+        /// slip). Data-thread snapshot, debounced 0.5 s; a change is broadcast as
+        /// <see cref="SettingField.SourceAvailability"/>.</summary>
+        public Core.ShakeItEffects.ShakeItSourceStates ShakeItSourceState => _shakeItStates.Published;
+        private readonly Core.ShakeItEffects.ShakeItSourceStateBroadcaster _shakeItStates;
+        private readonly Core.ShakeItEffects.ShakeItSourceAvailability _lockShakeItAvailability = new Core.ShakeItEffects.ShakeItSourceAvailability();
+        private readonly Core.ShakeItEffects.ShakeItSourceAvailability _slipShakeItAvailability = new Core.ShakeItEffects.ShakeItSourceAvailability();
+        private Integration.ShakeIt.ShakeItProfileInspector _shakeItInspector;
+        private long _lastShakeItAvailabilityTicks;
+
+        public QAdvanceFeedback()
+        {
+            _nativeness = new NativenessBroadcaster(NotifyNativenessChanged);
+            _shakeItStates = new Core.ShakeItEffects.ShakeItSourceStateBroadcaster(NotifyNativenessChanged);
+            CreateSlipAngle();
+        }
+
+        private void NotifyNativenessChanged()
+        {
+            OnUiThread(() => Hub?.NotifyApplied(new[] { SettingField.SourceAvailability }, SettingsOrigin.Runtime));
+            RaiseSettingsPageStateChanged();
+        }
+
+        /// <summary>Bumped whenever the plugin itself writes key data (the one-time learned seed), so a
+        /// panel showing stored values knows to reload them.</summary>
+        public int KeyDataRevision => _keyDataRevision;
+
+        /// <summary>True while a G-Force Test Effect (plugin page or ShakeIt panel) drives the G-Force channels.</summary>
+        public bool TestEffectActive => _testEffectActive;
+
+        /// <summary>True while a WheelLock/WheelSlip Test Effect drives <c>Projected.*</c>
+        /// (docs\shakeit-test-effect-mvvm-design.md).</summary>
+        public bool TestLockSlipActive => _testLockSlipActive;
+
+        /// <summary>Which Test Effect runs - at most one at a time. Static: view models subscribe to it once
+        /// and must keep the same session across a plugin restart.</summary>
+        public static Core.ShakeItEffects.TestEffectSession TestSession { get; } = new Core.ShakeItEffects.TestEffectSession();
+
+        /// <summary>Written from the WPF dispatcher thread, read from SimHub's data thread.</summary>
+        private volatile bool _testLockSlipActive;
+
+        /// <summary>
+        /// Publishes one WheelLock/WheelSlip Test Effect frame to <c>WheelLock/WheelSlip.Projected.*</c>
+        /// and <see cref="LatestProjected"/> from the same result. The native effects read only
+        /// <see cref="LatestProjected"/>, so they play exactly the published property values. While a
+        /// test publishes, the live <see cref="DataUpdate"/> still computes (and learns from real
+        /// telemetry) but does not overwrite these outputs.
+        /// <para/>
+        /// Null releases the outputs: stop claiming them first, then publish zeroes, so a live frame
+        /// arriving in between overwrites the zeroes rather than being suppressed (same order as
+        /// <see cref="PublishTestEffect"/>).
+        /// </summary>
+        public void PublishLockSlipTest(ProjectedWheelLockSlipResult result)
+        {
+            try
+            {
+                if (_publisher == null) return;
+                if (result != null)
+                {
+                    _testLockSlipActive = true;
+                    _publisher.UpdateProjected(result);
+                    PublishLatestProjected(result);
+                }
+                else
+                {
+                    _testLockSlipActive = false;
+                    ProjectedWheelLockSlipResult zero = EmptyProjected();
+                    _publisher.UpdateProjected(zero);
+                    PublishLatestProjected(zero);
+                }
+            }
+            catch (Exception e)
+            {
+                _testLockSlipActive = false;
+                SimHub.Logging.Current.Error("QAdvanceFeedback: PublishLockSlipTest failed - " + e);
+            }
+        }
+
+        private void PublishLatestProjected(ProjectedWheelLockSlipResult result) =>
+            System.Threading.Volatile.Write(ref _latestProjected,
+                new Core.ShakeItEffects.FrameSnapshot<ProjectedWheelLockSlipResult>(result, Core.ShakeItEffects.FrameSnapshot.NowTicks()));
+
+        private static ProjectedWheelLockSlipResult EmptyProjected()
+        {
+            var z = new Corners(0, 0, 0, 0);
+            return new ProjectedWheelLockSlipResult(z, 0, 0, 0, 0, 0, z, 0, 0, 0, 0, 0, z, 0, 0, 0, 0, 0, z, 0, 0, 0, 0, 0);
+        }
+
+        /// <summary>Single writer of the settings shared with the ShakeIt effect panels.</summary>
+        public SettingsHub Hub { get; private set; }
+
+        /// <summary>Latest projected Lock/Slip frame (the values behind WheelLock/WheelSlip.Projected.*).</summary>
+        public Core.ShakeItEffects.FrameSnapshot<ProjectedWheelLockSlipResult> LatestProjected =>
+            System.Threading.Volatile.Read(ref _latestProjected);
+
+        /// <summary>Latest G-Force frame - the same eight values published as GForce.*, including the
+        /// settings page's Test Effect while it runs.</summary>
+        public Core.ShakeItEffects.FrameSnapshot<GForceOutput> LatestGForce =>
+            System.Threading.Volatile.Read(ref _latestGForce);
+
+        private Core.ShakeItEffects.FrameSnapshot<ProjectedWheelLockSlipResult> _latestProjected;
+        private Core.ShakeItEffects.FrameSnapshot<GForceOutput> _latestGForce;
+        private ConfigFileWatcher _configWatcher;
+        private QAdvanceFeedbackSettings _lastAppliedSettings;
+        private volatile string _lastSavedConfigHash;
+
+        private void PublishLatestGForce(GForceOutput output) =>
+            System.Threading.Volatile.Write(ref _latestGForce,
+                new Core.ShakeItEffects.FrameSnapshot<GForceOutput>(output, Core.ShakeItEffects.FrameSnapshot.NowTicks()));
 
         /// <summary>
         /// Set while the settings page's Test Effect panel is driving the eight G-Force channels by
@@ -406,6 +562,7 @@ namespace QAdvanceFeedback
                 {
                     _testEffectActive = true;
                     _publisher.UpdateGForce(output);
+                    PublishLatestGForce(output);
                 }
                 else
                 {
@@ -413,6 +570,7 @@ namespace QAdvanceFeedback
                     // arriving in between overwrites the zeroes rather than being suppressed by them.
                     _testEffectActive = false;
                     _publisher.UpdateGForce(GForceOutput.Empty);
+                    PublishLatestGForce(GForceOutput.Empty);
                 }
             }
             catch (Exception e)
@@ -467,11 +625,21 @@ namespace QAdvanceFeedback
             bool repairedSlip = _settings.Slip?.RepairPresetSourcesIfStale(false) ?? false;
             if (repairedLock || repairedSlip)
             {
-                ConfigStore.Save(_configPath, _settings, LogWarning);
+                SaveConfig();
                 LogWarning("QAdvanceFeedback: repaired stored source configuration for "
                     + (repairedLock && repairedSlip ? "both channels"
                         : repairedLock ? "Wheel Lock" : "Wheel Slip")
                     + " - the saved text did not match the selected source mode.");
+            }
+
+            // SLIP ANGLE UNIT LISTS (owner, 2026-11-20): a config without them gets the hard-coded lists, written
+            // at once so the file shows them; the reader reads the live lists every frame and reports the
+            // games it detects (degrees / a grip ratio / "over 100%"), which are saved the same way.
+            if (_settings.SlipAngle?.EnsureSourceUnits() == true) SaveConfig();
+            if (_adapter is SimHubTelemetryAdapter slipAngleAdapter)
+            {
+                slipAngleAdapter.SlipAngleReader.Units = () => _settings?.SlipAngle?.SourceUnits;
+                slipAngleAdapter.SlipAngleReader.UnitsChanged += OnSlipAngleUnitsChanged;
             }
 
             string parametersPath = pluginManager.GetCommonStoragePath(ParametersFileName);
@@ -485,9 +653,14 @@ namespace QAdvanceFeedback
             // worth of learning silently), then seed the pre-per-car legacy global value (if any) as
             // the cold-start default for the first brand-new key each channel encounters.
             _runtimeStore.LoadLockLearners(out var lockLearnerData);
-            _normalizedEngine.LockLearners.ImportAll(GripLearnerKeyMigration.MigrateLegacyKeys(lockLearnerData));
+            // INTERNAL SOURCE ALWAYS LEARNS (docs\internal-source-learning-design.md): every source-keyed
+            // family also folds the retired hidden "__layer3_raw_fallback__" key into the channel's own
+            // internal key once (InternalSourceKeyMigration) - each channel to its OWN internal identity.
+            _normalizedEngine.LockLearners.ImportAll(InternalSourceKeyMigration.MigrateGrip(
+                GripLearnerKeyMigration.MigrateLegacyKeys(lockLearnerData), RawSourceFallback.RawIdentity(true)));
             _runtimeStore.LoadSlipLearners(out var slipLearnerData);
-            _normalizedEngine.SlipLearners.ImportAll(GripLearnerKeyMigration.MigrateLegacyKeys(slipLearnerData));
+            _normalizedEngine.SlipLearners.ImportAll(InternalSourceKeyMigration.MigrateGrip(
+                GripLearnerKeyMigration.MigrateLegacyKeys(slipLearnerData), RawSourceFallback.RawIdentity(false)));
 
             if (_runtimeStore.TryGetLegacyLockSeed(out double legacyLockPeak, out int legacyLockSamples))
                 _normalizedEngine.LockLearners.SeedLegacy(legacyLockPeak, legacyLockSamples);
@@ -539,9 +712,27 @@ namespace QAdvanceFeedback
             }
 
             _runtimeStore.LoadLockScaleLearners(out var lockScaleData);
-            _normalizedEngine.LockScaleLearner.ImportAll(lockScaleData);
+            _normalizedEngine.LockScaleLearner.ImportAll(InternalSourceKeyMigration.MigrateScale(lockScaleData, RawSourceFallback.RawIdentity(true)));
             _runtimeStore.LoadSlipScaleLearners(out var slipScaleData);
-            _normalizedEngine.SlipScaleLearner.ImportAll(slipScaleData);
+            _normalizedEngine.SlipScaleLearner.ImportAll(InternalSourceKeyMigration.MigrateScale(slipScaleData, RawSourceFallback.RawIdentity(false)));
+            // SMax EVIDENCE (RuntimeDocument v14, docs\learning-maturity-indicator-report.md) - after the cold
+            // ceilings, so a restart continues each key's learning (and its maturity) where it stopped.
+            _runtimeStore.LoadScaleEvidence(true, out var lockScaleEvidence);
+            _normalizedEngine.LockScaleLearner.ImportEvidence(InternalSourceKeyMigration.Migrate(lockScaleEvidence, RawSourceFallback.RawIdentity(true), s => s != null));
+            _runtimeStore.LoadScaleEvidence(false, out var slipScaleEvidence);
+            _normalizedEngine.SlipScaleLearner.ImportEvidence(InternalSourceKeyMigration.Migrate(slipScaleEvidence, RawSourceFallback.RawIdentity(false), s => s != null));
+            // Restart display: the (game, car) the key data was last shown for, so the page and the
+            // ShakeIt panels can form the exact persist key while SimHub is still on the menu.
+            if (_runtimeStore.TryLoadLastKeyDataContext(out string lastKeyDataGame, out string lastKeyDataCar))
+            {
+                _lastGameIdForKeyData = lastKeyDataGame;
+                _lastCarIdForKeyData = lastKeyDataCar;
+            }
+
+            // Clutch Bite learning (docs\clutch-bite-design.md) - kept beside the Lock/Slip learners.
+            LoadClutchLearning();
+            // Slip Angle window learners (RuntimeDocument v12, docs\slip-angle-design.md 9.5.9).
+            LoadSlipAngleLearning();
 
             // COLD-START CONTINUITY AND CROSS-CAR SEEDING (RuntimeDocument Version 4,
             // docs\cold-start-and-timing-fix-report.md) - the shared, (game,car)-only physical-limit
@@ -566,7 +757,7 @@ namespace QAdvanceFeedback
             // FEATURE C (docs\v1068-four-range-report.md, RuntimeDocument Version 8) - WheelLock's own
             // learned S75/S90 anchors. WHEELLOCK ONLY - no Slip equivalent.
             _runtimeStore.LoadLockAnchors(out var lockAnchorsData);
-            _normalizedEngine.LockAnchors.ImportAll(lockAnchorsData);
+            _normalizedEngine.LockAnchors.ImportAll(InternalSourceKeyMigration.MigrateAnchors(lockAnchorsData, RawSourceFallback.RawIdentity(true)));
 
             _runtimeStore.LoadGForceLearners(out var accelMaxima, out var decelMaxima, out var latMaxima);
             _settings.GForce.ImportLearnedMaxima(accelMaxima, decelMaxima, latMaxima);
@@ -575,6 +766,33 @@ namespace QAdvanceFeedback
             _settings.GForce.ApplyTo(_gforceEngine);
 
             _publisher.Register(this, _settings.General.EnableDiagnostics);
+
+            // TWO-WAY SETTINGS SYNC (docs\shakeit-native-effects-design.md): the hub applies and saves
+            // exactly like the settings page's Apply; the watcher is the backup path for writes made
+            // outside this process, and never re-reports our own saves.
+            // The hub broadcasts its own writes itself, so its apply path only records the new baseline.
+            Hub = new SettingsHub(() => _settings, _ =>
+            {
+                ApplyCore();
+                _lastAppliedSettings = SnapshotSettings();
+            }, () => _currentGameId, () => CurrentSlipAngleIdentityTier);
+            _lastAppliedSettings = SnapshotSettings();
+            _lastSavedConfigHash = ConfigFileWatcher.TryHashFile(_configPath);
+            try
+            {
+                _configWatcher = new ConfigFileWatcher(_configPath, () => _lastSavedConfigHash,
+                    fromDisk => OnUiThread(() => Hub?.NotifyFileChanged(fromDisk)));
+            }
+            catch (Exception e) when (e is ArgumentException || e is System.IO.IOException || e is UnauthorizedAccessException)
+            {
+                LogWarning("QAdvanceFeedback: config file watcher unavailable - " + e.Message);
+            }
+            Instance = this;
+
+            // ShakeIt source "set up" check: 1 Hz profile inspection on the UI thread, plugin-owned so it
+            // runs with the settings page closed (docs\shakeit-source-design.md §3.1, §7).
+            _shakeItInspector = new Integration.ShakeIt.ShakeItProfileInspector(pluginManager);
+            _shakeItInspector.Start();
 
             // "When [diagnostics is] off... write NO log output" (per the brief) - scoped to this
             // plugin's own informational/diagnostic tracing (Init/End notices and anything similar),
@@ -585,7 +803,27 @@ namespace QAdvanceFeedback
             LogInfoIfDiagnostics("initialised");
         }
 
+        /// <summary>
+        /// ONE FRAME, UNDER THE ENGINE LOCK (owner-reported, 2026-11-22: after FH6 -> F1 in one session the Wheel
+        /// Lock SMax and its LED froze at the first F1 reading - "orange, 1%" - until SimHub was restarted, while Slip
+        /// and Slip Angle moved on). The settings page and the ShakeIt panels read the learners from the UI thread
+        /// (<see cref="GetLearnedKeyDataForDisplay"/>, <see cref="GetLearnedKeyDataMaturityForDisplay"/>,
+        /// <see cref="ManualGateReadyForDisplay"/>) while this frame writes them. Unsynchronised, a read that walks a
+        /// histogram the frame is filling throws "collection was modified" - measured: 0 of 193,931 reads succeeded
+        /// while Lock was learning F1 - so the value read failed every time and the maturity read kept returning its
+        /// first cached answer. Slip Angle never had the problem: its reads already share the data thread's lock.
+        /// The UI only ever posts to its dispatcher asynchronously, so the frame never waits on the UI thread while
+        /// holding this - no deadlock - and a UI read waits at most one frame.
+        /// </summary>
         public void DataUpdate(PluginManager pluginManager, ref GameData data)
+        {
+            lock (_engineLock) DataUpdateUnderEngineLock(pluginManager, ref data);
+        }
+
+        /// <summary>Taken by every frame and by every UI read of the learners - see <see cref="DataUpdate"/>.</summary>
+        private readonly object _engineLock = new object();
+
+        private void DataUpdateUnderEngineLock(PluginManager pluginManager, ref GameData data)
         {
             try
             {
@@ -612,11 +850,32 @@ namespace QAdvanceFeedback
                 //
                 // Cheap: a string compare per frame, and the dispatcher is only touched when the answer
                 // actually changes.
-                PushCurrentGameToSettingsUi(data.GameName ?? string.Empty);
+                _currentGameId = data.GameName ?? string.Empty;
+                FollowKeyDataDisplayContext(_currentGameId, data.NewData?.CarId);
+                FollowSlipAngleDisplayContext(_currentGameId, data.NewData?.CarId);
+                PushCurrentGameToSettingsUi(data.GameName ?? string.Empty);   // after: the page reads CurrentGameId
+
+                // ShakeIt source availability runs every frame, in game or not (the heartbeat and the
+                // profile check matter at the menu too) - see UpdateShakeItAvailability.
+                UpdateShakeItAvailability(pluginManager, data);
+
+                // SHAKEIT ALGORITHM (docs\shakeit-source-design.md §6-7): the hidden ShakeIt containers'
+                // settings + our pedal thresholds as one immutable snapshot for ShakeIt's thread. Reused
+                // while unchanged (no per-frame allocation); the tap applies a new one on its next frame.
+                // Configured BEFORE the learning gate, so a change made at the menu reaches the tap before the
+                // first in-game frame instead of on it (the routing below refuses a tap computed under any
+                // other snapshot - see ShakeItSourceResolution.TapComputedUnder).
+                _shakeItAlgorithm = ShakeItAlgorithmSettings.Snapshot(_settings.Lock, _settings.Slip, _shakeItAlgorithm);
+                Integration.ShakeIt.ShakeItBuiltInTap.Configure(_shakeItAlgorithm);
 
                 if (!data.GameRunning || data.GamePaused || data.GameInMenu
                     || data.NewData == null || data.OldData == null)
                 {
+                    Nativeness.Clear();
+                    // Clutch Bite plays only in a session (or while its Test Effect runs).
+                    UpdateClutchOutOfSession();
+                    // Slip Angle: outputs 0 / Raw.All null, learner untouched.
+                    UpdateSlipAngleOutOfSession();
                     return;
                 }
 
@@ -649,6 +908,7 @@ namespace QAdvanceFeedback
                     SlipThrottleThresholdPercent = _settings.Slip.ThrottleThresholdPercent,
                     LockSensibility = _settings.Lock.LockSensibility
                 };
+                // (The ShakeIt algorithm snapshot for this frame was configured above, before the gate.)
                 // Aggregation weights (docs\aggregation-report.md) - read fresh from settings every
                 // frame, exactly like thresholds above, so an Apply takes effect on the very next frame
                 // with no engine rebuild (the owner's explicit "tune without a rebuild" requirement).
@@ -675,6 +935,8 @@ namespace QAdvanceFeedback
 
                 LegacyWheelLockSlipResult legacy = _legacyEngine.Compute(sample, thresholds, lockAggregation, slipAggregation, rawTelemetry);
                 _publisher.UpdateRaw(legacy);
+                Nativeness.Update(BranchNativeness.ForLock(legacy.SelectedLockBranch), BranchNativeness.ForSlip(legacy.SelectedSlipBranch),
+                    sample.Dt.HasValue ? sample.Dt.Value.TotalSeconds : 0.0);
 
                 // ---- Layer 4 input selection: each of the four wheels, per channel, resolves either
                 // the shipped default (a plain reference back to Layer 3's own Raw property) or
@@ -685,20 +947,62 @@ namespace QAdvanceFeedback
                 // before computing anything on a game it does not handle, so all four of its properties
                 // sit at the 0 it declared them with for the entire session. Evaluated every frame so a
                 // game switch takes effect immediately, but it is two list lookups, not per-wheel work.
-                bool lockForceRaw = ViperSourceBlocked(_settings.Lock, gameId);
-                bool slipForceRaw = ViperSourceBlocked(_settings.Slip, gameId);
+                bool lockViperBlocked = ViperSourceBlocked(_settings.Lock, gameId);
+                bool slipViperBlocked = ViperSourceBlocked(_settings.Slip, gameId);
 
-                Corners lockSources = new Corners(
-                    ResolveWheel(pluginManager, _settings.Lock, lockForceRaw, true, 0, legacy.LockWheels.FrontLeft),
-                    ResolveWheel(pluginManager, _settings.Lock, lockForceRaw, true, 1, legacy.LockWheels.FrontRight),
-                    ResolveWheel(pluginManager, _settings.Lock, lockForceRaw, true, 2, legacy.LockWheels.RearLeft),
-                    ResolveWheel(pluginManager, _settings.Lock, lockForceRaw, true, 3, legacy.LockWheels.RearRight));
+                // SHAKEIT BUILT-IN (docs\shakeit-source-design.md §4). A ShakeIt-mode channel reads
+                // ShakeIt's built-in values through our native effect ONLY while that channel's state is
+                // Supported and the tap is fresh; otherwise it reads Raw for all four wheels AND learns
+                // under the Raw identity, exactly like a blocked Viper channel. Decided per CHANNEL, never
+                // per wheel, so ShakeIt learning never receives a Raw value. The legacy export properties
+                // are no longer read.
+                var frameTap = Integration.ShakeIt.ShakeItBuiltInTap.Latest;
+                // A tap computed under an OLDER algorithm snapshot (a setting changed since, and ShakeIt has
+                // not yet produced a frame with the new one) is not fresh for learning: those are the old
+                // algorithm's values, and the identity below already carries the NEW fingerprint. The
+                // channel takes the Raw fallback route for those frames (Task C) instead.
+                bool tapFresh = frameTap != null && frameTap.Value != null
+                    && frameTap.IsFresh(Core.ShakeItEffects.FrameSnapshot.NowTicks(), Core.ShakeItEffects.FrameSnapshot.StaleTicks)
+                    && Core.ShakeItEffects.ShakeItSourceResolution.TapComputedUnder(frameTap.Value, _shakeItAlgorithm);
+                Core.ShakeItEffects.ShakeItTapValues frameTapValues = tapFresh ? frameTap.Value : null;
+                _publisher.UpdateShakeItTap(tapFresh,
+                    tapFresh ? frameTapValues.Lock : Corners.Zero, tapFresh ? frameTapValues.Slip : Corners.Zero);
 
-                Corners slipSources = new Corners(
-                    ResolveWheel(pluginManager, _settings.Slip, slipForceRaw, false, 0, legacy.SlipWheels.FrontLeft),
-                    ResolveWheel(pluginManager, _settings.Slip, slipForceRaw, false, 1, legacy.SlipWheels.FrontRight),
-                    ResolveWheel(pluginManager, _settings.Slip, slipForceRaw, false, 2, legacy.SlipWheels.RearLeft),
-                    ResolveWheel(pluginManager, _settings.Slip, slipForceRaw, false, 3, legacy.SlipWheels.RearRight));
+                Core.ShakeItEffects.ChannelSourceRoute lockRoute = Core.ShakeItEffects.ShakeItSourceResolution.Route(
+                    _settings.Lock.SourceMode == SourceMode.ShakeIt, lockViperBlocked, _lockShakeItAvailability.State, tapFresh);
+                Core.ShakeItEffects.ChannelSourceRoute slipRoute = Core.ShakeItEffects.ShakeItSourceResolution.Route(
+                    _settings.Slip.SourceMode == SourceMode.ShakeIt, slipViperBlocked, _slipShakeItAvailability.State, tapFresh);
+
+                // SOURCE-KEYED LEARNING (docs\branch-dispatch-and-source-keyed-learning-report.md,
+                // "Part 2"): each channel's own current source identity comes from its four per-wheel
+                // Source/ScriptType fields (SourceIdentity - a plain property name kept verbatim, an
+                // expression hashed) so KeyedGripLearner isolates a genuinely different signal's own
+                // learning session rather than silently reusing whatever was learned for a previous,
+                // differently-scaled source under the same (game,car). The ShakeIt Built-in route does NOT
+                // use the rows: its identity is always the canonical ShakeIt identity
+                // (ShakeItSourceResolution.ShakeItIdentity - the legacy export names, today's string, spec
+                // §5), so stale rows (e.g. a channel switched to ShakeIt while shadowed to Raw) can never
+                // file ShakeIt evidence under another key.
+                // THE IDENTITY MOVES WITH THE VALUES. A channel that falls back reads Raw, so it must
+                // LEARN as Raw too - otherwise its evidence would pile up under the Viper/ShakeIt key while
+                // the numbers came from somewhere else. ShakeItSourceResolution returns both together.
+                _lockWheelRead.Set(this, pluginManager, _settings.Lock, true, legacy.LockWheels);
+                _slipWheelRead.Set(this, pluginManager, _settings.Slip, false, legacy.SlipWheels);
+                Core.ShakeItEffects.ChannelSourceResolution lockResolved = Core.ShakeItEffects.ShakeItSourceResolution.Resolve(
+                    lockRoute, true, frameTapValues, _lockWheelRead, ReadRawWheel, ReadConfiguredWheel,
+                    lockRoute == Core.ShakeItEffects.ChannelSourceRoute.Configured ? ConfiguredSourceIdentity(_settings.Lock) : null,
+                    RawSourceFallback.RawIdentity(true), _shakeItAlgorithm.LockFingerprint);
+                Core.ShakeItEffects.ChannelSourceResolution slipResolved = Core.ShakeItEffects.ShakeItSourceResolution.Resolve(
+                    slipRoute, false, frameTapValues, _slipWheelRead, ReadRawWheel, ReadConfiguredWheel,
+                    slipRoute == Core.ShakeItEffects.ChannelSourceRoute.Configured ? ConfiguredSourceIdentity(_settings.Slip) : null,
+                    RawSourceFallback.RawIdentity(false), _shakeItAlgorithm.SlipFingerprint);
+
+                Corners lockSources = lockResolved.Values;
+                Corners slipSources = slipResolved.Values;
+                bool lockForceRaw = lockResolved.Route == Core.ShakeItEffects.ChannelSourceRoute.RawFallback;
+                bool slipForceRaw = slipResolved.Route == Core.ShakeItEffects.ChannelSourceRoute.RawFallback;
+                string lockSourceIdentity = lockResolved.Identity;
+                string slipSourceIdentity = slipResolved.Identity;
 
                 // Diag.Source.* (docs\raw-gap-and-pad-balance-report.md): publish exactly what Layer 4
                 // is about to consume, BEFORE calling it - so a future "does our Raw match the
@@ -706,31 +1010,6 @@ namespace QAdvanceFeedback
                 // instead of inverting the Normalized transform to recover it (as this task's own
                 // report had to, for lack of this diagnostic).
                 _publisher.UpdateSource(lockSources, slipSources, lockAggregation, slipAggregation);
-
-                // SOURCE-KEYED LEARNING (docs\branch-dispatch-and-source-keyed-learning-report.md,
-                // "Part 2"): derive each channel's own current source identity from its four per-wheel
-                // Source/ScriptType fields (SourceIdentity - a plain property name kept verbatim, an
-                // expression hashed) so KeyedGripLearner isolates a genuinely different signal's own
-                // learning session rather than silently reusing whatever was learned for a previous,
-                // differently-scaled source under the same (game,car).
-                // THE IDENTITY MOVES WITH THE VALUES. A channel that fell back above is reading Raw, so
-                // it must LEARN as Raw too - otherwise its evidence would pile up under the Viper key
-                // while the numbers came from somewhere else, and returning to a supported game would
-                // inherit a calibration built from the wrong signal.
-                string lockSourceIdentity = lockForceRaw
-                    ? RawSourceFallback.RawIdentity(true)
-                    : SourceIdentity.Compute(
-                        _settings.Lock.SourceFrontLeft, _settings.Lock.ScriptTypeFrontLeft.ToString(),
-                        _settings.Lock.SourceFrontRight, _settings.Lock.ScriptTypeFrontRight.ToString(),
-                        _settings.Lock.SourceRearLeft, _settings.Lock.ScriptTypeRearLeft.ToString(),
-                        _settings.Lock.SourceRearRight, _settings.Lock.ScriptTypeRearRight.ToString());
-                string slipSourceIdentity = slipForceRaw
-                    ? RawSourceFallback.RawIdentity(false)
-                    : SourceIdentity.Compute(
-                        _settings.Slip.SourceFrontLeft, _settings.Slip.ScriptTypeFrontLeft.ToString(),
-                        _settings.Slip.SourceFrontRight, _settings.Slip.ScriptTypeFrontRight.ToString(),
-                        _settings.Slip.SourceRearLeft, _settings.Slip.ScriptTypeRearLeft.ToString(),
-                        _settings.Slip.SourceRearRight, _settings.Slip.ScriptTypeRearRight.ToString());
 
                 // A CUSTOM SOURCE'S COLD-START REFERENCE (v1.1.0). KnownSourceColdStartReference works
                 // by identity and cannot classify a source the driver wrote, so it has no number to
@@ -742,9 +1021,9 @@ namespace QAdvanceFeedback
                 // frame with no engine rebuild. Guarded by the identity inside the learner, so a source
                 // switch - or a channel falling back to Raw just above - stops using it automatically.
                 ApplyCustomColdStart(_normalizedEngine.LockScaleLearner, _settings.Lock, lockForceRaw,
-                    lockSourceIdentity, _settings.KeyDataPointDefaults?.LockCustom);
+                    lockSourceIdentity, _settings.KeyDataPointDefaults?.LockCustom, isLockChannel: true);
                 ApplyCustomColdStart(_normalizedEngine.SlipScaleLearner, _settings.Slip, slipForceRaw,
-                    slipSourceIdentity, _settings.KeyDataPointDefaults?.SlipCustom);
+                    slipSourceIdentity, _settings.KeyDataPointDefaults?.SlipCustom, isLockChannel: false);
 
                 // TRIGGER THRESHOLD (owner-requested restructure - docs\lock-and-animation-report.md):
                 // the SAME thresholds gate Layer 3's Raw (above) AND Layer 4's Normalized (here) - the
@@ -775,13 +1054,23 @@ namespace QAdvanceFeedback
                 _normalizedEngine.SlipManualAnchors = ResolveManualAnchors(
                     _settings.Slip.KeyDataPoints, gameId, slipSourceIdentity, isLockChannel: false,
                     _settings.Slip.NormalizePattern, _settings.KeyDataPointDefaults);
+                // INTERNAL SOURCE ALWAYS LEARNS - what each channel's manual key data would be with Plugin
+                // Internal selected, so its always-on learning pass takes the branch it takes when selected.
+                // Learning only; the published output never reads these.
+                _normalizedEngine.LockInternalSourceIdentity = RawSourceFallback.RawIdentity(true);
+                _normalizedEngine.SlipInternalSourceIdentity = RawSourceFallback.RawIdentity(false);
+                _normalizedEngine.LockInternalManualAnchors = ResolveManualAnchors(
+                    _settings.Lock.KeyDataPoints, gameId, RawSourceFallback.RawIdentity(true), isLockChannel: true,
+                    _settings.Lock.NormalizePattern, _settings.KeyDataPointDefaults);
+                _normalizedEngine.SlipInternalManualAnchors = ResolveManualAnchors(
+                    _settings.Slip.KeyDataPoints, gameId, RawSourceFallback.RawIdentity(false), isLockChannel: false,
+                    _settings.Slip.NormalizePattern, _settings.KeyDataPointDefaults);
 
                 // THE ONE-TIME SEED RUNS HERE, in the frame loop - NOT in the settings page. It must not
                 // depend on whether the driver happens to have the page open, or "play a new game and the
                 // value updates once" would silently not happen for anyone who never opens it.
                 AutoPersistSeededKeyDataPoints(gameId, carId, lockSourceIdentity, slipSourceIdentity);
-                PushLearnedKeyDataPointsToSettingsUi(gameId, carId, lockSourceIdentity, slipSourceIdentity,
-                    sample.Dt.HasValue ? sample.Dt.Value.TotalSeconds : 0.0);
+                PushLearnedKeyDataPointsToSettingsUi(sample.Dt.HasValue ? sample.Dt.Value.TotalSeconds : 0.0);
 
                 NormalizedWheelLockSlipResult normalized = _normalizedEngine.Compute(
                     sample, lockSources, slipSources, gameId, carId, thresholds, lockAggregation, slipAggregation,
@@ -805,7 +1094,18 @@ namespace QAdvanceFeedback
                 ProjectedWheelLockSlipResult projected = _projectedEngine.Compute(normalized, dtSeconds,
                     _normalizedEngine.LockColdStartConfidence, _normalizedEngine.SlipColdStartConfidence,
                     _normalizedEngine.LockColdStartFloor, _normalizedEngine.SlipColdStartFloor);
-                _publisher.UpdateProjected(projected);
+                // A running WheelLock/WheelSlip Test Effect owns Projected.* (docs\shakeit-test-effect-mvvm-design.md);
+                // everything above still ran, so learning from real telemetry is unaffected.
+                if (!_testLockSlipActive)
+                {
+                    _publisher.UpdateProjected(projected);
+                    PublishLatestProjected(projected);
+                }
+
+                // ---- Slip Angle (docs\slip-angle-design.md 9) - after Lock/Slip Projected, before G-Force.
+                // Own try/catch inside (HealthSubsystems.SlipAngle): a fault publishes the empty result and
+                // the rest of this frame carries on.
+                SlipAngleFrameResult slipAngle = UpdateSlipAngle(pluginManager, data, sample, gameId, carId, dtSeconds);
 
                 // ---- G-force channels.
                 _settings.GForce.SetCurrentGameAndCar(gameId, carId);
@@ -827,16 +1127,22 @@ namespace QAdvanceFeedback
                 // a channel was both saturated and pulsing. LockAllWithoutPulse/SlipAllWithoutPulse are
                 // the SAME curve projection with that one stage skipped - identical to the pulsed value
                 // whenever the pulse is not actually engaged, differing only while a pulse cycle runs -
-                // see ProjectedWheelLockSlipResult's own remarks.
+                // see ProjectedWheelLockSlipResult's own remarks. "Integrate Slip Angle" (docs\slip-angle-design.md
+                // section 10) reads the same flavour: the pulse-free projected Slip Angle (already
+                // drift-attenuated).
                 GForceOutput gforce = _gforceEngine.Compute(
                     sample, accelMaxG, decelMaxG, projected.LockAllWithoutPulse, projected.SlipAllWithoutPulse,
-                    accelTransitionScale, decelTransitionScale, latMaxG);
+                    accelTransitionScale, decelTransitionScale, latMaxG, slipAngle?.ProjectedPulseFree ?? 0.0);
 
                 // THE TEST EFFECT PANEL WINS while it is running (see PublishTestEffect). Everything
                 // else this frame still happens - the learners must not be starved just because the
                 // settings page is open - only the eight published channels are handed over, so the two
                 // cannot fight over them frame by frame.
-                if (!_testEffectActive) _publisher.UpdateGForce(gforce);
+                if (!_testEffectActive)
+                {
+                    _publisher.UpdateGForce(gforce);
+                    PublishLatestGForce(gforce);
+                }
 
                 // DIRECTION FIX (docs\gforce-direction-fix-report.md): feed the AUTO-mode learners the
                 // SAME direction-correct attribution _gforceEngine.Compute (just above) used
@@ -873,6 +1179,9 @@ namespace QAdvanceFeedback
                         _settings.GForce.ObserveLatG(gameId, carId, Math.Abs(latG.Value), sample.FrameTime);
                 }
 
+                // ---- Clutch Bite (docs\clutch-bite-design.md): output, standing-start learning.
+                UpdateClutch(data, sample, gameId, carId);
+
                 // ---- Runtime persistence: in-memory cache only every frame (see RuntimeStore's own
                 // remarks) - the background timer/Flush is what actually reaches disk.
                 // LAYER 3 SHAKEIT CALIBRATION - throttled, unlike the small dictionaries below.
@@ -880,6 +1189,8 @@ namespace QAdvanceFeedback
                 {
                     _calibrationSaveCountdown = CalibrationSaveIntervalFrames;
                     _runtimeStore.SaveShakeItCalibration(_legacyEngine.Calibration.ExportCalibrations());
+                    // SMax evidence (v14): same throttle - only keys driven since the last save are re-snapshotted.
+                    SaveScaleEvidenceNow();
                 }
 
                 _runtimeStore.SaveLockLearners(_normalizedEngine.LockLearners.ExportAll());
@@ -954,19 +1265,70 @@ namespace QAdvanceFeedback
         /// "session/vehicle-change reset" wording, flagged rather than assumed - the safer, less
         /// destructive reading is applied.</summary>
         /// <summary>
-        /// One wheel's Layer-4 reading: the configured source normally, or this channel's own Raw
-        /// property when <paramref name="forceRaw"/> - see <see cref="RawSourceFallback"/>.
-        /// <para/>
-        /// <paramref name="wheelIndex"/> is the canonical corner order (0 FL, 1 FR, 2 RL, 3 RR).
+        /// One wheel of this channel's own Raw property - what a fallen-back channel reads (see
+        /// <see cref="RawSourceFallback"/>). <paramref name="wheelIndex"/> is the canonical corner order
+        /// (0 FL, 1 FR, 2 RL, 3 RR).
         /// </summary>
-        private double ResolveWheel(PluginManager pluginManager, WheelChannelSettings channel,
-            bool forceRaw, bool isLockChannel, int wheelIndex, double layer3Raw)
-        {
-            if (forceRaw)
-                return _sourceResolver.Resolve(pluginManager,
-                    RawSourceFallback.PropertyName(isLockChannel, wheelIndex),
-                    RawSourceFallback.RawScriptType, layer3Raw);
+        private double ResolveRawWheel(PluginManager pluginManager, bool isLockChannel, int wheelIndex, double layer3Raw)
+            => _sourceResolver.Resolve(pluginManager,
+                RawSourceFallback.PropertyName(isLockChannel, wheelIndex),
+                RawSourceFallback.RawScriptType, layer3Raw);
 
+        /// <summary>
+        /// The per-channel state the frame loop hands <see cref="Core.ShakeItEffects.ShakeItSourceResolution.Resolve{TState}"/>
+        /// with the two static readers below, so resolving a channel allocates nothing per frame. One reused
+        /// instance per channel, data thread only.
+        /// </summary>
+        private sealed class WheelReadContext
+        {
+            public QAdvanceFeedback Plugin;
+            public PluginManager PluginManager;
+            public WheelChannelSettings Channel;
+            public bool IsLockChannel;
+            public Corners Layer3Raw;
+
+            public void Set(QAdvanceFeedback plugin, PluginManager pluginManager, WheelChannelSettings channel,
+                bool isLockChannel, Corners layer3Raw)
+            {
+                Plugin = plugin;
+                PluginManager = pluginManager;
+                Channel = channel;
+                IsLockChannel = isLockChannel;
+                Layer3Raw = layer3Raw;
+            }
+        }
+
+        private readonly WheelReadContext _lockWheelRead = new WheelReadContext();
+
+        /// <summary>The ShakeIt algorithm snapshot last handed to the tap (data thread); its fingerprints
+        /// key the ShakeIt Built-in route's learning (empty at the defaults).</summary>
+        private Core.ShakeItEffects.ShakeItAlgorithmSnapshot _shakeItAlgorithm = Core.ShakeItEffects.ShakeItAlgorithmSnapshot.Defaults;
+        private readonly WheelReadContext _slipWheelRead = new WheelReadContext();
+
+        private static readonly Func<WheelReadContext, int, double> ReadRawWheel =
+            (c, i) => c.Plugin.ResolveRawWheel(c.PluginManager, c.IsLockChannel, i, c.Layer3Raw[i]);
+
+        private static readonly Func<WheelReadContext, int, double> ReadConfiguredWheel =
+            (c, i) => c.Plugin.ResolveConfiguredWheel(c.PluginManager, c.Channel, i, c.Layer3Raw[i]);
+
+        /// <summary>The identity of the channel's four configured Source/ScriptType fields - used only on
+        /// the Configured route (Raw, Viper, Custom); the ShakeIt route uses the canonical
+        /// <see cref="Core.ShakeItEffects.ShakeItSourceResolution.ShakeItIdentity"/>.</summary>
+        private static string ConfiguredSourceIdentity(WheelChannelSettings channel)
+            => SourceIdentity.Compute(
+                channel.SourceFrontLeft, channel.ScriptTypeFrontLeft.ToString(),
+                channel.SourceFrontRight, channel.ScriptTypeFrontRight.ToString(),
+                channel.SourceRearLeft, channel.ScriptTypeRearLeft.ToString(),
+                channel.SourceRearRight, channel.ScriptTypeRearRight.ToString());
+
+        /// <summary>
+        /// One wheel of the channel's configured source (Raw, Viper, Custom - never ShakeIt mode, which
+        /// reads the built-in values or Raw, see <see cref="Core.ShakeItEffects.ShakeItSourceResolution"/>).
+        /// Per-wheel resolution failures fall back to Layer 3's own value for that wheel.
+        /// </summary>
+        private double ResolveConfiguredWheel(PluginManager pluginManager, WheelChannelSettings channel,
+            int wheelIndex, double layer3Raw)
+        {
             switch (wheelIndex)
             {
                 case 0: return _sourceResolver.Resolve(pluginManager, channel.SourceFrontLeft, channel.ScriptTypeFrontLeft, layer3Raw);
@@ -985,18 +1347,34 @@ namespace QAdvanceFeedback
         /// source it is no longer reading.
         /// </summary>
         private static void ApplyCustomColdStart(Core.Normalized.KeyedScaleLearner learner,
-            WheelChannelSettings channel, bool forceRaw, string sourceIdentity, KeyDataPointDefaultSet custom)
+            WheelChannelSettings channel, bool forceRaw, string sourceIdentity, KeyDataPointDefaultSet custom,
+            bool isLockChannel)
         {
             if (learner == null) return;
 
+            // CUSTOM MATCHING RAW (docs\internal-source-learning-design.md 3.1): a Custom channel whose four
+            // rows are exactly our Raw properties IS Plugin Internal - it learns under the internal key, so
+            // the Custom cold-start reference must not reach that key.
             bool applies = channel != null
                            && !forceRaw
                            && channel.SourceMode == SourceMode.Custom
+                           && !RawSourceFallback.MatchesRaw(channel, isLockChannel)
+                           // ...and likewise one reproducing the shipped ShakeIt or Viper source.
+                           && !RawSourceFallback.MatchesShippedPreset(sourceIdentity, isLockChannel)
                            && custom != null
                            && custom.IsUsable();
 
             learner.ConfiguredColdStartIdentity = applies ? sourceIdentity : null;
             learner.ConfiguredColdStartSMax = applies ? custom.SMax : 0.0;
+        }
+
+        /// <summary>Hands the SMax evidence of both channels to the runtime store (v14). Throttled by the
+        /// caller (every <see cref="CalibrationSaveIntervalFrames"/> frames) and forced at End; each call
+        /// re-snapshots only the keys learned since the previous one.</summary>
+        private void SaveScaleEvidenceNow()
+        {
+            _runtimeStore?.SaveScaleEvidence(true, _normalizedEngine.LockScaleLearner.ExportEvidence());
+            _runtimeStore?.SaveScaleEvidence(false, _normalizedEngine.SlipScaleLearner.ExportEvidence());
         }
 
         private void ResetOnGameSwitch(string gameId)
@@ -1008,6 +1386,7 @@ namespace QAdvanceFeedback
             _normalizedEngine.ResetDirection();
             _settings.GForce.ResetLearning();
             _gforceEngine.Reset();
+            ResetSlipAngleOnGameSwitch();
             _lastGameName = gameId;
         }
 
@@ -1072,16 +1451,28 @@ namespace QAdvanceFeedback
             try
             {
                 _csv.Stop();
+                DisposeSettingsPage();
 
                 // Final, synchronous flush - guaranteed to write the last few seconds of learning
                 // before the process is allowed to exit (see RuntimeStore.Flush's own remarks).
                 // The calibration save is throttled during play, so force a final one here.
-                _runtimeStore?.SaveShakeItCalibration(_legacyEngine.Calibration.ExportCalibrations());
+                lock (_engineLock)   // a last frame may still be running on the data thread
+                {
+                    _runtimeStore?.SaveShakeItCalibration(_legacyEngine.Calibration.ExportCalibrations());
+                    if (_runtimeStore != null) SaveScaleEvidenceNow();
+                    if (_runtimeStore != null) SaveClutchLearningNow();
+                    if (_runtimeStore != null) SaveSlipAngleLearningNow();
+                }
 
                 _runtimeStore?.Flush();
                 _runtimeStore?.Dispose();
 
-                ConfigStore.Save(_configPath, _settings, LogWarning);
+                _configWatcher?.Dispose();
+                _configWatcher = null;
+                _shakeItInspector?.Dispose();
+                _shakeItInspector = null;
+                SaveConfig();
+                if (ReferenceEquals(Instance, this)) Instance = null;
                 LogInfoIfDiagnostics("shut down");
             }
             catch (Exception e)
@@ -1097,10 +1488,10 @@ namespace QAdvanceFeedback
         /// <c>GetWPFSettingsControl</c> - the exact same "one plugin's exception must not degrade every
         /// other plugin sharing SimHub's iteration" concern <c>Init</c>/<c>DataUpdate</c>/<c>End</c>
         /// already guard against (see this class's own remarks and the pipeline-exception-safety
-        /// report). <see cref="Settings.SettingsControl"/>'s constructor does real work (reads
-        /// <see cref="_settings"/>, probes ShakeIt Motors export availability via reflection, wires ~40
-        /// WPF controls) - a corrupt/partial <see cref="_settings"/> object (e.g. Init above having
-        /// failed) or an unexpected reflection surface could throw there. Falls back to a minimal,
+        /// report). Building the page does real work (the first call creates the one settings page view
+        /// model over <see cref="_settings"/> - see QAdvanceFeedback.SettingsPage.cs - and every call
+        /// builds the bound view tree) - a corrupt/partial <see cref="_settings"/> object (e.g. Init above
+        /// having failed) or an unexpected XAML / binding fault could throw there. Falls back to a minimal,
         /// clearly-labelled placeholder control rather than letting that throw escape into SimHub's own
         /// settings-panel construction.
         /// </summary>
@@ -1108,16 +1499,7 @@ namespace QAdvanceFeedback
         {
             try
             {
-                var control = new Settings.SettingsControl(this, pluginManager);
-                // A NEW PAGE KNOWS NOTHING, so re-arm the game push for it - otherwise a page opened
-                // mid-session would wait for a game CHANGE to be told which game is running, and while
-                // paused in one title that change never comes.
-                _lastGameIdPushedToUi = null;
-                // WEAK, deliberately: SimHub owns this control's lifetime and may discard it whenever the
-                // settings page closes. A strong field here would keep a dead WPF tree alive for the rest
-                // of the session, and would be a leak every time the page is reopened.
-                _settingsControl = new WeakReference<Settings.SettingsControl>(control);
-                return control;
+                return CreateSettingsControl(pluginManager);
             }
             catch (Exception e)
             {
@@ -1136,11 +1518,120 @@ namespace QAdvanceFeedback
         /// Lock/Slip Projector/Pulse settings, re-applies the G-force engine's tunables, and persists
         /// to disk. Called from the settings UI's single global Apply button.
         /// </summary>
+        /// <summary>
+        /// Applies and saves the live settings (the settings page's Apply and its other immediate-save
+        /// paths), then tells every ShakeIt effect panel exactly which shared fields changed.
+        /// </summary>
         public void ApplySettings()
+        {
+            ApplyCore();
+            BroadcastAppliedChanges(SettingsOrigin.PluginPage);
+        }
+
+        private void ApplyCore()
         {
             RebuildProjectedEngine();
             _settings.GForce.ApplyTo(_gforceEngine);
+            SaveConfig();
+        }
+
+        /// <summary>Diffs the shared fields against the last applied state and broadcasts the change.</summary>
+        private void BroadcastAppliedChanges(SettingsOrigin origin)
+        {
+            QAdvanceFeedbackSettings now = SnapshotSettings();
+            IReadOnlyList<SettingField> changed = SettingsHub.Diff(_lastAppliedSettings, now, _currentGameId, CurrentSlipAngleIdentityTier);
+            _lastAppliedSettings = now;
+            Hub?.NotifyApplied(changed, origin);
+        }
+
+        private QAdvanceFeedbackSettings SnapshotSettings() =>
+            _settings == null ? null
+                : Newtonsoft.Json.JsonConvert.DeserializeObject<QAdvanceFeedbackSettings>(Newtonsoft.Json.JsonConvert.SerializeObject(_settings));
+
+        /// <summary>The Slip Angle reader changed a unit list (data thread): saved like a key data seed, and the
+        /// pages told so they re-key the Slip Angle key data (a ratio game has its own learning key).</summary>
+        private void OnSlipAngleUnitsChanged()
+        {
+            try
+            {
+                SaveConfig();
+                LogInfo("QAdvanceFeedback: Slip Angle source units updated for " + _currentGameId + ".");
+                OnUiThread(() => Hub?.NotifyApplied(new[] { SettingField.SourceAvailability }, SettingsOrigin.Runtime));
+            }
+            catch (Exception e)
+            {
+                LogWarning("QAdvanceFeedback: saving the Slip Angle source units failed - " + e.Message);
+            }
+        }
+
+        /// <summary>The one place the config file is written. Records the saved content's hash so the
+        /// <see cref="ConfigFileWatcher"/> recognises - and ignores - this process's own writes.</summary>
+        private void SaveConfig()
+        {
             ConfigStore.Save(_configPath, _settings, LogWarning);
+            _lastSavedConfigHash = ConfigFileWatcher.TryHashFile(_configPath);
+        }
+
+        /// <summary>
+        /// Steps both channels' ShakeIt source state machines (docs\shakeit-source-design.md §3–4) from the
+        /// profile inspection, the effects' heartbeat and the built-in tap, then publishes the pair through
+        /// the debounced broadcaster. Guarded: a failure is recorded and never aborts the frame. Does not
+        /// change which source a channel reads (that is the resolver's job).
+        /// </summary>
+        private void UpdateShakeItAvailability(PluginManager pluginManager, GameData data)
+        {
+            try
+            {
+                long now = Core.ShakeItEffects.FrameSnapshot.NowTicks();
+                double dt = _lastShakeItAvailabilityTicks == 0 ? 0.0
+                    : Math.Max(0.0, Math.Min(1.0, (now - _lastShakeItAvailabilityTicks) / (double)TimeSpan.TicksPerSecond));
+                _lastShakeItAvailabilityTicks = now;
+
+                long heartbeat = Integration.ShakeIt.ShakeItBuiltInTap.HeartbeatTicks;
+                var tap = Integration.ShakeIt.ShakeItBuiltInTap.Latest;
+                string gameId = data.GameName ?? string.Empty;
+                var input = new Core.ShakeItEffects.ShakeItAvailabilityInput
+                {
+                    EnabledInProfile = _shakeItInspector?.Latest.EnabledInProfile == true,
+                    HeartbeatAgeSeconds = heartbeat == 0 ? double.PositiveInfinity : (now - heartbeat) / (double)TimeSpan.TicksPerSecond,
+                    GameRunning = data.GameRunning,
+                    GamePaused = data.GamePaused,
+                    GameInMenu = data.GameInMenu,
+                    // ShakeIt's own in-game gate (ShakeITV3PluginBase.DataUpdate): only then is our effect
+                    // handed the calibrated data the built-in values need.
+                    HasFeedbackData = data.OldData != null && data.NewData?.FeedbackData != null && data.OldData?.FeedbackData != null,
+                    GameId = gameId,
+                    ValuesFresh = tap != null && tap.IsFresh(now, Core.ShakeItEffects.FrameSnapshot.StaleTicks),
+                    DtSeconds = dt
+                };
+
+                // The tap's verdict when it has one for this game; else ShakeIt's own check on SimHub's
+                // capabilities for the SELECTED game - what hides Lock/Slip from Add Effect and marks them
+                // unsupported in ShakeIt's list. Needs neither a running game nor feedback data, so a game
+                // like Counter-Strike is reported unsupported as soon as it is selected (owner, 2026-11-20).
+                input.GameSupported = Core.ShakeItEffects.ShakeItTapValues.SupportFor(tap, gameId, isLock: true)
+                    ?? (gameId.Length > 0 ? Integration.ShakeIt.ShakeItBuiltInTap.SupportedByCapabilities(pluginManager, isLock: true) : null);
+                Core.ShakeItEffects.ShakeItSourceState lockState = _lockShakeItAvailability.Step(input);
+                input.GameSupported = Core.ShakeItEffects.ShakeItTapValues.SupportFor(tap, gameId, isLock: false)
+                    ?? (gameId.Length > 0 ? Integration.ShakeIt.ShakeItBuiltInTap.SupportedByCapabilities(pluginManager, isLock: false) : null);
+                Core.ShakeItEffects.ShakeItSourceState slipState = _slipShakeItAvailability.Step(input);
+
+                _shakeItStates.Update(lockState, slipState, dt);
+            }
+            catch (Exception e)
+            {
+                HealthRegistry.Report(HealthSubsystems.ShakeItEffects, HealthSeverity.Degraded,
+                    "Health.Impact.ShakeItEffects", e.ToString());
+            }
+        }
+
+        /// <summary>Run on the WPF dispatcher when there is one (settings UIs listen to the hub there),
+        /// else inline.</summary>
+        private static void OnUiThread(Action action)
+        {
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            if (dispatcher == null || dispatcher.CheckAccess()) action();
+            else dispatcher.BeginInvoke(action);
         }
 
         private void RebuildProjectedEngine()
@@ -1148,6 +1639,7 @@ namespace QAdvanceFeedback
             _projectedEngine = new ProjectedWheelLockSlipEngine(
                 new OutputProjector(_settings.Lock.Projector), _settings.Lock.Pulse,
                 new OutputProjector(_settings.Slip.Projector), _settings.Slip.Pulse);
+            RebuildSlipAngleProjection();
         }
 
         private void LogInfoIfDiagnostics(string message)

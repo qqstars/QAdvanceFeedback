@@ -6,9 +6,13 @@ namespace QAdvanceFeedback.Settings
     /// <summary>One source type's shipped starting points, as three source-scale values.</summary>
     public sealed class KeyDataPointDefaultSet
     {
-        public double SMax { get; set; }
-        public double S90 { get; set; }
-        public double S75 { get; set; }
+        private double _sMax, _s90, _s75;
+
+        // Clamped to the hard SMax limit on every write, deserialisation included - see
+        // KeyDataPointSettings.MaxSMax.
+        public double SMax { get => _sMax; set => _sMax = KeyDataPointSettings.AtMostMaxSMax(value); }
+        public double S90 { get => _s90; set => _s90 = KeyDataPointSettings.AtMostMaxSMax(value); }
+        public double S75 { get => _s75; set => _s75 = KeyDataPointSettings.AtMostMaxSMax(value); }
 
         public KeyDataPointDefaultSet() { }
 

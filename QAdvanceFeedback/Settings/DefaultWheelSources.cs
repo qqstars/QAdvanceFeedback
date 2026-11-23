@@ -25,6 +25,9 @@ namespace QAdvanceFeedback.Settings
     /// rather than an automatic default - <see cref="WheelSourceResolver"/>'s existing fallback
     /// already makes pointing a Source field at a not-yet-exported ShakeIt property safe (falls back
     /// to this same Raw property, silently, never reading the miss as 0) once a driver does so.
+    /// (Since 2026-11-19 the ShakeIt Built-in source reads ShakeIt through our native effect instead,
+    /// and docs\shakeit-export-guide.md is retired; a Custom source may still point at an exported
+    /// property by hand.)
     /// </summary>
     public static class DefaultWheelSources
     {

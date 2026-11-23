@@ -18,6 +18,7 @@
 | [**Wheel Lock/Slip Normalizer**](#wheel-lockslip-normalizer工作原理与设计原因) | 依据一个按（游戏、车辆、数据源）学习的物理抓地力峰值参考值（一个刻意缓慢收敛的 EMA）重新缩放 Raw 的逐轮数值；通过锚定在「正处于物理极限」这类稀有、独立检测时刻的学习器按数据源交叉标定；并通过一套按分散度加权的冷/热混合机制，在实时证据与持久化数据之间混合。 | 让「80」在任何车上都意味着同一件事——「处于测得的抓地极限」——而不是一个含义会随车辆抓地力好坏而漂移的数字。 |
 | [**Wheel Lock/Slip Projector**](#wheel-lockslip-projector工作原理与设计原因) | 把归一化后的 0-100 数值送入一条驾驶者可编辑的五锚点曲线，用单调三次插值平滑，外加一个可选的「达到最大值时脉冲」阶段。 | 把「这有多严重」这个数字，变成「它应该是什么样的体感」——唯一设计给震动器绑定使用的属性层。 |
 | [**G-Force**](#g-force工作原理与设计原因) | 一套「持续 G 力水平」与「由变化率驱动的瞬态」相分离的洗出式模型，通过满足单位分割条件的分段线性函数映射到一条 3 级震动垫链条上；每款游戏/每辆车各自的最大值通过一个修剪样本池的鲁棒估计器，在一个实时滚动窗口内学习得到；车轮抱死/打滑可选择性地在其上叠加抖动，通过四种模式之一选择该抖动在各通道间的分配方式，并通过三种「手感」之一决定其波形与左右关系。 | 让座椅震动垫获得连续、有方向感的刹车/加速/过弯载荷体验，与车轮通道相互独立又彼此互补。 |
+| [**Slip Angle（滑移角）**](#slip-angle滑移角工作原理与设计原因) | 从按游戏的 raw 数据表读取原生逐轮轮胎滑移角（自动晋升，单位按事件投票自动检测），否则使用车身侧滑回退；带前后轴等效换算的单一 Raw.All；按（游戏、车、数据源、轴、路面）的抓地曲线学习器，其 Max 只由经佐证的牵引力穿越教学，并有碰撞保护；三档路面；借用档位；15/30/60/80/100 单调归一化（15 位于推导出的起点角）；漂移衰减状态机。 | 告诉驾驶者轮胎何时进入理想滑移角窗口、何时越过它，同时不会在保持漂移时一路嗡鸣——并为 G 力抖动提供输入。 |
 
 ## 分层模型
 
@@ -35,6 +36,8 @@
 
 **禁止依赖：** 不依赖它上方的任何东西。它可以引用 SimHub/GameReaderCommon 的类型（它是唯一被允许这样做的地方），但第 3 层及以上永远不会反过来引用 SimHub 类型。
 
+**Slip Angle 输入：** `SlipAngleRawSources.cs` 是按游戏的 raw 数据表，`SlipAngleRawSourceReader` 通过查值委托读取它，因此数据表本身不依赖 SimHub、可链接编译进测试。`SimHubTelemetryAdapter` 在 `ITelemetryFrame` 上补充 Slip Angle 所需的车身输入（前向局部速度、偏航率、来自 `IsFlying` 的腾空、路肩、垂直 G、路面抓地提示）。
+
 ### 第 3 层——Raw 计算器
 
 **功能：** `QAdvanceFeedback.Core.RawCalculator`——把一个遥测采样转换成发布的 `WheelLock.Raw.*`/`WheelSlip.Raw.*` 属性。`WheelSlipBranchSelector`（位于 `Core` 而非 `RawCalculator`，因为它只是对公开能力标志位的纯布尔优先级判断，不涉及任何具体公式）决定某款游戏支持哪种信号形态；`RawCalculatorEngine` 负责调度到匹配的公式，并持有每一个有状态的学习器。按设计未归一化——这里的「40」在不同车上含义不同，这个问题在上一层才会被修正。
@@ -49,23 +52,27 @@
 
 **禁止依赖：** SimHub 类型，或第 5 层/G 力。可以依赖第 3 层的输出形状（`Corners`、`LegacyWheelLockSlipResult`）和第 1 层（`ITelemetrySample`）。
 
+**Slip Angle** 是一套并列的独立栈，而不是本引擎中的第三个通道：`Core\SlipAngle\` 包含它的 Raw 计算（第 3 层角色）、门控、窗口学习器、归一化与路面分类（第 4 层角色），以及串联它们的每帧处理器。它与 Lock/Slip 共享 `Core\Normalized\` 中的四个核心——`CrossingGate`、`CorroboratedLevelEstimator`、`ColdStartTierResolver`、`ImpactGuard`——见下文「共享核心」。
+
 ### 第 5 层——Projected（映射）
 
 **功能：** `QAdvanceFeedback.Core.Projection`——把第 4 层的输出送入一条驾驶者可编辑的单调曲线（`MonotoneCubicCurve`/`OutputProjector`），以及一个可选的「达到最大值时脉冲」阶段（`PulseGenerator`）。这是驾驶者应该绑定震动器的那一层。
 
 **禁止依赖：** SimHub 类型。可以依赖第 4 层的输出形状。
 
+Slip Angle 的第 5 层是 `SlipAngleProjectedEngine`（同一个 `OutputProjector`/`PulseGenerator`，使用 `ProjectionChannel.SlipAngle` 预设与 `ColdStartScale`）加上 `DriftAttenuator` 状态机。
+
 ### G-Force（G 力）
 
 **功能：** `QAdvanceFeedback.Core.GForce`——一套独立的通道集合（完全不从第 3-5 层派生），建模了一种「洗出式」结构，把持续水平与由变化率驱动的瞬态分开，另外还有按游戏/按车辆学习的最大值（`GForceMaxLearner`）。
 
-**禁止依赖：** 第 3/4/5 层或 SimHub 类型。（车轮抱死/打滑的「抖动」集成会读取第 5 层的输出，作为 G 力自身振幅的一个输入——这是唯一的刻意例外，详见 `GForceEngine.Compute` 自己的注释。）
+**禁止依赖：** 第 3/4/5 层或 SimHub 类型。（车轮抱死/打滑的「抖动」集成会读取第 5 层的输出，作为 G 力自身振幅的一个输入——这是唯一的刻意例外，详见 `GForceEngine.Compute` 自己的注释。Slip Angle 加入后，同一例外也涵盖最终映射后的滑移角，仅在开启「Integrate Slip Angle」时读取。）
 
 ### 设置/持久化
 
 **功能：** `QAdvanceFeedback.Settings`（设置 POCO 加 WPF 设置界面）以及 `ConfigStore`/`RuntimeStore`/`Core.Runtime`（配置与学习状态的 JSON 持久化）。只读写普通的 double、枚举和字符串——绝不会把一个存活的 SimHub 引用嵌入到持久化对象里。
 
-**禁止依赖：** 就任何需要做单元测试的部分而言，不依赖 SimHub 类型（WPF 控件本身是这个子系统中唯一必须依赖 SimHub、因而也是唯一没有单元测试的部分——见 `ApplyDirtyStateTests.cs` 自己的注释）。
+**禁止依赖：** 就任何需要做单元测试的部分而言，不依赖 SimHub 类型。WPF 视图是唯一必须依赖 WPF 的部分；自全 MVVM 设置页（2026-11-20）起，视图不再包含任何规则——设置页的每条规则都在 `Ui\ViewModels` 下不依赖 WPF 的视图模型中（net8 测试覆盖），`MvvmRuleTests` 保证视图只做接线（见「UI：MVVM（长期规则）」）。
 
 ## 算法细节——每个子系统的工作原理与设计原因
 
@@ -91,6 +98,7 @@
 - **`KeyedScaleLearner`** 按数据源分别做交叉标定（因为不同的数据源模式/表达式可能使用不同的原生量程），并且只锚定在极少数、独立检测到的「正处于物理极限」的时刻——而不是一条原始的噪声数据流——这也是它无需借助鲁棒估计器就能保持抗离群值能力的部分原因。 `CanonicalAtLimitAnchor`（物理极限读数最终被重新缩放到的规范值）现在是 **80** （`docs/anchor-rescale-report.md`——从 75 调整而来，与 Projector 顶部「最大抓地力」锚点的输入位置完全重合）。该报告同时修复了置信度机制中的一个真实缺陷，并确认了修复后的收敛效果，详见该报告。
 - **`ColdWarmBlend`** 每一帧都会决定，对同一个键而言，应该更信任本局的实时证据，还是更信任持久化下来的历史数值，其权重依据的是实时证据自身的**分散程度**（变异系数），而不仅仅是样本数量——一个噪声很大的会话，即使已经积累了大量样本，也会逐渐倾向于「信任持久化/冷数据」；而一个稳定、可重复的会话，哪怕样本不多，也能很快获得信任。这两个因子都是平滑、饱和的函数，因此不存在某个样本数量或分散度的阈值，会让实时混合结果发生跳变。
 - **`SurfaceLooseFraction`** 在密实/松散路面条件之间连续地混合学到的参考值，而不是在两个固定参考值之间切换。
+- **哪些帧可以教学 SMax：穿越门与 95 硬上限（2026-11-19）。** 物理极限证据只能经由共享的 `CrossingGate` 进入 `ObserveAtPhysicalLimit`。一次穿越就是数据源上升而 G 下降。它教学的是这一段上升中抓地峰值处的快照；回溯只会停在本身也是从前一帧上升而来的帧上，因此上升起点那一帧平坦的数值永远不会成为快照。1 秒保持窗口内的每一帧都教学这个快照，绝不教学自身的实时值；快照不可用的穿越会被直接拒绝，而不是回退到实时值。每一个被教学的数值、每一个学习 / 发布 / 持久化的上限、每一个导入值，以及手动输入的 SMax 或自定义参考值，都不超过 **95**（`KeyedScaleLearner.MaxLearnedCeiling`）：读数为 100 的数据源表示车轮已抱死或空转，绝不是抓地极限。此修复解决的缺陷（穿越后的失控值把 SMax 学成 100/90/70）以及语料库前后对比数据见 `docs/slip-smax-crossing-gate-design.md` §10。
 
 针对七份真实遥测日志的直接测量（`docs/cold-start-convergence-report.md`）表明，当前的收敛节奏已经达到数据本身能安全支持的最快速度——如果再加快，会以可测量的方式牺牲抵御瞬时过度报告的余量，而这正是这套设计要极力避免的风险。
 
@@ -100,6 +108,10 @@
 
 **学习从不受条件限制。** `AutoGenerate` 只决定哪些数值会被**发布**，并不控制观测本身。`ObserveAtPhysicalLimit`/`ObserveGeneral` 以及锚点学习器的弯道缓冲，都在 `ComputeChannel` 中手动数值那一段**之前**无条件执行。由此带来三个结果：手动模式下 `[学习值: xx.x]` 提示依然有意义；切回自动是立即生效的；手动数值永远不可能污染学习器已经掌握的内容。
 
+**设置页与面板显示什么——唯一的显示规则，重启后同样适用（2026-11-19）。** `KeyDataPanelModel.LearnedKeyData` 是设置页（其 `KeyDataPageViewModel` 在每次 `PluginStateChanged` 时经宿主读取，驾驶时每秒一次）、两个 ShakeIt 面板以及一次性写入（seed）唯一的「学习值」来源：即引擎自身用作除数的上限 `KeyedScaleLearner.PublishedCeiling`，按 `KeyedGripLearner.MakeKey` 生成的**完全相同**的持久化键（游戏、车、数据源、路面）。Lock 的 S90/S75 来自其学习到的物理锚点比例（初始 0.90/0.70）；Slip 的为 SMax 的 0.90/0.70。重启后 SimHub 停在菜单、没有游戏运行时，插件使用上次显示关键数据时的（游戏、车）（`RuntimeDocument.LastKeyDataGame/Car`）。若 `QAdvanceFeedback.Parameters.json` 中存在该完全相同的键，就显示其持久化的 SMax/S90/S75；不存在时显示冷启动默认值。绝不显示其他游戏或车辆的数值（原先「该数据源在所有游戏和车辆中的最佳值」查找正因此被移除）。学习到的锚点比例现在也会被持久化：运行时缓存过去只复制旧的锚点字段，导致每次重启后 S90/S75 都回到 0.90/0.70。设置页上 Lock 自动模式的 S90/S75 与面板使用同一规则（物理比例）；手动模式下槽位为空时显示该数据源的默认值（`KeyDataPanelModel.Resolve`），与面板一致。
+
+**Slip Angle 遵循同一规则（2026-11-20，`docs\slip-angle-design.md` §9.4）。** `Core\SlipAngle\SlipAngleKeyDataModel` 是它的 Slip Angle 版本：`LearnedWindow` = 完全相同的键（游戏、车、按当前身份档位确定的数据源身份、路面）的已发布窗口，并按数据源封顶（原生 / Custom 20°，车身角 30°）；学习器中没有该键时为空——绝不显示借用来的窗口。`Shown`：自动 = 学习值，否则默认值；手动 = 已存槽位，否则默认值。一次性手动写入写入的正是所显示的学习窗口（`SlipAngleDisplayRuleKeyData`）。页签、ShakeIt 面板与写入共用这一规则。为了重启后停在菜单时也能显示，插件把最后一次 Slip Angle 上下文保存在 `RuntimeDocument` 中——`LastSlipAngleGame`、`LastSlipAngleCar`、`LastSlipAngleTier`（身份档位的 `SourceNativeness` 名称），与 `LastKeyDataGame/Car` 并列——并在 Init 导入学习器之后恢复（`SlipAngleKeyDataContext`），因此无需运行游戏即可组成完全相同的键。旧文件没有这些字段：首次驾驶前显示默认值。
+
 **数值按「槽位」存储，槽位 =（模式, 游戏, 数据源）。**
 
 ```
@@ -107,23 +119,53 @@
 每游戏模式   ->  "game:<gameId>|src:<sourceIdentity>"
 ```
 
-数据源**始终**是键的一部分，因为适用于 ShakeIt 导出的数值并不适用于本插件自己的 Raw——两者量程不同。游戏只在每游戏模式下参与构键；不含游戏，正是「全局」的含义。两类命名空间共用一个字典，因此「全局 → 每游戏 → 全局」的往返切换，会原封不动地取回最初的全局数值。
+数据源**始终**是键的一部分，因为适用于 ShakeIt 数据源的数值并不适用于本插件自己的 Raw——两者量程不同。游戏只在每游戏模式下参与构键；不含游戏，正是「全局」的含义。两类命名空间共用一个字典，因此「全局 → 每游戏 → 全局」的往返切换，会原封不动地取回最初的全局数值。
 
 **门控。** `ManualOverrideGate` 会一直扣住手动数值，直到该上下文**同时**满足：冷启动完成（`KeyedScaleLearner.CeilingHandoverConfidence` >= 0.95）**且**已累计 30 秒驾驶时间。只有车辆确实在移动的帧才会被计入，且任何超过 0.5 秒的单帧都会被截断——因此暂停、断点或切出游戏都无法凑满该门控。
 
-**一次性写入发生在插件的每帧循环中**，而不是设置页面里——因为无论页面是否打开，它都必须发生。当某个槽位首次满足条件时，学习值会被写入，并直接调用 `ConfigStore.Save`（而非 `ApplySettings`，后者还会重建 Projected 引擎——那是不该在一帧中途做的事）。由于该闩锁是**按槽位**记录的，一个从未游玩过的游戏、或一个新选择的数据源，都会自行再次触发一次写入。插件会递增一个修订计数器，好让已打开的设置页面重新加载。
+**一次性写入发生在插件的每帧循环中**，而不是设置页面里——因为无论页面是否打开，它都必须发生。当某个槽位首次满足条件时，学习值会被写入，并直接调用 `ConfigStore.Save`（而非 `ApplySettings`，后者还会重建 Projected 引擎——那是不该在一帧中途做的事）。由于该闩锁是**按槽位**记录的，一个从未游玩过的游戏、或一个新选择的数据源，都会自行再次触发一次写入。插件会递增一个修订计数器（`KeyDataRevision`）并触发 `SettingsPageStateChanged`，使设置页（以及任何 ShakeIt 面板）重新加载被写入的槽位。
 
-**默认值按数据源类型区分**，通过 `KnownSourceColdStartReference.Classify` 解析：对本插件自己的 Raw 与 ShakeIt 导出，Lock 为 85/75/60，Slip 为 75。**未知**数据源（脚本、NCalc 表达式）刻意**不给任何默认值**——对一个量程从未被测量过的信号，任何猜测都称不上诚实；这类通道会继续发布学习值，直到某个槽位被写入为止。
+**默认值按数据源类型区分**，通过 `KnownSourceColdStartReference.Classify` 解析：对本插件自己的 Raw 与 ShakeIt 数据源，Lock 为 85/75/60，Slip 为 75（按数据源**类型**查找：带算法指纹的 ShakeIt 身份得到同样的出厂默认值）。**未知**数据源（脚本、NCalc 表达式）刻意**不给任何默认值**——对一个量程从未被测量过的信号，任何猜测都称不上诚实；这类通道会继续发布学习值，直到某个槽位被写入为止。
 
 **仅最大抓地力 / 仅最佳点**模式会隐藏下方两个锚点，并在后台按顶部数值的 0.90/0.70 推导它们，因此切回三点映射时不会发现它们已经过时或次序错乱。Slip 始终采用推导方式——它没有原生的 90%/75% 抓地力测量——这也是它随包默认「仅最佳点」的原因。
 
-**手动模式下的恢复按钮**（`ResetKeyDataPoints`）：对 `KnownSourceColdStartReference.Classify` 能识别的数据源，写入随包提供的默认值，并将该槽位标记为已写入，使一次性学习值写入不会立刻覆盖驾驶者刚刚选择的内容。对**未知**数据源，没有可写入的默认值，因此改为调用 `KeyDataPointSettings.ClearSlot`——数值与已写入闩锁一并清除——从而重新武装一次性写入，并让输入框保持空白，直到真实证据到来。与页面上其他恢复操作一样，点击即刻持久化。
+**手动模式下的恢复按钮**（设置页上的 `KeyDataPageViewModel.ResetCommand`）：对 `KnownSourceColdStartReference.Classify` 能识别的数据源，写入随包提供的默认值，并将该槽位标记为已写入，使一次性学习值写入不会立刻覆盖驾驶者刚刚选择的内容。对**未知**数据源，没有可写入的默认值，因此改为调用 `KeyDataPointSettings.ClearSlot`——数值与已写入闩锁一并清除——从而重新武装一次性写入，并让输入框保持空白，直到真实证据到来。与页面上其他恢复操作一样，点击即刻持久化。
 
-**自动模式下 Slip 被强制为「仅最大抓地力」**（`EnforceSlipPatternForAutoMode`），且自动开启时选择框被禁用。Slip 没有原生的 90%/75% 测量，其下方两个锚点始终是推导而来；在插件自行生成数值时提供三点映射，等于把推导值当作测量值呈现。手动模式下由驾驶者提供全部三个数值，因此该选择重新可用。Lock 三个点都能测量，不受影响。
+**自动模式下 Slip 不再被强制为「仅最大抓地力」**（作者改变主意，v1.0.8）：自动模式按固定比例由学习到的 SMax 推导 S90/S75，因此三点映射对两个通道都成立，选择框在两种模式下都可用，两个通道默认都采用三点映射。（原先的 `EnforceSlipPatternForAutoMode` 早已不起作用，随旧设置页一并删除。）
 
-**两张曲线图**（`RenderGraphDecorations`、`RenderKeyPointMarkers`、`RenderSourceToProjectedGraph`）在代码中绘制而非在 XAML 中声明，以便跟随实时设置。左图为 归一化 -> 映射，虚线标记位于关键数据点在归一化坐标上的规范位置（S75 -> 30、S90 -> 60、SMax -> 80，即四段曲线自身的节点表），「仅最大抓地力」模式下仅显示 SMax。右图为 源数值 -> 映射 的完整链路；由于关键数据点与投影器是复合关系，它没有闭式解，因此按每 5 取样并连线。两张图共用同一套网格：每 20% 高度一条 25% 黑度的横线，0% 处改用纯黑作为基线，横向每 20% 一个 3px 刻度。
+**两张曲线图**（数据由 `CurveEditorViewModel` 提供——曲线、标记、源数值图的取样点；由 `Ui\Views\NormalizedCurveGraph` / `GraphFurniture` 绘制）跟随设置页草稿中的数值，因此未应用的修改也会立即反映。左图为 归一化 -> 映射，虚线标记位于关键数据点在归一化坐标上的规范位置（S75 -> 30、S90 -> 60、SMax -> 80，即四段曲线自身的节点表），「仅最大抓地力」模式下仅显示 SMax。右图为 源数值 -> 映射 的完整链路；由于关键数据点与投影器是复合关系，它没有闭式解，因此按每 5 取样并连线。两张图共用同一套网格：每 20% 高度一条 25% 黑度的横线，0% 处改用纯黑作为基线，横向每 20% 一个 3px 刻度。
 
 **「恢复默认」从不丢弃这些数值。** `QAdvanceFeedbackSettings.RestoreDefaults` 会把两个通道的 `KeyDataPoints`（所有槽位，以及自动/每游戏两个开关）一并带过重置；而三个通道级的数据源重置方法，只会触碰数据源字段。
+
+### Wheel Lock/Slip 数据源：ShakeIt 内置、按通道的 Raw 回退、内部数据源学习（2026-11-19）
+
+设计：`docs/shakeit-source-design.md`（ShakeIt 数据源）与 `docs/internal-source-learning-design.md`；交付总结：`docs/shakeit-source-report.md`。
+
+**ShakeIt 内置只通过我们的原生效果读取 ShakeIt 的算法。** 导出属性路径已不复存在（ShakeIt Motors 导出配置、`MotorsExportAvailabilityProvider` 与 `MotorsExportAvailabilityResolver` 均已移除；`docs/shakeit-export-guide.md` 已退役）。ShakeIt 处理我们的任一 QAdvanceFeedback 效果（WheelLock、WheelSlip、四个 G-Force 效果、Clutch Bite、Slip Angle）时都会调用 `ShakeItBuiltInTap.Sample`。每次调用都会盖一个心跳戳（无论是否在游戏中）；在游戏中，它用 ShakeIt 交给它的游戏数据计算 ShakeIt `WheelsLockContainer` / `WheelsSlipContainer` 的隐藏副本，按通道发布数值，并附带 ShakeIt 自己对抱死与打滑分别给出的 `GetIsSupportedOnCurrentGame(caps)` 结论。
+
+**检测**（`Core\ShakeItEffects\ShakeItSourceAvailability.cs`、`Integration\ShakeIt\ShakeItProfileInspector.cs`）：
+- *已设置* = 任一 ShakeIt 插件（Bass Shakers、Motors）的当前配置文件中，至少有一个我们的效果实际处于启用状态（自身开关及所有上级分组均启用）——由 UI 线程上 1 Hz 的 `DispatcherTimer` 通过 SimHub 公开 API 读取（每个插件单独保护；健康子系统 `ShakeItProfile`）——**且**心跳不超过 2 秒。
+- *驾驶中* = 游戏运行、未暂停、不在菜单，并满足 ShakeIt 自身的 FeedbackData 门控。
+- 每个通道一个状态机：**NotSetUp / SetUpIdle / Supported / NotSupported**。Supported 要求驾驶中 tap 数值新鲜。NotSupported 来自 ShakeIt 报告游戏不支持（保持到切换游戏），或连续 3 秒驾驶中数值过期（收到第一组新鲜数值即恢复——裁定 R41）。经 0.5 秒去抖的一对状态（`ShakeItSourceStateBroadcaster`）发布为 `QAdvanceFeedback.ShakeItSourceState`，并触发 `SettingField.SourceAvailability`。
+
+**按通道解析**（`Core\ShakeItEffects\ShakeItSourceResolution.cs`，每帧依据实时状态）：Supported 且 tap 新鲜 → 使用 tap 的数值，学习键为**规范 ShakeIt 身份**（`ShakeItSourceResolution.ShakeItIdentity`：四个 Plain 形式的旧导出属性名，与 2026-11-19 之前的键逐字节相同，再加上算法指纹）。其他任何情况（未设置、游戏中空闲、不支持、过期）→ 该通道四个车轮全部使用 Raw 的数值，学习键为 **`RawSourceFallback.RawIdentity`**——从不按单轮回退，也绝不把 Raw 数值学进 ShakeIt 键。Viper 被阻断时走同一条 Raw 路线。`QAdvanceFeedback.ShakeItSourceBlocked(channel, isLock)`（读取已发布状态；仅在 NotSetUp / NotSupported 结论时为真，空闲时从不为真）是设置页的「遮蔽」输入，与 `ViperSourceBlocked` 并列。预设数据源（ShakeIt 或 Viper）在通道被遮蔽时应用，保存的是它自己的预设行（`WheelChannelSettings.KeepPresetSourcesWhileShadowed`）。
+
+**界面。** 当状态不是 NotSetUp，或它是当前显示或已保存的数据源时，列表中才列出 ShakeIt 选项（未设置时标为「ShakeIt 内置（未设置）」；隐藏的选项同时被禁用）。提示文字：「未设置——请在当前 ShakeIt 配置文件中添加一个 QAdvanceFeedback 效果。正在使用原始数值。」与「此游戏不支持——正在使用原始数值。」，仅在当前显示的数据源为 ShakeIt 时出现。规则位于 `Ui\ViewModels\ShakeItSourceViewModels.cs`（`ShakeItSourceUi`、`ShakeItSourceStatusViewModel`）；面板通过可选的宿主能力 `IShakeItSourceStateHost` 读取状态；设置页会在运行时 `SourceAvailability` 广播到来时重新采样，因此在菜单中也能跟随变化。
+
+**ShakeIt 算法区块**（`Settings\ShakeItAlgorithmSettings.cs`，挂在 `WheelChannelSettings.ShakeItAlgorithm` 上；规则在 `Core\ShakeItEffects\ShakeItAlgorithm.cs`；VM 为 `ShakeItAlgorithmViewModel`；仅当数据源为 ShakeIt 内置时在页签与面板上显示，经五个 `SettingsHub` 字段同步）：
+- Lock：旧版 iRacing 算法（开）、ShakeIt 抱死灵敏度（50，0–100，步长 5，各处均对齐到步长）、仅抱死模式（开）。Slip：旧版 iRacing 算法（开）、抱死时静音打滑（关）。
+- 隐藏的过滤器跟随我们的阈值：Lock 刹车过滤器 = round(Lock 刹车阈值)；Slip UseBrakeFilter = 刹车阈值 < 100 且油门阈值 > 0；Slip UseThrottleFilter = 油门阈值 > 0（油门阈值为 0 时我们的「或」门始终打开，因此两个过滤器都关闭）。
+- 静音由我们模拟：只要我们隐藏的 Lock 数值中任一车轮 > 0，该帧 Slip 四个车轮全部读为 0（不模拟 100 ms 保持）。
+- 指纹追加在 ShakeIt 身份之后：`#alg=legacy:X,sens:N,lockOnly:X`（Lock）、`#alg=legacy:X,mute:X`（Slip）；默认值时为空。出厂关键数据默认值按数据源类型查找（`ShakeItAlgorithmFingerprint.BaseIdentity` 去掉指纹）；手动槽位、Auto 标志与学习都带指纹作键。数据线程每帧构建不可变的 `ShakeItAlgorithmSnapshot`（未变化时复用），并交给 tap（`ShakeItBuiltInTap.Configure`）；这一步在会话门控**之前**执行，因此在菜单中所做的修改会在第一个游戏帧之前到达 ShakeIt 的线程。
+- **tap 快照标记**：tap 会给每帧的数值标上计算时所用的快照（`ShakeItTapValues.Algorithm`；快照同时包含算法设置与阈值过滤器）。`ShakeItSourceResolution.TapComputedUnder`（按引用比较）是「tap 新鲜」的一部分，因此来自旧快照的 tap 视为不新鲜，该通道会以 Raw 键读取 Raw，直到 ShakeIt 按新设置产生数值为止（修改踏板阈值后也会如此，约持续一帧）。旧设置下的数值因此永远不会进入新的带指纹键。
+
+**内部数据源学习规则**（`NormalizedWheelLockSlipEngine`，`docs/internal-source-learning-design.md`）：
+- 每个数据源只在自己的键下学习。**Plugin Internal（`PluginInternalSourceIdentity.For(isLock)`，等于 `RawSourceFallback.RawIdentity`）每帧都学习**，无论是否被选中：当其他数据源处于激活状态时，一个「内部镜像」会用第 3 层 Raw、以内部键自己的穿越门与极限基准历史，重复每一个学习步骤。当内部键就是激活键时只喂一次。
+- 「所配置数据源变安静」的相对回退与内部键比较。原先始终被喂的隐藏键 `__layer3_raw_fallback__` 已退役；`InternalSourceKeyMigration` 在加载时一次性把它并入内部键（内部为空 → 采用；两者都有 → 保留内部；隐藏条目删除）。
+- 不按数据源分键的共享状态（物理 g 参考、路面支持、Slip Angle 路面分类器）跟随车辆运动与内部数据源，每帧只观测一次。
+- 通道的激活身份一旦变化，共享穿越门、共享极限基准与回退偏差都会被清除，上一个数据源的 Lock 锚点过程会在它自己的游戏/车辆下结束（若上一个数据源就是内部键则不结束）。
+- Slip 从 Lock 跨通道借用冷启动依据时，只配对同一种数据源类型（`CrossChannelSourcePairing`）：内部 ↔ 内部始终配对，ShakeIt ↔ ShakeIt、Viper ↔ Viper 按类型配对，自定义 / 混合不借用。配对输入是一个不可变、以 Volatile 发布的快照。
+- 四行都是我们 Raw 属性（Plain）的自定义通道（`RawSourceFallback.MatchesRaw`）即视为 Plugin Internal。四行恰为旧 ShakeIt 导出属性名的自定义通道会生成 ShakeIt 身份字符串，因而与 ShakeIt 共用同一个键。复现任一出厂预设的自定义通道都不会应用自定义冷启动参考值：当 `RawSourceFallback.MatchesShippedPreset` 与 Raw 身份、规范 ShakeIt 身份（去掉指纹后比较）或出厂 Viper NCalc 预设匹配时，`ApplyCustomColdStart` 会跳过它——因此自定义冷启动 SMax 永远不会进入 Raw、ShakeIt 或 Viper 的键。
 
 ### Wheel Lock/Slip Projector：工作原理与设计原因
 
@@ -204,7 +246,9 @@
 
   **停留值并不像频率那样按手感设默认值。** 两种锁相手感共用同一个配置值；`Blending` 根本不接受默认值——它**固定**使用 `BlendingHoldFraction`（0.5），UI 也会隐藏该数值框，因此不存在需要交给驾驶者的按手感停留值。
 
-  **切换 `ShakeApplyMode` 不会重写两个强度值**（作者，2026-09-06）。此前会重写，理由是同一个强度在不同模式下含义不同。事实并非如此：`contribution = scale × wheel/100` 在全部四种模式中的计算完全一致，且抱死与打滑的强度是分别作用于各自通道之后，引擎才取其中较大者。真正不同的只是该 contribution 所**乘的对象**——两种 G 力模式乘的是震动垫自身水平，两种由车轮驱动的模式乘的是完整的 0-100 区间——因此在 1.5 时，由车轮驱动的模式从车轮值 67 起就达到满宽频带。这是一个值得知晓的饱和点，而不是含义的改变，更不足以成为覆盖手动调好数值的理由。两个强度在所有模式下的出厂值均为 **1.5**。
+  **在 G-Force 页签上选择 `ShakeApplyMode` 会把抖动强度和触发值重置为该模式自己的默认值**（作者，**2026-09-07**，`GForceShakeViewModel.Mode` 与 `GForceSettings.DefaultShakeScaleFor` 的注释均引用此日期）。`Ui\ViewModels\GForceShakeViewModel` 的 `Mode` 属性在驾驶者选择时把 `DefaultShakeScaleFor(mode)` 写入车轮抱死、车轮打滑**以及滑移角**三个强度，把 `DefaultShakeTriggerFor(mode)` 写入「抖动起始阈值」；`Load` 加载时绝不触发。选择振感（feeling）同理会改写频率（`DefaultShakeFrequencyFor`），并在 Blending 时隐藏保持值。`GForceSettings.ShakeApplyMode` 属性本身不改动强度，只有页签上的模式选择会（ShakeIt 的 G 力面板没有模式选项）。各模式强度：**1.2**（`HigherOfGForceOrLockSlip`，出厂默认）、**1.5**（`PerChannel`）、**1.3**（`AllChannelsGForce`）、**1.0**（`AllChannelsLockSlip`）；触发值依次为 60 / 5 / 60 / 30。
+
+  历史（理由依然成立，故保留）：2026-09-06 作者曾要求**移除**这一重置，因为 `contribution = scale × wheel/100` 在四种模式中计算方式完全相同（不同的只是它所乘的对象）。2026-09-07 实际体验得出了每种模式各自不同的强度与触发值，而只有在切换模式时应用，才能用上这张按模式的表——因此会再次有意覆盖手动调好的数值。（本文档较早的版本仍描述 2026-09-06 的状态；代码一直遵循 2026-09-07。）
 
   **`PadRange` 不再应用 `PeakExcursionFactor`。** 「正弦 + 停留」波形在任何手感、任何停留下都完整覆盖 0..1，因此单个震动垫的行程**就是**频带本身。该系数原本存在，是因为正交混合确实会压缩行程——这也正是标称 70 的频带在出厂混合值下实际只摆动 35 的原因。
 
@@ -262,15 +306,15 @@
 
   设置项与引擎属性一度比机制本身活得更久，成为**只写状态**——`ApplyTo` 仍在把 `ShakeBlendPercent` 推入 `GForceEngine.ShakeBlend`，却再没有任何地方读回它，因此持久化的混合值实际上毫无作用。两者现已删除；旧的配置文件只是多带一个被忽略的键。
 
-- **Test Effect 效果测试面板（1.0.8，`SettingsControl.GForceTest.cs`）。** 一个可拖动圆球的 G 力控制板与一条抱死/打滑滑条，把合成出来的帧送入设置页自己持有的一个**私有 `GForceEngine` 实例**，使驾驶者无需在赛道上真的制造一次抱死，就能设置好 ShakeIt 的各项强度。
+- **Test Effect 效果测试面板（1.0.8；自 2026-11-20 起为 `GForcePageViewModel` 承载的共享 `GForceTestViewModel`）。** 一个可拖动圆球的 G 力控制板与一条抱死/打滑滑条，把合成出来的帧送入设置页自己持有的一个**私有 `GForceEngine` 实例**，使驾驶者无需在赛道上真的制造一次抱死，就能设置好 ShakeIt 的各项强度。
 
   **它会写入真实属性。** 只驱动私有引擎，只会让界面读数动起来：在没有游戏运行时 `DataUpdate` 会在发布任何内容之前就返回，因此 `QAdvanceFeedback.GForce.*` 读到 null，而 ShakeIt——这个面板存在的全部理由——什么也收不到。`QAdvanceFeedback.PublishTestEffect` 通过实时路径所用的同一个 `PropertyPublisher.UpdateGForce` 写入（其属性是该数组之上的拉取式委托，因此无论有没有游戏在跑，写入都会生效），并置位一个标志让 `DataUpdate` 跳过自己的发布。传入 null 即清除接管；开关关闭与页面卸载都必须这样做，否则关闭后的页面会把输出永久钉死。
 
   **控制板方位**（作者，2026-09-06）：圆球标记的是载荷被甩向的方向，因此**上方为刹车、下方为加速，向左拖动表示右转**。两个轴在进入遥测帧时都会取反。
 
   此外还有两条性质是它存在的全部意义，两者均有守护：
-  - **本页所有 G 力设置都会实时生效——但写入的是临时对象。** 每一个模拟帧都会先 `SaveGForceToSettings` 写入一个一次性的 `GForceSettings`，再 `ApplyTo(_testEngine)`，因此面板读取的是页面**当前**状态（含 Wheel Lock 与 Wheel Slip 强度），却不会碰插件的实时设置。它此前调用的是完整的 `SaveToSettings()`，而后者直接写入 `_plugin.Settings`——于是仅仅打开面板，就会把页面上所有尚未提交的修改推入正在运行的插件：一次无人请求的 Apply。把 G 力这一半抽取成接受目标参数的方法，正是临时对象得以成立的前提。
-  - **它的任何内容都不会被保存**（作者要求）。其控件既不被 `SaveToSettings` 读取，也不被 `LoadFromSettings` 写入，且 `WireDirtyTracking` 会按 `GForceTest` 名称前缀跳过它们——按前缀而非清单，理由与该遍历本身采用反射完全相同。`SettingsControlDirtyTrackingTests` 对这三点均有守护。
+  - **本页所有 G 力设置都会实时生效——但写入的是临时对象。** 测试运行在设置页**草稿**中 G 力设置的一次性副本上（含未应用的修改，以及 Wheel Lock 与 Wheel Slip 强度），并只应用到它自己的引擎，从不触碰插件的实时设置。（旧设置页曾在此调用完整的保存方法，把所有尚未提交的修改推入正在运行的插件：一次无人请求的 Apply。）测试运行期间做的修改也会立即生效。隐藏 G-Force 页签会停止测试。
+  - **它的任何内容都不会被保存**（作者要求）。其状态只存在于 `GForceTestViewModel` 中，不属于草稿，因此既不会让页面变为「未应用」，也不会被 Apply 写入（`GForcePageViewModelTests.The_test_effect_runs_on_the_unapplied_page_values_and_never_marks_dirty`）。
   - **关闭即彻底无输出。** 开关关闭时控件整体折叠、不渲染任何标签，也不产生任何模拟帧——面板在关闭状态下绝不允许驱动驾驶者的电机。
 
   抖动区域的**预览图**是同一思路的静态版本：它直接调用 `FeelingPair`，绘制当前设置下两侧震动垫一秒内的动作。两处界面都没有重新实现波形，画出来的就是插件自身会输出的结果。
@@ -282,167 +326,404 @@
   4. **在收尾期内重新触发会保持既有节拍。** 只有从完全静止开始的抖动才会重新对齐。
 
   收尾期内保持的是**最后一次高于阈值**的驱动量，而非当前低于阈值的那个值，从而让这次动作以驾驶者正在感受到的幅度收尾，而不是在结束时萎缩下去。
-- **设置面板「Auto detected」（自动检测）读数——过期快照修复。** `SettingsControl.RefreshGForceLearnedText` 过去只在构造时（`LoadFromSettings`）以及 Accel/Decel 模式下拉框的选项真正发生变化时才会被调用——从未有过定时刷新。经过端到端追踪：`GForceSettings.SetCurrentGameAndCar`/`ObserveAccelG`/`ObserveDecelG`/`GetLearnedMax`/`TryGetCurrentAccelAutoDetected`/`TryGetCurrentDecelAutoDetected` 全部使用同一个 `(gameId, carId)` 键，而真正驱动实时 G 力严重度路径的 `EffectiveAccelMaxG`/`EffectiveDecelMaxG` 则是每一帧遥测都重新查询——这条链路从未出现过过期或错配（从 1.0.6.5 到当前版本逐字节比对完全一致）。唯一的问题只是这段设置面板文本是一次性快照：如果驾驶者在开始跑圈前打开了面板（此时正确显示「暂无数据」），并让面板一直保持打开，那么即便之后确实积累了真实证据，这段文字也永远不会更新——这是**纯粹的界面（cosmetic）问题**，从来不是键/通道/学习器的错配，也从未影响任何实际生效的行为路径。修复方式是在 `SettingsControl` 中加入一个轻量的一秒 `DispatcherTimer`，在构造函数中启动，并在 `Unloaded` 时停止。
+- **设置面板「Auto detected」（自动检测）读数——过期快照修复。** `SettingsControl.RefreshGForceLearnedText` 过去只在构造时（`LoadFromSettings`）以及 Accel/Decel 模式下拉框的选项真正发生变化时才会被调用——从未有过定时刷新。经过端到端追踪：`GForceSettings.SetCurrentGameAndCar`/`ObserveAccelG`/`ObserveDecelG`/`GetLearnedMax`/`TryGetCurrentAccelAutoDetected`/`TryGetCurrentDecelAutoDetected` 全部使用同一个 `(gameId, carId)` 键，而真正驱动实时 G 力严重度路径的 `EffectiveAccelMaxG`/`EffectiveDecelMaxG` 则是每一帧遥测都重新查询——这条链路从未出现过过期或错配（从 1.0.6.5 到当前版本逐字节比对完全一致）。唯一的问题只是这段设置面板文本是一次性快照：如果驾驶者在开始跑圈前打开了面板（此时正确显示「暂无数据」），并让面板一直保持打开，那么即便之后确实积累了真实证据，这段文字也永远不会更新——这是**纯粹的界面（cosmetic）问题**，从来不是键/通道/学习器的错配，也从未影响任何实际生效的行为路径。修复方式是每秒刷新一次——自 2026-11-20 起为 `GForcePageViewModel` 的 `ITicker` 定时器，只在 G-Force 页签显示时运行（隐藏页签即停止，再次显示时重新启动并立即刷新）。
+
+### Slip Angle（滑移角）：工作原理与设计原因
+
+设计见 `docs\slip-angle-design.md`（含勘察后的修订）。遥测勘察见 `docs\slip-angle-spike-report.md`。实现记录、裁定（R1–R39）与偏离见 `docs\slip-angle-report.md`。本节是英文版对应小节的完整摘要；常量与公式以英文版和源码为准。
+
+**用途。** 柏油路赛车的最快技术，是让轮胎滑移角保持在侧向抓地力峰值对应角度之下。SimHub 自带的「Traction loss」只是整车车身侧滑：没有阈值，不学习，只能报告已经发生的甩尾。Slip Angle 是第三个车轮通道，沿用 Wheel Lock / Wheel Slip 的同一模式：Raw → Normalized → Projected，配有设置页签、原生 ShakeIt 效果和 Test Effect。它的表现是：
+
+- 轮胎进入理想窗口时震动增强；
+- 越过极限后达到最强；
+- 驾驶者有意保持漂移时逐渐减弱，因此 WRC 赛段或漂移不会全程满强度嗡鸣。
+
+它只有一个输出通道：`SlipAngle.Projected.All`。
+
+**每帧流水线**（`SlipAngleFrameProcessor.Process`，由 `QAdvanceFeedback.SlipAngle.cs` 在 Lock/Slip Projected 之后、G-Force 之前调用），顺序如下，并由测试固定：
+
+1. 观察偏航符号（`YawSignDetector`）；
+2. 门控（`SlipAngleGate`）；
+3. 选择数据源（原生 / 回退 / 自定义）；
+4. `SlipAngleRawCalculator`，使用**上一帧**的 k；
+5. `ImpactGuard`；
+6. 路面分类；
+7. `KeyedSlipAngleLearner.Observe`；
+8. 学到的窗口、成熟度与借用档位；
+9. 手动关键数据门控与一次性种子；
+10. `SlipAngleNormalizer`；
+11. `SlipAngleProjectedEngine`；
+12. `SaveIfDue`。
+
+处理器与学习器只属于数据线程（学习器的 getter 会改变状态）。UI、CSV 与 ShakeIt 效果读取的，是每帧生成一次的不可变快照。该文件有自己的 try/catch：出错时向 `HealthSubsystems.SlipAngle` 报告并发布空结果，Lock/Slip/G-Force 不受影响。之后连续 300 个正常运行帧会清除该条目（`Core\Health\HealthRecoveryTracker`），偶发一次故障不会留下永久提示。
+
+**数据源分级。**
+
+- **原生**：`SlipAngleRawSources.cs`（项目根目录，属于第 2 层，但不依赖 SimHub，链接编译进测试）按游戏列出 raw 路径、轮序、单位与变换。
+  - 原生直读：ACC、AC Rally、AC EVO、F1 23/24/25、Forza（FM7/FM8/FH4/FH5/FH6）、LFS（正切值）、Wreckfest 2、PMR、Drift21（弧度）、KartKraft、Bus Bound、Rennsport。
+  - 原生计算：`atan2(横向接地点速度, |纵向地速|)`，适用于 rFactor 2、LMU，以及暂定的 NASCAR Heat 系列。
+- **原生晋升**（`SlipAngleNativeSupport`）：需要 5 秒行驶中（≥ 30 km/h）的有限、合理（≤ 45°）且非恒定的数值；会话内只晋升、不降级。**45° 规则（R14）**：
+  - 单位已固定的行，超过 45° 的帧视为中性；
+  - 单位未验证的行，只有在单位仍未判定且 |横向 G| < 0.3 g 时，超过 45° 的帧才累计 1 秒封锁。
+- **单位自动检测——按「事件投票」（R6→R16）**：
+  - 事件：|横向 G| ≥ 0.8 g 连续 ≥ 0.3 s，并在 < 0.5 g 时结束；
+  - 一个事件中 ≥ 70% 的帧数值 ≥ 1.0 时，投「度」；
+  - 至少 3 个事件、≥ 2/3 一致时作出判定；
+  - 未判定时不晋升；
+  - 已接受的残余风险（R17）：前三个事件中有两次打转，可能误判一个会话。
+- **回退**：只算后轴，`|atan2(Vlat, max(Vfwd, 1 m/s))|`。勘察后删除了 `− b·r` 偏航项（R12），因为各游戏偏航符号不统一。不在原生表中的游戏都使用回退：AC、AMS2、iRacing（未验证）、R3E、EA WRC、GT7 等。
+- **自定义**：四个逐轮角度字段。
+- **Plugin Internal 始终学习（2026-11-19，`docs/internal-source-learning-design.md`）**：无论选中哪个数据源，Plugin Internal 的原始角度（原生或回退）**每帧**都会计算并在自己的键下学习，选中自定义时也一样。共享的路面分类器每帧只由 Plugin Internal 的角度与内部键的曲线推进一次；自定义只在被选中时、在同一路面混合下、以自己的键学习。只有选中的数据源会发布输出。
+- 原生与回退是**不同的数据源身份**，互不共享学习结果。
+- **橙色回退警告**（R19）：仅当数据源为 Plugin Internal 且去抖后的档位为 Fallback 时显示。档位为 Unknown 且没有 Raw.All 时，只显示状态文字「此游戏没有滑移角数据」。
+- **关键数据的身份档位（`SlipAngleIdentityTier`）**：无游戏 / 暂停 / 菜单会立即把去抖档位清为 Unknown——对警告是对的，但 Unknown 对应 Native 槽位。因此设置中枢、页签和 ShakeIt 面板读写的关键数据由另一个值 `CurrentSlipAngleIdentityTier` 选择：当前游戏本次会话中最后一次「已确认」的档位。它在暂停 / 菜单 / 故障期间保持不变，运行中跟随已确认（去抖后）的档位变化，切换游戏时重置。因此在回退档位的游戏中暂停时所做的修改会写入 Fallback 槽位。
+
+**偏航符号学习（`YawSignDetector`，R12）。** 稳态弯中 `lat G ≈ k·V·r/g`，可学习的只有相对符号 k ∈ {+1, −1}：
+
+- 投票条件：着地，≥ 30 km/h，|lat G| ≥ 0.3 g，|V·r| ≥ 0.1 g；
+- 以 3 秒为一个窗口，70% 判定，之后需 80% 才翻转；
+- k 未知时，或 |dVlat/dt| > 0.15 g 时，不做偏航一致性检查。
+
+**四轮 → 一个 Raw.All。**
+
+1. 轴角 = 同轴两轮 |α| 的均值；压路肩的车轮排除在外。
+2. 前轴乘以k，换算到后轴尺度（2026-11-22，所有者要求；`SlipAngleBalanceEstimator`）：k为车辆接近极限时（按速度段换算的横向G达到过弯第98百分位数的85%以上；需先有120个过弯帧，超过6g的尖峰忽略）后轴与前轴角度之比的中位数，在累计120个此类帧之前向1收缩。学习闸门拒绝的帧（维修区、回放、重新开始、腾空、落地晃动、帧时间异常）、碰撞（轻微或严重）、侧滑（车身角）、超出数据源角度上限的车轴（打转）以及前轴小于0.3°的帧都不参与。按游戏、车辆、数据源和路面分别学习。没有自身k依据的路面，立即以同一游戏、车辆、数据源在其他路面上的k为起点，否则正好为1（2026-11-22，所有者要求；`SlipAngleBorrowRules.KScope`），不做渐变；之后由自身依据接管。不借用其他车辆或游戏。随该路面的All键以单一数值保存，重启后继续学习。限制在 **0.3**–2.0（此前为0.5；F1实测0.29–0.46），路面有自身依据后以每秒0.2做斜率限制。
+
+   借出方无需已确认峰值，只需有自身学习且置信度大于0（2026-11-22；FH6从不确认峰值，因此此前从未借出）；借用的起点 = 出厂值 + 置信度 ×（借出方窗口 − 出厂值），30%置信度只移动30%。在获得自身数据之前，起点随借出方的置信度一起变化；从文件恢复的键保留其保存的窗口。期间指示灯为左右两半（右半为借出方置信度，左半为红色）。
+
+   借用规则集中在`SlipAngleBorrowRules`（2026-11-22）：起始窗口——滑移率数据源可借用同一游戏、同一数据源的任意车辆和路面，角度类数据源（度、弧度、车身角度、自定义）只能借用同一游戏、车辆、数据源的其他路面；k——只能借用同一车辆的其他路面；按速度段的横向G——从不借用，按游戏、车辆、数据源和路面分别学习，每种路面都学习。从不跨游戏借用。游戏读取器都不读取轮胎配方，因此不在规则中。没有前后两轴的数据源（后备模式、只有单轴的自定义数据源）不使用k。在所有者的日志上回放：F1在第一个极限弯内（26.3→27.1秒）达到0.43并保持在0.39–0.49，FH6保持在1.00–1.10。它取代了需要两轴都确认峰值的`Best_rear / Best_front`——F1的后轴在八分钟内只穿越一次，k整节都停在1。
+   每根车轴的两个车轮取平均；压在路肩上、无法读取或离地（≤0.05°而另一侧≥2°）的车轮不计入。
+3. `Raw.All = Max(α_F′, α_R) × 0.85 + Min(α_F′, α_R) × 0.15`（权重可编辑）。
+4. 只有一个轴可用时取该轴（R18）；回退模式下 = α_R。
+
+**门控与着陆抖动。**
+
+- 触发：Any（默认，刹车 ≥ 5% 或油门 ≥ 10%）/ Brake / Throttle。门关闭时输出 0，但漂移状态机继续运行。
+- 车速：10→20 km/h 线性淡入；学习需要 ≥ 30 km/h，并通过 `TelemetryLearningGate`；学习**不**要求踩踏板。
+- **腾空只看 `IsFlying > 0`（R5）**：赛车游戏从不写入 `FlightIsOnGround`。
+- 着陆抖动：`min(1, 飞行时长/MaxFlight) × MaxWobble`，默认 **MaxFlight 1000 ms / MaxWobble 500 ms**（2026-11-19 互换，`docs/slip-angle-design.md` §9.7；200 ms 的飞行现在对应 100 ms 抖动）。期间冻结学习，用 S 曲线淡入，并保持漂移计时清零。
+- 小跳跃排除：仅在提供垂直 G 的游戏（iRacing、Rennsport）生效（R7）。
+
+**窗口学习器（`SlipAngleWindowLearner` / `GripCurveBins`）。** 每个上下文有 front / rear / all 三个目标，键为 `game|#|car|#|source/target|#|surface`。
+
+- **抓地曲线**：
+  - 0–30° 分成 0.25° 一格；每格保存横向 G 的衰减 P90，前 20 个样本精确播种；
+  - **只在被访问时更新**，因此之后的谨慎驾驶不会侵蚀已确认的峰值；
+  - Best 与 Min 使用的 peakG 取 **Max 以下**的最高格（R20）；
+  - 平台（≥ 97% peak）的中点 = Best；上升段首次达到 90% 处 = Min；缺少数据时 Min = Best × 5/8。
+- **Max 只由牵引力穿越教学**：
+  - 使用 `CrossingGate`（`.SlipAngle` 参数：上限 45°，上升 0.5°，横向 G 下降 −0.05 g，保持 1 s，无坍塌检查，无饱和车轮保护）；回溯只停在上升段内部，快照不可用的穿越会被拒绝，与 Lock/Slip 相同；
+  - **学习到的 Max 上限（2026-11-19）**：原生轮胎滑移角为 20°，车身角回退为 30°（自定义数据源按 20°），适用于每个被教学的 α、快照、先验缩放、发布 / 持久化 / 借用的窗口，以及手动输入的 Max（`SlipAngleWindowLearner.MaxCapDegFor`、`SlipAngleWindow.CappedAt`）。45° 的门上限与合理性边界不变：只有 45° 以内的 α 参与学习，但每个 α 都会被映射，超过 End（1.5 × Max）的值即为 100；
+  - 候选条件：|lat G| ≥ 85% peakG，并通过曲线合理性检查（≤ 115%）；
+  - 事件流程：检测 → 5 帧后决定佐证 → 教学起始快照 → 保持自然结束才算「完成」；
+  - 期间任何被排除的帧都会丢弃该事件，并**回滚**它已教学的内容。
+- **佐证与「水平纪元」（R21–R23）**：只有一个更早、**独立**、已完成的事件，同时满足以下条件，才能佐证新事件：
+  - 位于容差带内（上调 30% / 下调 15%，下限 0.2°）；
+  - 位于当前水平的**同一侧**；
+  - 在水平最近一次移动**之后**完成。
+
+  因此单次假穿越既不能抬高也不能拉低 Max，第一次穿越本身也不会教学 Max。
+- **峰值确认（锁存）**：需同时满足以下条件，确认后持久保存：
+  - ≥ 3 个已完成事件两两相差在 15% 以内；
+  - 曲线顶部不再上升；
+  - 已存在 Max。
+
+  未确认时，发布的是先验窗口（借用的，否则出厂 5/8/10°）乘以只升不降的系数。
+- **穿越门关闭（R29/R30）**：与 Lock/Slip 的开关一致，同样走快照 / 回滚 / 延迟线流程。
+- **碰撞保护**：
+  - `ImpactGuard`：任一轴 > 8 g 不教学；> 3 g 的跳变作废前 5 帧并封锁 1.5 s；偏航残差 ≤ 0.3 g；
+  - 5 帧回溯延迟线；
+  - 事件回滚；
+  - 曲线合理性检查；
+  - 佐证；
+  - 这些保护只影响学习，从不影响输出。
+- **成熟度** = `clamp01(min(观测/50, 弯道/3))`：
+  - 观测 = ≥ 70% peakG 的帧，每秒最多计 10 个；
+  - 弯道 = 超过 70% 后又回落到 40% 以下；
+  - 成熟度驱动 `ColdStartScale` 与手动关键数据的生效，与 Lock/Slip 相同。
+- 窗口质量在未确认时上限为 0.6。学习永不停止。
+
+**路面三分档。** sealed / loose / low-grip。
+
+- 游戏上报的路面只在含义有文档时使用（R13）：rFactor 2 的 `mSurfaceType`，GT7 的 `surfaceType`（仅按名称）；
+- 游戏不上报路面时，路面为「未知」，从不猜测（2026-11-22，所有者要求：「NO NEED TO GUESS」），也不切换档位：此类游戏（FH6、F1、AC等）的全部学习都在起始（sealed）档。此前的抓地推断在FH6的柏油路上每2–5秒就在sealed与loose之间来回切换，最终停在low-grip，学习被分散到三个档位：指示灯随新档位变红、数值不断变化、柏油路窗口偏低。载入时会丢弃此类游戏的loose / low-grip档（窗口、k、速度段），下次保存时写回不含它们的文件；
+- 1 秒迟滞，1.5 秒混合；学习只进入活动档，发布时按权重混合。
+
+**借用档位、冷参考锁存、持久化的已发布窗口（`KeyedSlipAngleLearner`）。**
+
+- 借用档位通过 `ColdStartTierResolver` 解析：Tier 4 同车异路面 / 3 同游戏异车 / 2 异游戏 / 1 出厂值。
+- 借来的窗口同时作为先验和冷参考。本键确认的那一帧，冷参考锁存为刚才发布的窗口，本会话内不再更换。
+- 确认后按 `ColdWarmBlend` 混合，权重平滑增长：10 次会话穿越且质量 ≥ 0.5 时达到 1。
+- `QAdvanceFeedback.Parameters.json` 新增 `SlipAngleLearners`（`RuntimeDocument` 版本 12），保存每个键最后发布的窗口。没有新驾驶数据时，重启后发布的值完全不变。
+
+**关键数据与归一化。**
+
+- Raw.All 上只有一组 Min/Best/Max，沿用 `KeyDataPointSettings` 的槽位模型；Auto/PerGame 标志**按数据源**分别保存（R24）。
+- 范围 0.5–45°，步长 0.1，间隔 ≥ 0.2°，出厂 5/8/10°。
+- Auto 下编辑框只读。手动值需满足 `ManualOverrideGate` 才生效（R28）。
+- N(α)：(0,0)、(Start,15)、(Min,30)、(Best,60)、(Max,80)、(End=1.5×Max,100) 的单调三次曲线。Nᵤ 在 End 之后按每 0.5×Max 增加 20 点继续延伸，只供漂移状态机使用。
+- **起点值（2026-11-19，`docs/slip-angle-design.md` §8）**：`SlipAngleWindow.Start` = ⌊0.5 × Min⌋ 整度，由 Min 推导（不保存、不可编辑）。为 0 时（Min < 2°）**省略**该节点，曲线照旧为 (0,0) → (Min,30)。反函数 `SlipAngleNormalizer.SourceFor` 按同一组节点二分。页签与 ShakeIt 面板显示只读的一行「起点：2°（最小值的 50%）」（`SlipAngleStartText`），或「起点：—（最小值低于 2°）」；页签左图仅在窗口有起点时显示位于 15 的虚线起点标记。
+
+**投影与漂移衰减。**
+
+- 预设：输入 30/60/80，输出 10/20/60，平滑范围 3/6/3（2026-11-22，所有者要求；此前为 30/62/78、10/30/60、3/2/2）；起点输入 **15** → 0（2026-11-19：投影器的起点输入与归一化器的起点节点重合，低于起点的角度投影为 0），End 100 → 100。锚点正好位于学习到的 Best/Max 的映射位置（60/80），因此 Best/Max 在曲线上的读数正好是 20/60，各自位于自身平台的中间。「恢复所有默认设置」和重新选择 Curve 预设都会得到这条曲线；仍保存着旧出厂曲线且未修改的配置会在载入时迁移到新曲线，驾驶者修改过的曲线保持不变。「Linear」预设保留当前起点，因此画出 15 → 100 的直线。
+- 顺序：投影 → 成熟度缩放 → 漂移衰减 → 着陆/车速淡入 → 踏板门 → 脉冲。
+- `DriftAttenuator` 有 Normal / Drifting / Recovering 三个状态。默认值：Hold 250 ms，稳定范围 20 点，降至 40%，用时 120 ms，γ 2，平滑 50 ms，摆动余量 8 点，确认 80 ms，清除所需油门增量 20 点，清除所需油门开度 90%。
+- **作者规则（2026-11-20，`docs/slip-angle-design.md` §9.7）：**
+  - **漂移起点**（`SlipAngleDriftStart`）：角度 `Max(1.2 × Max, Min(30°, 1.5 × Max))` 对应的 Nᵤ，不低于 80（Max 15° → 22.5° = 终点）。此前从 Max（Nᵤ 80）开始计数，过于敏感。
+  - **锁定输出：** Drifting 中输出 = `Min(factor × calcPeak, calc)`，`calcPeak` 为进入漂移以来的最大 calc；进入 Recovering 时锁定 `locked = factor × calcPeak`，此后输出 = `Min(locked, calc)`。角度回落时不再对下降的数值重复缩放：100 降到 40 后保持 40，直到 calc 低于 40 再跟随 calc。
+  - **油门清除：** 漂移标志开启且角度 ≤ Max（平滑 Nᵤ ≤ 80）时，每帧 `ref = Min(ref, 油门)`（首帧以当前油门开始）；当 `油门 > ref + 油门增量` 或 `油门 ≥ 油门开度` 时清除标志。角度回到 Max 以上时保留 ref，清除时丢弃。没有油门读数时不清除；Test Effect 没有油门，因此不使用此规则。
+- **升级规则（R25，最终评审）**：保持窗口内的上升量取 `max(年轻期原始上升, 平滑上升)`，超过稳定范围即判为打转，保持满输出。年轻期原始上升只从 EMA「年轻」时（自构造 / Reset / 着陆播种起 < 3τ）采集的样本开始计算：刚播种的 EMA 会滞后于打转的起始而低估它。EMA 热身后只看平滑上升，因此搓板路、路肩带来的逐帧原始噪声不会阻止已保持的漂移被识别。τ = 0 时原始与平滑是同一序列。
+- Drifting 状态没有「升级退出」（R26）。dt 上限为 `min(0.1 s, HoldSeconds / 2)`（即使最短 0.05 s 的保持也需要两帧）。
+- 间隙：`SlipAngleFrameProcessor.NoteGap`（无游戏 / 暂停 / 菜单）会重置漂移衰减器，与 `Configure` 和切换游戏一致。
+- 已知后果：在默认参数下，比约 80 点/秒更慢的打转被当作漂移（作者待办）。
+
+**发布属性、ShakeIt 效果、测试。**
+
+- `SlipAngle.Raw.All`（度，不可用时为 null）、`SlipAngle.Normalized.All`、`SlipAngle.Projected.All`，外加追加在末尾的 33 个 `Diag.SlipAngle.*` 诊断属性。
+- `QAdvanceFeedbackSlipAngleContainer`：类型名冻结；显示名「Slip Angle」（R37）；单一输出；默认增益 75%（R38）；40/25 Hz；超过 500 ms 的帧输出 0。
+- Test Effect：一个 0 → 3×Max 的滑条（宽 264 px，以适应 ShakeIt 面板），中点有「100%」刻度。它运行真实的归一化、投影与漂移衰减，漂移时圆点从 Max 缓降（R39）。测试期间 Raw/Normalized 读数为 0 或 null。
+
+**G-Force 集成。**
+
+- `IntegrateSlipAngle` 默认开启，旧配置文件缺少该字段时也按开启加载（R31）。`WheelSlipAngleShakeScale` 默认 `DefaultShakeScaleFor(mode)`。
+- 门控：`(锁死/打滑开启 && Max(lock, slip) ≥ T) || (滑移角开启 && angle ≥ T)`。
+- 驱动：各已开启贡献（值 × 各自强度）中的最大值。
+- 下游的模式、波形、手感、收尾与重新触发都不变。G-Force 测试新增滑移角滑条。
+
+### 共享核心（行为保持不变地提取）
+
+| 核心 | 提取自 | Lock/Slip | Slip Angle | 证明 |
+|---|---|---|---|---|
+| `CrossingGate` + `CrossingGateParameters` | `SlipCrossingGate` / `LockCrossingGate`（现为保存出厂参数的薄包装） | `.Slip` / `.Lock` | `.SlipAngle` | `CrossingGateEquivalenceTests`：每个包装 200 种子 × 3000 帧 + 阈值边界流，对照 `Frozen\FrozenSlipCrossingGate` / `FrozenLockCrossingGate` |
+| `CorroboratedLevelEstimator` + `CorroborationParameters` | `GripLearner` 的自适应峰值逻辑 | `GripLearnerDefaults` | Max（度） | `CorroboratedLevelEstimatorEquivalenceTests`：200 种子 × 5000 值，对照 `FrozenGripLearnerCorroboration` |
+| `ColdStartTierResolver` | `KeyedScaleLearner` 的借用档位扫描 | `KeyedScaleLearner.ResolveTier` | `KeyedSlipAngleLearner` | `ColdStartTierResolverEquivalenceTests`：300 种子 × 600 次操作，对照 `FrozenColdStartTierResolution` |
+| `ImpactGuard` + `ImpactGuardParameters` | 新增 | 未接入（有 `Disabled`） | `.SlipAngle` | `ImpactGuardTests`（没有旧代码可冻结） |
+
+`QAdvanceFeedback.Tests\Frozen\` 中的冻结副本是刻意保留的测试基准（R1）。所有原有的 Lock/Slip 测试未经修改全部通过。
+
+### Lock/Slip 新增：测试分组滑条与回退警告
+
+- **分组滑条**（`TestGroupSliders`、`KeyDataNormalizationInverse`）：
+  - Mono 显示「单通道」，FrontRear 显示「前/后通道」，LeftRight 显示「左/右通道」，Corners 不显示；四个车轮滑条始终保留；
+  - 分组值由计算得到：`N⁻¹(Aggregate(N(各轮)).<组>)`，`N⁻¹` 用二分法求能达到目标的最小源值；
+  - 圆点 x = 分组值，y = 由四轮计算的投影，因此总是落在曲线上（属性测试保证）。
+- **回退警告**（`BranchNativeness`、`NativenessBroadcaster`、`FallbackWarningViewModel`）：
+  - 选中的 Raw 分支若是车速/转速估算，在 Wheel Lock/Slip 页签和对应 ShakeIt 面板显示橙色提示；
+  - 仅 Plugin Internal 数据源显示；
+  - 0.5 秒去抖；
+  - 没有游戏运行时隐藏。
 
 ## SimHub 依赖型 vs. 纯净/可测试型
 
 这条边界正是让本插件几乎整体都能在不启动 SimHub 进程的情况下完成单元测试的关键：
 
-- **SimHub 依赖型**（引用了 `SimHub.Plugins`/`GameReaderCommon`，无法在真实 SimHub 宿主之外构造）：`QAdvanceFeedback.cs`（插件的组合根）、`SimHubTelemetryAdapter.cs`、`MotorsExportAvailabilityProvider.cs`、`PropertyPickerLauncher.cs`、`SimHubScriptEditor.cs`、`SimHubExpressionEvaluator.cs`、`WheelSourceResolver.cs`、`Settings/SettingsControl.xaml(.cs)`。
-- **纯净/可测试型**（纯 C#，完全不引用 SimHub）：`Core\` 下的一切（第 1/3/4/5 层、G 力），加上设置 POCO 和 `ConfigStore`/`RuntimeStore`（它们把日志记录抽象为普通的 `Action<string>` 委托，而不是直接引用 SimHub 的日志对象）。
+- **SimHub 依赖型**（引用了 `SimHub.Plugins`/`GameReaderCommon`，无法在真实 SimHub 宿主之外构造）：`QAdvanceFeedback.cs`（插件的组合根）、`SimHubTelemetryAdapter.cs`、`PropertyPickerLauncher.cs`、`SimHubScriptEditor.cs`、`SimHubExpressionEvaluator.cs`、`WheelSourceResolver.cs`、`QAdvanceFeedback.SlipAngle.cs` / `QAdvanceFeedback.Clutch.cs`（组合根的 partial）、`ViperAvailabilityProvider.cs`、`Integration\ShakeIt\` 下的全部文件、`Settings/SettingsControl.xaml(.cs)`（薄宿主）、`QAdvanceFeedback.SettingsPage.cs` 与 `Settings/NumericEditor.xaml(.cs)`。`Ui\Views\` 中的 WPF 视图不引用 SimHub 类型，但因为是 WPF，net8 测试同样不编译它们。
+- **纯净/可测试型**（纯 C#，完全不引用 SimHub）：`Core\` 下的一切（第 1/3/4/5 层、G 力、Slip Angle、离合器），`Ui\Mvvm\` 与 `Ui\ViewModels\`、`SlipAngleRawSources.cs`，加上设置 POCO 和 `ConfigStore`/`RuntimeStore`（它们把日志记录抽象为普通的 `Action<string>` 委托，而不是直接引用 SimHub 的日志对象）。
 
 测试项目（`QAdvanceFeedback.Tests`）通过把这些纯净文件直接作为源码链接编译进一个零 SimHub 包引用的 net8.0 程序集来强制这一点，而不是引用已构建好的 net48 插件 DLL——一旦有 SimHub 依赖悄悄混入了本应保持纯净的文件，测试构建会立即失败，而不只是一个没人检查的运行时假设。
 
 ## 逐文件地图
 
+已于 2026-11-19 对照实际目录核实（分支 `feature/slip-angle`）。`QAdvanceFeedback\` 下的每个 `.cs` / `.xaml` 文件都列在下面。
+
 ### `QAdvanceFeedback\`（组合根、第 2 层、SimHub 相关辅助类）
 
 | 文件 | 层 | 用途 |
 |---|---|---|
-| `QAdvanceFeedback.cs` | 组合根 | `IPlugin`/`IDataPlugin`/`IWPFSettingsV2` 入口点——每一帧把所有层串联在一起。 |
-| `SimHubTelemetryAdapter.cs` | 2 | 把 SimHub 的 `GameData` 映射到第 1 层的 `TelemetrySample`；捕获原始诊断快照。 |
+| `QAdvanceFeedback.cs` | 组合根 | `IPlugin`/`IDataPlugin`/`IWPFSettingsV2` 入口，每帧把各层串起来。 |
+| `QAdvanceFeedback.SettingsPage.cs` | 组合根（partial） | 设置页：唯一的 `SettingsPageViewModel`，在第一次 `GetWPFSettingsControl` 时创建，在 `End()` 中释放；SimHub 每次请求的视图都是绑定到它的薄 `SettingsControl`。`SettingsPageStateChanged` 取代了插件对页面的所有推送调用。 |
+| `QAdvanceFeedback.SlipAngle.cs` | 组合根（partial） | Slip Angle 组合：读取第 2 层输入，每帧调用一次 `SlipAngleFrameProcessor`（Lock/Slip Projected 之后、G-Force 之前），发布结果、维护 UI 快照、去抖档位（警告）与身份档位（关键数据槽位）、持久化学习器；自带 try/catch。 |
+| `QAdvanceFeedback.Clutch.cs` | 组合根（partial） | 离合器结合点：解析离合器输入、发布 `Clutch.Bite.Output`、学习结合点。 |
+| `SimHubTelemetryAdapter.cs` | 2 | 把 SimHub 的 `GameData` 映射为第 1 层的 `TelemetrySample`，捕获原始诊断快照，并提供 Slip Angle 所需的车身输入。 |
 | `ITelemetryAdapter.cs` | 2（契约） | `SimHubTelemetryAdapter` 实现的接口。 |
-| `MotorsExportAvailabilityProvider.cs` | 设置相关 | 把一个存活的 `PluginManager` 适配为 `MotorsExportAvailabilityResolver`，供设置界面的内联提示使用。 |
-| `WheelSourceResolver.cs` | 第 4 层输入 | 把 `WheelChannelSettings` 的某个数据源字段（普通属性、JavaScript 或 NCalc）解析为一个实时的 0-100 读数。 |
-| `PropertyPickerLauncher.cs` / `SimHubScriptEditor.cs` / `SimHubExpressionEvaluator.cs` | 设置相关 | 供设置界面的选择器/脚本编辑器按钮及表达式求值使用的 SimHub 反射辅助类。 |
-| `PropertyPublisher.cs` | 发布边界 | 注册每一个发布到 SimHub 的属性（`Register`/`AttachTier`/`AttachTierNullable`）——该类中依赖 SimHub `IPlugin`/`AttachDelegate` 的那一半；仅限 net48。 |
-| `PropertyPublisher.State.cs` | 发布边界 | 同一个 `partial class` 中不依赖 SimHub 的那一半：每一个后备字段、每一个 `Update*` setter、每一个 `*Snapshot` 访问器，以及 `SnapshotAllValuesForCsv` 本身——之所以拆分出来，是因为这一半（CSV 表头/数据行列数不一致的问题可能就出在这里）可以被链接编译进测试项目直接验证。 |
-| `CsvExportWriter.cs` | 诊断 | 在「Export session to CSV」开启时，把每一个已发布的属性写入 CSV 文件。 |
-| `ConfigStore.cs` / `RuntimeStore.cs` | 持久化 | 设置与学习到的运行时状态的 JSON 加载/保存。 |
+| `SlipAngleRawSources.cs` | 2（纯净） | 按游戏的滑移角 raw 数据表（路径、轮序、单位、变换、raw 路面路径）及 `SlipAngleRawSourceReader`；不依赖 SimHub，链接编译进测试。 |
+| `KnownSourceColdStartReference.cs` | 第 4 层支持 | 依据组合 `SourceIdentity` 判断本插件对哪种输入源有冷启动实测依据。 |
+| `ViperAvailabilityProvider.cs` / `ViperStore.cs` | 设置相关 / 持久化 | viper4gh CalcLngWheelSlip 插件的实时检测（故障记入健康子系统 `ViperAvailability`）；`QAdvanceFeedback.Viper.json` 读写。 |
+| `WheelSourceResolver.cs` | 第 4 层输入 | 把数据源字段（属性、JavaScript 或 NCalc）解析为实时 0-100 读数。ShakeIt 内置数据源从不经过它（读 tap，或按通道回退到 Raw）。 |
+| `PropertyPickerLauncher.cs` / `SimHubScriptEditor.cs` / `SimHubExpressionEvaluator.cs` | 设置相关 | 属性选择器、脚本编辑器与表达式求值的 SimHub 反射辅助类。 |
+| `PropertyPublisher.cs` | 发布边界 | 注册所有发布的 SimHub 属性（依赖 SimHub 的一半）。 |
+| `PropertyPublisher.State.cs` | 发布边界 | 不依赖 SimHub 的一半：所有字段、`Update*`（含 `UpdateSlipAngle`）、快照与 CSV 行；链接编译进测试。 |
+| `CsvExportWriter.cs` | 诊断 | 开启「导出会话为 CSV」时写出所有发布属性。 |
+| `ConfigStore.cs` / `RuntimeStore.cs` | 持久化 | 设置与学习状态的 JSON 读写（含 `SaveSlipAngleLearners`）。 |
+| `ShakeItCalibrationJson.cs` / `ShakeItPrecalibrationConverter.cs` | 持久化 | 第 3 层 ShakeIt 标定类型的短名序列化规则；SimHub 预标定的一次性导入。 |
 
 ### `QAdvanceFeedback\Core\`（第 1 层 + 共享基础组件）
 
 | 文件 | 层 | 用途 |
 |---|---|---|
-| `ITelemetryFrame.cs` / `TelemetryFrame.cs` | 1 | 与具体游戏无关的一帧遥测数据。 |
-| `ITelemetrySample.cs` / `TelemetrySample.cs` | 1 | 当前帧 + 上一帧 + 经过的时间。 |
-| `Corners.cs` | 共享 | 四轮数值结构体，固定的 FL/FR/RL/RR 索引顺序。 |
-| `ClampMath.cs` | 共享 | 发布边界处的截断（`To0100`/`To01`）及安全转换辅助方法。 |
-| `MathHelpers.cs` | 共享（第 3 层公式） | Clamp/Map/Offset/分段映射等重映射辅助方法。 |
-| `AggregationWeights.cs` / `Aggregator.cs` / `WheelAggregate.cs` | 共享（第 3/4/5 层） | 把四个逐轮数值组合成 Front/Rear/Left/Right/All 的、具有物理依据的轴间/左右混合。 |
-| `ILegacyWheelLockSlipEngine.cs` / `LegacyWheelLockSlipResult.cs` / `WheelLegacyResult.cs` / `LegacyThresholds.cs` | 3（契约） | `RawCalculatorEngine` 实现的公开契约，以及为其把关的、车主可配置的踏板阈值。 |
-| `WheelSlipBranchNames.cs` / `WheelSlipBranchSelector.cs` | 3（选择） | 诊断用分支名称常量，以及纯粹的能力优先级选择器。 |
-| `RawWheelTelemetrySnapshot.cs` / `RawWheelTelemetryBuilder.cs` | 2/3 边界 | 第 3 层调度所读取的逐轮原始遥测+能力快照，以及其 null-vs-zero 的判定逻辑。 |
-| `IValueDistributionLearner.cs` | 3（契约） | `StreamingPercentileLearner` 实现的学习器契约。 |
-| `OnlineDistributionLearner.cs` | 4（KeyedScaleLearner 支持） | 用于按数据源缩放标定机制的、独立的流式均值/方差学习器。 |
-| `PublishedPropertyNames.cs` / `AllPublishedProperties.cs` | 发布边界 | 每一个已发布属性的名称，产品属性与诊断属性均包含。 |
-| `TelemetryLearningGate.cs` | 4/G 力 | 「这一帧对跨帧学习器而言是否是有效证据」的共享判定门（维修站/回放/会话重启）。 |
-| `AccelerationUnits.cs` | 2 | m/s² 与 G 之间的换算，只在 SimHub 相关的边界处使用一次。 |
-| `RobustBandEstimator.cs` | 共享（G 力） | 基于索引的样本池估计器（剔除最高的离群值，截取剩余部分的一段样本池，混合样本池自身的最大值/均值），供 `GForceMaxLearner` 用于自动最大 G 值参考——见 docs\robust-auto-gforce-report.md。也曾评估用于 Normalized 层的 `GripLearner`/`KeyedScaleLearner`，但未被采用（具体测量原因见该报告）。 |
-| `ColdWarmBlend.cs` | 共享（第 4 层支持） | `GripLearner` 与 `KeyedScaleLearner` 共用的、按分散度加权的冷/热持久化机制——依据本局实时证据自身的变异系数（而不仅仅是样本数量）来权衡它与持久化的历史值，因此噪声较大的会话会倾向于信任持久化的数值，而不是靠数量把它覆盖掉。 |
-| `KeyedTelemetrySupport.cs` | 2/3 边界 | 仅按游戏（而非按车辆）检测某款游戏是否真正支持那个没有对应 SimHub 能力标志位的遥测字段（`WheelOnLooseSurfaceFrontLeft`）——只有在出现持续的 `true` 证据后才会把某款游戏判定为「支持」，并且一旦判定后，无论在本局会话内还是跨越重启，都不会再被撤销。 |
+| `ITelemetryFrame.cs` / `TelemetryFrame.cs` | 1 | 与游戏无关的一帧遥测（Slip Angle 新增：前向局部速度、偏航率、腾空、路肩、垂直 G、路面抓地提示）。 |
+| `ITelemetrySample.cs` / `TelemetrySample.cs` | 1 | 当前帧 + 上一帧 + 经过时间。 |
+| `Corners.cs` | 共享 | 四轮数值结构，固定 FL/FR/RL/RR 顺序。 |
+| `ClampMath.cs` / `MathHelpers.cs` | 共享 | 发布边界的限幅与安全转换；第 3 层公式的映射辅助。 |
+| `AggregationWeights.cs` / `Aggregator.cs` / `WheelAggregate.cs` | 共享 | 把四个车轮值合成为 Front/Rear/Left/Right/All 的轴/侧混合。 |
+| `ILegacyWheelLockSlipEngine.cs` / `LegacyWheelLockSlipResult.cs` / `WheelLegacyResult.cs` / `LegacyThresholds.cs` | 3（契约） | `RawCalculatorEngine` 的公开契约与踏板阈值。 |
+| `WheelSlipBranchNames.cs` / `WheelSlipBranchSelector.cs` | 3（选择） | 分支名称常量与纯能力优先级选择器。 |
+| `BranchNativeness.cs` | 3（分类） | 选中的 Lock/Slip 分支是原生信号、车速/转速回退估算还是未知——驱动橙色回退警告。 |
+| `NativenessBroadcaster.cs` | 发布边界 | 发布 Lock/Slip 原生性，稳定 0.5 秒后才通知；无游戏时立即清除。 |
+| `RawWheelTelemetrySnapshot.cs` / `RawWheelTelemetryBuilder.cs` | 2/3 边界 | 逐轮原始遥测与能力快照，及其 null 与零的区分逻辑。 |
+| `IValueDistributionLearner.cs` / `OnlineDistributionLearner.cs` | 3/4 | 学习器契约；按数据源缩放标定用的流式均值/方差学习器。 |
+| `PublishedPropertyNames.cs` / `AllPublishedProperties.cs` | 发布边界 | 所有发布属性名（Slip Angle 的追加在末尾）。 |
+| `TelemetryLearningGate.cs` | 4/G 力/Slip Angle | 共享的「此帧能否作为学习证据」门（维修区/回放/重启）。 |
+| `AccelerationUnits.cs` | 2 | m/s² 与 G 的换算。 |
+| `RobustBandEstimator.cs` | 共享（G 力） | `GForceMaxLearner` 使用的鲁棒样本池估计器。 |
+| `ColdWarmBlend.cs` | 共享 | 按分散度加权的冷/热混合，供 `GripLearner`、`KeyedScaleLearner` 与 Slip Angle 发布窗口使用。 |
+| `KeyedTelemetrySupport.cs` | 2/3 边界 | 按游戏、凭持续证据晋升 `WheelOnLooseSurfaceFrontLeft` 支持，永不降级。 |
 
-### `QAdvanceFeedback\Core\RawCalculator\`（第 3 层具体引擎）
-
-| 文件 | 用途 |
-|---|---|
-| `RawCalculatorEngine.cs` | `ILegacyWheelLockSlipEngine` 的实现——按帧调度，持有每一个有状态的学习器/滤波器。 |
-| `BrakeSpeedSlipModel.cs` | 基于踏板+车速+转速推导的逐轮 Lock/Slip 模型（在没有逐轮遥测数据时使用的分支）。 |
-| `BrakingVsSpeedModel.cs` | 仅基于踏板+车速的整车级 Lock/Slip 模型——SimHub `GetSimpleBraking` 的忠实移植；原有的“低速修正”已在 1.0.7.0 移除（该文件内附有实测差异对照表）。 |
-| `DispatchBranchFormulas.cs` | 其余各分支公式（车轮转速、车轮速度、预先标定的打滑、学习到的分布、车轮速度差值）。 |
-| `WheelRotationLockFilter.cs` | 基于车轮转速与车速对比、经 EMA 平滑的逐轮抱死估计。 |
-| `StreamingPercentileLearner.cs` | `IValueDistributionLearner` 的具体实现——一个分桶的运行中直方图（均值 + 最近秩百分位）。 |
-
-### `QAdvanceFeedback\Core\RawCalculator\Calibration\`（ShakeIt 标定移植，1.0.7.0）
-
-此目录下的每一个类型都是同名 SimHub 类型的移植，来源于对随包发布的 `SimHub.Plugins.dll` 的反编译。它们的存在意义在于：让第 3 层与 ShakeIt 在相同输入下得出相同的**数值**，而不仅仅是相同的公式。
+### `QAdvanceFeedback\Core\RawCalculator\`（第 3 层）与 `Calibration\`（ShakeIt 标定移植，1.0.7.0）
 
 | 文件 | 用途 |
 |---|---|
-| `ICalibrationData.cs` | 实时标定与随包预置共享的契约。注意 `GetPercentile` 返回普通 `double` 且永不为 null——这正是关键所在。 |
-| `CalibrationData.cs` | 实时累积的直方图：自适应分桶阶梯、仅计正值的点数器、百分位记忆化，以及使其从第一个样本起就能给出答案的“运行最大值回退”。 |
-| `PreloadedCalibrationData.cs` | 随包的分游戏预置：`MeasuredMaximum x CorrectionFactor x pct/100`，与实时证据按固定 0.25 混合——是永久比例，而非逐渐接管。`GetAverage` 有意抛出异常。 |
-| `CalibrationDataProvider.cs` | 持有全部标定，以 `track;car;metric` 为键。将四个轮子汇聚为**单一** `Slip` 标定，而 `RPSToSpeed` 按轴拆分——这是 SimHub 自身的作用域划分，也是早期逐轮 Lock 学习器被废弃的原因。 |
-| `GameCalibrationBounds.cs` | 在 SimHub 文件中与预置并列的三个分游戏车轮速差边界值。 |
-| `TimeMovingAverage.cs` | 逐挡位的车轮速差参考值。本目录中**唯一**基于调用方式重建而非反编译得到的类型——它位于本项目不随包发布的 `WoteverCommon` 中；其内部说明阐述了为何这在此调用处不会产生影响。 |
+| `RawCalculatorEngine.cs` | 每帧调度并持有所有有状态学习器/滤波器。 |
+| `BrakeSpeedSlipModel.cs` / `BrakingVsSpeedModel.cs` / `DispatchBranchFormulas.cs` / `WheelRotationLockFilter.cs` / `StreamingPercentileLearner.cs` | 各分支公式与滤波器（详见英文版）。 |
+| `Calibration\ICalibrationData.cs` / `CalibrationData.cs` / `PreloadedCalibrationData.cs` / `CalibrationDataProvider.cs` / `GameCalibrationBounds.cs` / `TimeMovingAverage.cs` | SimHub 标定机制的忠实移植（详见英文版）。 |
 
-### `QAdvanceFeedback\Core\Normalized\`（第 4 层）
+### `QAdvanceFeedback\Core\Normalized\`（第 4 层与共享核心）
 
 | 文件 | 用途 |
 |---|---|
-| `NormalizedWheelLockSlipEngine.cs` / `NormalizedWheelLockSlipResult.cs` | 第 4 层引擎及其发布的结果形状。 |
-| `SlipCrossingGate.cs` / `LockCrossingGate.cs` | 决定哪些「处于极限」的时刻有资格教学 SMax 的交叉门控（1.0.8）。**刻意实现为两个类而非一个共享类**：作者要求两个通道采用同一套机制但各自独立实现，以便任意一侧都能单独停用。完整规格见 `docs\slip-smax-crossing-gate-design.md`。 |
-| `GripLearner.cs` / `KeyedGripLearner.cs` / `GripLearnerKeyMigration.cs` | 相对于本车学习到的峰值参考，按游戏+车辆+数据源（+路面）分别建键，并为旧的持久化键形状提供迁移支持。 |
-| `KeyedScaleLearner.cs` | 按数据源分别做的缩放标定，锚定在一个共享的物理参考值上。 |
-| `SourceIdentity.cs` | 根据某个通道的四个 Source/ScriptType 字段计算出一个稳定的复合键。 |
-| `SurfaceLooseFraction.cs` | 连续的密实/松散路面混合权重。 |
-| `LongitudinalDirectionResolver.cs` | 根据车速的差分结果，判定 Slowing/SpeedingUp/Unknown。 |
-| `AchievedMotion.cs` | 供诊断使用的、按降级等级划分的 G 力幅值判定。 |
+| `NormalizedWheelLockSlipEngine.cs` / `NormalizedWheelLockSlipResult.cs` | 第 4 层引擎及结果。 |
+| `CrossingGate.cs` | **共享核心**：参数化的穿越门（`.Lock` / `.Slip` / `.SlipAngle`，`TeachingWeightMode`），窗口的开启已证明与提取前的门逐位一致；自 2026-11-19 起被教学的数值有意不同（回溯停在上升段内、无实时回退、Lock/Slip 的 `LearnCeiling` 为 95），见 `docs\slip-smax-crossing-gate-design.md` §10。 |
+| `SlipCrossingGate.cs` / `LockCrossingGate.cs` | `CrossingGate` 的薄包装；其公开常量是权威来源（`CrossingGateParameters.LockShipped` / `SlipShipped` 由它们构建）；仍为两个类，便于单独关闭一侧。 |
+| `CorroboratedLevelEstimator.cs` | **共享核心**：从 `GripLearner` 提取的证据加权、需佐证的水平估计器；Lock/Slip 用 g，Slip Angle 的 Max 用度。 |
+| `ColdStartTierResolver.cs` / `ColdStartTier.cs` | **共享核心**：从 `KeyedScaleLearner` 提取的借用档位解析器；档位枚举与 `ColdStartTierFloors`。 |
+| `ImpactGuard.cs` | **共享核心（新增）**：碰撞/接触保护；Slip Angle 启用，Lock/Slip 未接入。 |
+| `GripLearner.cs` / `KeyedGripLearner.cs` / `GripLearnerKeyMigration.cs` | 相对本车学习的峰值参考及键迁移。 |
+| `KeyedScaleLearner.cs` / `LockAnchorLearner.cs` | 按数据源缩放标定（Slip 的跨通道借用经解析器 `SetCrossChannelLockIdentityResolver` 决定）；仅 Wheel Lock 的 S75/S90 锚点学习。 |
+| `PluginInternalSourceIdentity.cs` | 每个通道的内部（Plugin Internal）键，等于 `RawSourceFallback.RawIdentity`；引擎每帧都喂它。 |
+| `InternalSourceKeyMigration.cs` | 纯净的一次性加载迁移：把已退役的 `__layer3_raw_fallback__` 键并入内部键（缩放、锚点、抓地）。 |
+| `CrossChannelSourcePairing.cs` | 纯净：Slip 键可以从哪个 Lock 键借用冷启动依据（仅同类型数据源）。 |
+| `ManualOverrideGate.cs` | 手动关键数据的生效门（30 秒行驶 + 交接置信度 ≥ 0.95），Slip Angle 原样复用。 |
+| `SourceIdentity.cs` / `SurfaceLooseFraction.cs` / `LongitudinalDirectionResolver.cs` / `AchievedMotion.cs` | 数据源身份、Lock/Slip 松散路面权重、纵向方向、诊断用 G 值分级。 |
+
+### `QAdvanceFeedback\Core\SlipAngle\`（Slip Angle 栈）
+
+| 文件 | 用途 |
+|---|---|
+| `SlipAngleInput.cs` / `SlipAngleUnit.cs` | 一帧 raw 输入（null 表示不可用）；单位枚举。 |
+| `SlipAngleNativeSupport.cs` | 原生晋升、45° 封锁、按事件投票的单位检测。 |
+| `YawSignDetector.cs` | 学习每款游戏的相对偏航符号 k。 |
+| `SlipAngleGate.cs` | 触发方式与阈值、车速淡入、腾空、着陆抖动、小跳跃排除。 |
+| `SlipAngleRawCalculator.cs` / `SlipAngleRawResult.cs` | 逐轮 → 轴均值 → 前轴 × k → Max/Min 混合为 Raw.All；车身侧滑回退。 |
+| `GripCurveBins.cs` | 0.25° 分格的衰减 P90 抓地曲线、平台/Best/Min 与上升检查。 |
+| `SlipAngleWindow.cs` | 以度为单位的 Min/Best/Max 窗口（End = 1.5 × Max），推导出的起点（⌊0.5 × Min⌋，Min < 2° 时为空），出厂 5/8/10。 |
+| `SlipAngleStartText.cs` | 页签与面板上只读的「起点：N°（最小值的 50%）」/「起点：—（最小值低于 2°）」一行。 |
+| `SlipAngleWindowLearner.cs` | 单键学习器：穿越教学 Max、佐证与水平纪元、延迟线与回滚、峰值确认、成熟度、窗口质量。 |
+| `KeyedSlipAngleLearner.cs` | 按 (游戏, 车, 源/目标, 路面) 的学习器集合、借用、冷参考锁存、热权重、k、持久化。 |
+| `SurfaceBucketClassifier.cs` | 三档路面：只使用游戏上报的路面（rF2/GT7）；否则为未知，从不猜测或切换。切换车辆与切换游戏一样会重新开始（2026-11-22）。 |
+| `SlipAngleNormalizer.cs` | N(α) 与 Nᵤ(α)，含 (Start, 15) 节点；反函数 `SourceFor`。 |
+| `SlipAngleDriftStart.cs` | 漂移起点角 `Max(1.2 × Max, Min(30°, 1.5 × Max))` 及其 Nᵤ（不低于 80）。 |
+| `ISlipAngleKeyData.cs` | 处理器所需的关键数据接口（Core 不依赖 Settings）。 |
+| `SlipAngleFrameProcessor.cs` | 纯净的每帧流水线。 |
+| `SlipAngleIdentityTier.cs` | 选择关键数据身份（Native / Fallback 槽位）的档位：当前游戏本次会话中最后一次已确认的档位，暂停 / 菜单时保持，切换游戏时重置。 |
+| `SlipAngleKeyDataModel.cs` | Slip Angle 关键数据的唯一显示规则（与 Lock/Slip 相同）：完全相同键的封顶窗口（`LearnedWindow`）、默认值、输入框显示什么（`Shown`）、写入所显示的值（`TrySeed`、`SlipAngleDisplayRuleKeyData`），以及显示上下文（`SlipAngleKeyDataContext`，持久化最后的游戏/车/档位，用于重启后的显示）。 |
+| `SlipAngleFrameResult.cs` / `SlipAngleStatus.cs` | 每帧不可变结果；UI 状态。 |
+| `SlipAnglePublishedNames.cs` | 三个产品属性与 33 个诊断属性（CSV 顺序）。 |
 
 ### `QAdvanceFeedback\Core\Projection\`（第 5 层）
 
 | 文件 | 用途 |
 |---|---|
-| `ProjectedWheelLockSlipEngine.cs` / `ProjectedWheelLockSlipResult.cs` | 第 5 层引擎及其结果形状。 |
-| `OutputProjector.cs` / `MonotoneCubicCurve.cs` / `PiecewiseCurve.cs` / `ProjectorSettings.cs` / `ProjectorAnchorEditor.cs` | 驾驶者可编辑的曲线及其设置/界面编辑辅助类。 |
-| `PulseGenerator.cs` / `PulseSettings.cs` | 可选的「达到最大值时脉冲」阶段。 |
+| `ProjectedWheelLockSlipEngine.cs` / `ProjectedWheelLockSlipResult.cs` | 第 5 层引擎及结果。 |
+| `OutputProjector.cs` / `MonotoneCubicCurve.cs` / `PiecewiseCurve.cs` / `ProjectorSettings.cs` / `ProjectorAnchorEditor.cs` | 可编辑曲线及其设置/编辑辅助（新增 `ProjectionChannel.SlipAngle` 预设）。 |
+| `PulseGenerator.cs` / `PulseSettings.cs` | 可选的「最大值时脉冲」。 |
+| `ColdStartScale.cs` | 冷启动体感缩放，Lock/Slip 与 Slip Angle 共用。 |
+| `SlipAngleProjectedEngine.cs` | Slip Angle 第 5 层顺序：投影 → 成熟度缩放 → 漂移 → 淡入 → 踏板门 → 脉冲。 |
+| `DriftAttenuator.cs` / `DriftSettings.cs` | 漂移衰减状态机及其参数。 |
 
-### `QAdvanceFeedback\Core\GForce\`
-
-| 文件 | 用途 |
-|---|---|
-| `GForceEngine.cs` / `GForceOutput.cs` / `GForcePublishedNames.cs` | 洗出式 G 力引擎及其发布的 8 通道输出。 |
-| `GForceMaxLearner.cs` | 通过 `RobustBandEstimator`，在一个 2 分钟实时窗口内学习每款游戏/每辆车的加速/刹车最大值，没有最小样本数量门槛。 |
-| `GForceShake.cs` | 「Integrate Wheel Lock and Slip」抖动调制：区间放置（平移而非压缩）以及 1.0.8 的 `SineHoldWave`——一条在两端各带停留的正弦波，周期恒为 1/f。 |
-| `ShakeFeeling.cs` | 抖动进行时成对两侧的关系（1.0.8）——反相（出厂默认）、同相或错相。取代已退役的「Both-sides blend（双侧混合，%）」数值框；`Blending` 固定使用自己的 50% 停留，UI 也会为它隐藏停留控件。 |
-| `ShakeApplyMode.cs` | 该抖动在 8 个震动垫间的分配方式（1.0.8）——按通道、全通道跟随 G 力、全通道仅按抱死/打滑，或 **G 力与抱死/打滑取较大者**（出厂默认）：每个震动垫从 0 摆动到当前较强的提示值，两者互不掩盖。两种由车轮驱动的模式采用**零下限**（车轮数值即为整个行程）；两种以 G 力为中心的模式仍围绕该垫当前水平抖动。 |
-
-### `QAdvanceFeedback\Core\Health\`（韧性模型支持）
+### `QAdvanceFeedback\Core\GForce\`、`Clutch\`、`ShakeItEffects\`、`Viper\`、`Health\`、`MotorsExport\`、`Localization\`、`Runtime\`
 
 | 文件 | 用途 |
 |---|---|
-| `HealthRegistry.cs` | 一个小型、纯净、不依赖 SimHub 的注册表，每一个被加固的边界都会从自己的 catch 块内向它上报——绝不主动上报，绝不在每一帧都宣称「一切正常」。 |
-| `HealthEntry.cs` | 一条注册表记录：子系统名称、严重程度、一个本地化键、原始异常详情、首次发生时间、发生次数，以及可能的原因是否是 SimHub 兼容性问题。 |
-| `HealthSeverity.cs` | `Degraded`/`Failed` 严重程度枚举。 |
-| `HealthSubsystems.cs` | 每个上报点都会用到的一组固定子系统名称常量，确保同一个子系统再次上报时只会更新已有的记录，而不是让注册表不断增长。 |
-| `SafeCall.cs` | `PropertyPublisher.AttachSafe` 用来包裹每一个已发布属性取值逻辑的 `SafeCall.Value` 包装器，使得单个取值逻辑抛出异常时，只会让那一个属性降级为「无值」。 |
-
-### `QAdvanceFeedback\Core\MotorsExport\`
-
-| 文件 | 用途 |
-|---|---|
-| `MotorsExportPropertyNames.cs` | SimHub 自身 ShakeIt Motors 导出属性的名称形状（必须与 SimHub 的真实 API 保持一致——见 clean-room-restructure 报告中关于 ShakeIt 清理部分的说明）。 |
-| `MotorsExportAvailabilityResolver.cs` | 纯粹的「四个车轮的导出属性当前是否都可用」检查。 |
-
-### `QAdvanceFeedback\Core\Localization\`
-
-| 文件 | 用途 |
-|---|---|
-| `Strings.cs` / `StringTableEn.cs` / `StringTableZhHans.cs` | 设置界面自己的字符串表（英文/简体中文）。 |
-
-### `QAdvanceFeedback\Core\Runtime\`
-
-| 文件 | 用途 |
-|---|---|
-| `RuntimeDocument.cs` / `RuntimeCache.cs` | 持久化的学习状态文档形状，及其内存中带脏标记跟踪的缓存。 |
+| `GForce\GForceEngine.cs` / `GForceOutput.cs` / `GForcePublishedNames.cs` / `GForceMaxLearner.cs` / `GForceShake.cs` / `ShakeFeeling.cs` / `ShakeApplyMode.cs` | G 力引擎（新增 `IntegrateSlipAngle`、`WheelSlipAngleShakeScale`）、最大值学习、抖动、手感与模式。 |
+| `Clutch\ClutchBiteEngine.cs` / `ClutchBiteCurve.cs` / `ClutchBiteDetector.cs` / `ClutchBiteLearner.cs` / `ClutchLearningParameters.cs` | 离合器结合点。 |
+| `ShakeItEffects\NativeEffects.cs` / `ToneDefaults.cs` / `EffectRouting.cs` / `FrameSnapshot.cs` / `SlipAngleEffectOutput.cs` / `GraphPoint.cs` / `TestAwareOutputGate.cs` / `TestEffectSession.cs` / `ShakeItTapPropertyNames.cs` / `ShakeItTapValues.cs` | 原生 ShakeIt 效果中不依赖 SimHub 的部分：效果清单与默认增益（Lock/Slip/Slip Angle 75%）、音调默认值、路由、500 ms 过期规则、Slip Angle 输出、测试会话、SimHub 自带抱死/打滑值（含按通道的游戏支持与游戏 id）。 |
+| `ShakeItEffects\ShakeItSourceAvailability.cs` | 按通道的 ShakeIt 数据源状态机（NotSetUp / SetUpIdle / Supported / NotSupported）、0.5 秒广播器，以及可测试的配置文件检查逻辑（`IShakeItProfileReader`、`ShakeItProfileInspection`）。 |
+| `ShakeItEffects\ShakeItSourceResolution.cs` | 纯净的按通道路由（Configured / ShakeIt 内置 / Raw 回退）、一帧的数值与身份、规范 ShakeIt 身份。 |
+| `ShakeItEffects\ShakeItAlgorithm.cs` | ShakeIt 算法默认值、阈值 → 过滤器映射、指纹（`#alg=`）、静音模拟、不可变输入/快照。 |
+| `Viper\ViperAvailabilityResolver.cs` / `ViperDocument.cs` / `ViperPropertyNames.cs` / `ViperSupportedGames.cs` | viper4gh 数据源支持。 |
+| `Health\HealthRegistry.cs` / `HealthEntry.cs` / `HealthSeverity.cs` / `HealthSubsystems.cs` / `SafeCall.cs` | 健康状态注册表。子系统：`ScriptEditor`、`PropertyPicker`、`ExpressionEvaluator`、`ViperAvailability`（2026-11-19 由 `ShakeItExport` 更名）、`ShakeItEffects`、`ShakeItProfile`（2026-11-19 新增）、`ClutchBite`、`CapabilityDetection`、`ConfigPersistence`、`RuntimePersistence`、`CsvExport`、`BackgroundFlush`、`TelemetryAdapter`、`PropertyPublish`、`Init`、`Shutdown`、`SettingsUi`、`SlipAngleSource`、`SlipAngle`。 |
+| `Health\HealthRecoveryTracker.cs` | 连续 N 个正常帧后清除某子系统的条目（Slip Angle：300）。 |
+| `MotorsExport\MotorsExportPropertyNames.cs` | 旧 ShakeIt Motors 导出属性名的格式。已不再读取：它用于构建规范 ShakeIt 数据源身份并提供 `WheelSuffixes`。（`MotorsExportAvailabilityResolver.cs` 已于 2026-11-19 随导出路径一并移除。） |
+| `Localization\Strings.cs` / `StringTableEn.cs` / `StringTableZhHans.cs` | 中英文字符串表；由 `LocalizationTests` 保证一致。 |
+| `Localization\StringTable{En,ZhHans}.Areas.cs` 及 `.Page` / `.LockSlip` / `.Curve` / `.GForce` / `.General` / `.Panels` / `.SlipAngle.cs` | 按区域拆分的 partial 字符串文件（每个区域的键放在自己的文件中，两种语言同一区域）；`.Areas.cs` 汇总添加。 |
+| `Runtime\RuntimeDocument.cs` / `RuntimeCache.cs` / `AtomicFile.cs` | 学习状态文档（版本 12 新增 `SlipAngleLearners`）、缓存、原子写入。自 2026-11-19 起保存快照也保留抓地学习器的 `RaiseCandidateG/Hits`、`LowerCandidateG/Hits` 与 `QuietStreak`。重启显示上下文（新增字段）：`LastKeyDataGame/Car`（Lock/Slip）与 `LastSlipAngleGame/Car/Tier`（Slip Angle）。 |
 
 ### `QAdvanceFeedback\Settings\`
 
 | 文件 | 用途 |
 |---|---|
-| `QAdvanceFeedbackSettings.cs` | 根设置对象（Lock/Slip/GForce/General）。 |
-| `WheelChannelSettings.cs` | 单个通道（Lock 或 Slip）的数据源、聚合权重、阈值、曲线、脉冲设置。 |
-| `GForceSettings.cs` | G-Force 标签页的设置 + 学习到的最大值导入/导出。 |
-| `GeneralSettings.cs` | 诊断/CSV 导出开关。 |
-| `SourceMode.cs` / `ScriptType.cs` / `SourceButtonMode.cs` | 支撑 Sources 部分的小型枚举。 |
-| `DefaultWheelSources.cs` | 构建出厂默认的「插件内置」模式数据源文本（对第 3 层自身 Raw 属性的一个简单引用）。 |
-| `KeyDataPointSettings.cs` | 手动 SMax/S90/S75（Slip 为 完美/优秀/良好），按槽位存储 =（模式, 游戏, 源）；随包提供按源类型的默认值与校验。 |
-| `ApplyDirtyState.cs` | 跟踪设置界面是否存在未保存的修改，供 Apply 按钮的启用状态使用。 |
-| `SettingsControl.xaml` / `SettingsControl.xaml.cs` | 唯一的 WPF 设置控件（四个标签页）。其「未保存修改」跟踪采用对生成的 `x:Name` 字段进行**反射式**遍历，而不是一份枚举清单——那份清单曾落后 XAML 达 52 个控件，导致修改其中任何一个后 Apply 按钮仍然是灰的。 |
-| `SettingsControl.GForceTest.cs` | 抖动预览图与 Test Effect 效果测试面板（1.0.8）：可拖动圆球的 G 力控制板与抱死/打滑滑条，驱动一个私有 `GForceEngine`，并在每一帧按页面**当前**状态重新喂入，因此所有 G 力设置（含抱死/打滑强度）均会生效。开关关闭时不产生任何输出。 |
+| `QAdvanceFeedbackSettings.cs` | 根设置对象（Lock/Slip/SlipAngle/GForce/Clutch/General）。 |
+| `WheelChannelSettings.cs` / `WheelSourceSet.cs` | Lock/Slip 单通道设置（含 `ShakeItAlgorithm`、`KeepPresetSourcesWhileShadowed`）；按数据源模式归档。 |
+| `ShakeItAlgorithmSettings.cs` | ShakeIt 算法区块的持久化设置（Lock：旧版算法、灵敏度、仅抱死；Slip：旧版算法、静音）及 `Snapshot`。 |
+| `SlipAngleChannelSettings.cs` / `SlipAngleKeyDataSettings.cs` | Slip Angle 通道设置；按槽位保存的 Min/Best/Max，按数据源的 Auto/PerGame 标志。 |
+| `GForceSettings.cs` / `GForceReadout.cs` / `GForceTestFrame.cs` | G 力设置（按模式的 `DefaultShakeScaleFor`/`DefaultShakeTriggerFor`）、读数标签、测试帧（含滑移角滑条）。 |
+| `ClutchBiteSettings.cs` / `GeneralSettings.cs` | 离合器与常规设置。 |
+| `SourceMode.cs` / `ScriptType.cs` / `SourceButtonMode.cs` / `ShakeItSourceOptions.cs` / `RawSourceFallback.cs` / `DefaultWheelSources.cs` | 数据源相关枚举与选项（ShakeIt 仅在已设置或被选中时提供）、Raw 回退（`RawIdentity`）、`MatchesRaw`（自定义行等于 Raw 的行）、`MatchesShippedPreset`（身份等于 Raw、ShakeIt（去掉指纹）或出厂 Viper 预设；这样的自定义通道不应用自定义冷启动）、默认源文本。 |
+| `KeyDataPointSettings.cs` / `KeyDataPointDefaults.cs` / `KeyDataPanelModel.cs` | Lock/Slip 关键数据点。 |
+| `KeyDataNormalization.cs` / `KeyDataNormalizationInverse.cs` | 关键数据归一化及其二分法反函数 `N⁻¹`。 |
+| `LockSlipTestEngine.cs` / `TestBalls.cs` / `TestGroupSliders.cs` / `SlipAngleTestEngine.cs` | Lock/Slip 与 Slip Angle 测试计算、圆点位置、分组滑条。 |
+| `SourceToProjectedGraph.cs` / `SlipAngleSourceToProjectedGraph.cs` | 「源值 → 映射值」曲线（Slip Angle：Raw.All 0 → End，单位度）。 |
+| `SettingsHub.cs` / `ConfigFileWatcher.cs` | 页面与 ShakeIt 面板的双向同步（含五个 ShakeIt 算法字段；车轮页签会在运行时 `SourceAvailability` 广播时重新采样）；`SwitchSource`——集线器与设置页「数据源」下拉框共用的唯一数据源切换；磁盘配置监视。 |
+| `NumericEditor.xaml(.cs)` | 数值编辑控件。 |
+| `SettingsControl.xaml` / `SettingsControl.xaml.cs` | `GetWPFSettingsControl` 返回的控件：内容为 `Ui\Views\SettingsPageView`（`x:Name="Page"`）的薄宿主，代码后置恰好是 `InitializeComponent(); DataContext = viewModel;`（MvvmRuleTests）。旧的 3,651 行代码后置及其 partial（`.Sync`、`.GForceTest`、`.GForceShake`、`.SlipAngle`、`.Clutch`、`.ShakeItSource`）、`ApplyDirtyState.cs` 与 `PageFieldRefreshPlan.cs` 已于 2026-11-20 删除（`docs\full-mvvm-report.md`）。 |
+
+### `QAdvanceFeedback\Ui\`（MVVM）与 `Integration\ShakeIt\`
+
+| 文件 | 用途 |
+|---|---|
+| `Ui\Mvvm\ObservableObject.cs` / `RelayCommand.cs` / `IUiDispatcher.cs` / `ITicker.cs` / `LeadingColumns.cs` / `IActivatable.cs` | MVVM 基础组件；视图出现/消失时的 `Activate`/`Deactivate`。 |
+| `Ui\ViewModels\SettingsDraft.cs` | 设置页的草稿 / 基线 / 实时模型，按 JSON 叶子合并（`IsDirty`、`AdoptExternal`——ShakeIt 优先——、`Apply`——只写入编辑过的叶子、原地写入——、`ReplaceDraft`、带变更路径的 `Reloaded`）。 |
+| `Ui\ViewModels\SettingsPageViewModel.cs` / `SettingsPageContext.cs` / `PageSectionViewModel.cs` | 设置页：草稿、贯穿整个生命周期的集线器订阅、Apply / 全部恢复默认、未应用状态与横幅、各页签视图模型；各区块共享的上下文（草稿、宿主、调度器、定时器、对话框、剪贴板、`Guard` / `ReportFailure`）；区块基类。 |
+| `Ui\ViewModels\ISettingsPageHost.cs` / `IWheelChannelPageHost.cs` / `IKeyDataPageHost.cs` / `IGeneralPageHost.cs` / `PageServices.cs` | 设置页对插件的需求：`ISettingsPageHost`（`ApplySettings`、`CreateDefaultSettings`、`PluginStateChanged`、`LogError`）、可选的区域宿主接口与组合接口 `IPluginSettingsPageHost`；`IDialogService`、`IClipboard`（以及未使用的 `IPropertyPicker` / `IScriptEditor`）。 |
+| `Ui\ViewModels\WheelChannelPageViewModel.cs` / `TriggerThresholdViewModel.cs` / `SourcesViewModel.cs` / `SourceRowViewModel.cs` / `CustomReferenceViewModel.cs` / `AggregationViewModel.cs` / `KeyDataPageViewModel.cs` / `CurveEditorViewModel.cs` / `PulseViewModel.cs` | Wheel Lock / Wheel Slip 页签（同一个类，`IsLock`）：触发阈值、数据源（唯一切换路径、Raw 遮蔽、Viper 游戏按钮、ShakeIt 状态与算法区块）、四行数据源、Custom 冷启动参考、车轮组合、关键数据（面板规则、700 ms 防抖立即保存、从不经过 Apply）、曲线编辑器与两张图的数据、脉冲。 |
+| `Ui\ViewModels\GForcePageViewModel.cs` / `GForcePageAxisViewModel.cs` / `GForcePageShakePreview.cs` / `GeneralViewModel.cs` / `HealthListViewModel.cs` | G-Force 页签（最大 G 行与读数——显示时每秒刷新——、承载的抖动区块、预览数据、承载的测试）；General 页签及其健康列表。 |
+| `Ui\ViewModels\IPanelHost.cs` / `ITestEffectHost.cs` / `PanelViewModelBase.cs` / `FallbackWarningViewModel.cs` | 面板/测试 VM 与插件的接口；橙色回退警告。 |
+| `Ui\ViewModels\ShakeItSourceViewModels.cs` | `IShakeItSourceStateHost`（可选的宿主能力）、`ShakeItSourceUi`（纯净的列表/标签/提示规则）、`ShakeItSourceStatusViewModel`、`ShakeItAlgorithmViewModel`。 |
+| `Ui\ViewModels\WheelChannelEffectViewModel.cs` / `KeyDataViewModel.cs` / `LockSlipTestViewModel.cs` | Wheel Lock/Slip 面板、关键数据、测试（分组滑条）。 |
+| `Ui\ViewModels\SlipAngleTabViewModel.cs` / `ProjectorEditorViewModel.cs` / `SlipAngleEffectViewModel.cs` / `SlipAngleTestViewModel.cs` | Slip Angle 设置页签、锚点行、ShakeIt 面板与测试。 |
+| `Ui\ViewModels\GForceEffectViewModel.cs` / `GForceTestViewModel.cs` / `ClutchViewModels.cs` | G 力面板与测试；离合器。 |
+| `Ui\ViewModels\GForceShakeViewModel.cs` | G-Force 页签的抖动区块：两个 Integrate 开关、共享设置及其启用状态、三个强度、选模式时的强度/触发值重置、选振感时的频率改写；与 `GForceSettings` 互相加载/保存。 |
+| `Ui\Views\*.xaml(.cs)` 及 `ClutchGraph.cs` / `NormalizedCurveGraph.cs` / `GraphFurniture.cs` / `TestControls.cs` / `TrackAlignment.cs` / `LabelColumnSync.cs` / `WpfInfrastructure.cs` | 视图（`WheelChannelEffectView`、`GraphView`、`SlipAngleTabView`、`SlipAngleEffectView`、`SlipAngleGraphView`、`GForceEffectView`、`GForceTestView`、`ClutchBiteView`）、图形控件与纯布局行为。 |
+| `Ui\Views\ViewBehaviors.cs` / `WpfPageServices.cs` / `SettingsPageView.xaml(.cs)` / `WheelChannelPageView.xaml(.cs)` / `WheelChannelKeyDataView.xaml(.cs)` / `WheelChannelCurveView.xaml(.cs)` / `WheelChannelPulseView.xaml(.cs)` / `GForcePageView.xaml(.cs)` / `GForcePageShakePreviewGraph.cs` / `GeneralPageView.xaml(.cs)` | 附加行为 `ViewModelLifetime.Activate`、`EventCommand.Loaded` / `DropDownOpened`；WPF 版 `IDialogService` / `IClipboard`；设置页外壳（`MainTabs`、横幅、Apply / 恢复）；车轮页签（一个视图用两次）及其关键数据、曲线、脉冲部分；G-Force 页签及抖动预览图；General 页签。 |
+| `Integration\ShakeIt\PluginPageHost.cs` | 设置页眼中的运行中插件（`IPluginSettingsPageHost`）：转发到插件自身的成员（数据源阻断、Viper 文档、学习值显示规则、手动门控、Apply、ShakeIt 导入、健康、版本），并持有 SimHub 属性选择器 / 脚本编辑器 / 求值器。 |
+| `Integration\ShakeIt\QAdvanceFeedbackWheelChannelContainers.cs` / `QAdvanceProjectionFilter.cs` / `QAdvanceFeedbackSlipAngleContainer.cs` / `QAdvanceFeedbackGForceContainers.cs` / `QAdvanceFeedbackClutchBiteContainer.cs` / `QAdvanceFeedbackEffect.cs` / `ShakeItEffectSupport.cs` / `ShakeItBuiltInTap.cs` / `PluginPanelHost.cs` / `ShakeItProfileInspector.cs` | 原生 ShakeIt 效果中依赖 SimHub 的部分（`ShakeItBuiltInTap`：心跳、游戏支持、按算法快照配置隐藏容器、静音模拟；`PluginPanelHost` 实现 `IShakeItSourceStateHost`；`ShakeItProfileInspector`：在 UI 线程以 1 Hz 读取两个 ShakeIt 插件的当前配置文件，用于「已设置」检查）。 |
+
+### `QAdvanceFeedback.Tests\Frozen\`（测试基准）
+
+| 文件 | 用途 |
+|---|---|
+| `FrozenSlipCrossingGate.cs` / `FrozenLockCrossingGate.cs` / `FrozenGripLearnerCorroboration.cs` / `FrozenColdStartTierResolution.cs` | 提取前出厂代码的逐字副本；等价性测试要求共享核心与之逐位一致。不得为通过测试而修改。 |
+
+## UI：MVVM（长期规则）
+
+作者的全项目规则（2026-11-17），适用于所有 UI：插件设置页与原生 ShakeIt 效果面板。英文版 `docs\architecture.md` 同名章节为完整说明。
+
+- **视图模型持有状态与规则**（`Ui\Mvvm\ObservableObject`、`RelayCommand`），**视图绑定到它们**。
+- **代码后置只做接线**：恰好是 `InitializeComponent(); DataContext = viewModel;`。生命周期与少数没有可绑定属性的事件由 XAML 中声明的附加行为处理（`Ui\Views\ViewBehaviors.cs`）：`v:ViewModelLifetime.Activate="True"`（Loaded -> `Activate`，Unloaded -> `Deactivate`）、`v:EventCommand.Loaded` / `DropDownOpened`。XAML 中不写事件处理特性。`MvvmRuleTests` 对所有视图（含 `Settings\SettingsControl.xaml(.cs)`）强制执行。
+- **线程与时间**：视图模型只在 UI 线程上改动绑定状态（`IUiDispatcher`）；定时器与当前时间来自 `ITicker`。
+
+**插件设置页已完全遵循此规则（2026-11-20，`docs\full-mvvm-plan.md`，报告 `docs\full-mvvm-report.md`）。**
+
+- **视图模型树**：`SettingsPageViewModel`（每个插件一个：第一次 `GetWPFSettingsControl` 时创建，`End()` 时释放；持有 `SettingsDraft`、集线器订阅、Apply / 恢复、未应用状态与横幅）下有 `LockTab` / `SlipTab`（`WheelChannelPageViewModel`）、`SlipAngleTab`、`GForceTab`、`ClutchTab`、`GeneralTab`。
+- **草稿 / 应用模型（`SettingsDraft`）**：实时 = 插件的设置对象；草稿 = 页面编辑的深拷贝；基线 = 草稿上次同步时的实时状态，按 JSON 叶子比较。未应用 = 草稿与基线有任一叶子不同。任何来源的集线器事件以及显示页面时，都把实时与基线不同的叶子同时写入草稿与基线——**ShakeIt 一侧的修改优先并立即显示**，即使覆盖同一字段的未应用修改；其他未应用修改保留。Apply 只把页面上编辑过的叶子原地写入实时设置，然后由插件 `ApplySettings()` 应用、保存并只广播一次。即时生效的内容（关键数据、Viper 游戏列表、ShakeIt 导入、离合器学习参数、Slip Angle 关键数据）直接写入实时设置，草稿随后采纳，页面保持「已应用」。订阅与页面视图模型同寿，因此页面首次显示之前或隐藏期间的修改，打开时就已在页面上。
+- **宿主与服务**：视图模型从不接触 SimHub 或 WPF，经 `ISettingsPageHost` 访问插件，并按需转换为可选的区域接口；插件通过组合接口 `IPluginSettingsPageHost`（`Integration\ShakeIt\PluginPageHost`）一次实现全部。插件不再向页面推送，而是触发 `SettingsPageStateChanged`（换游戏、1 Hz 学习值读数、关键数据写入、ShakeIt / 原生性变化），视图模型按与 ShakeIt 面板相同的显示规则重新读取。对话框与剪贴板为 `IDialogService` / `IClipboard`；页面操作失败时写入 SimHub 日志、记入健康注册表，并立即显示在 General 页签上。
+- **按页签的生命周期**：页签的订阅与定时器只在页签显示时运行，显示时补齐：车轮页签的插件状态 / 可用性监听与 1 秒回退警告、G-Force 读数定时器（隐藏页签同时停止测试）、General 页签的健康列表重读。
+- **字符串**：每个区域的 UI 字符串放在自己的 partial 字符串文件中（`Core\Localization\StringTable{En,ZhHans}.<Area>.cs`）。
 
 ## 设置截图采集规则（长期规则）
 
-`docs\images\settings-*.png`（在两个 README 的「截图」小节中被引用）由一个一次性使用、不属于本仓库的 WPF 采集工具渲染而成（不属于本解决方案/测试的一部分）——它加载已构建好的 `QAdvanceFeedback.dll`，独立实例化 `Settings\SettingsControl.xaml(.cs)`，并按标签页渲染为 PNG。Apply/Restore 按钮行是 `SettingsControl.xaml` 中 `MainTabs` 的一个 `DockPanel.Dock="Bottom"` 同级元素——它位于 `TabControl` 之外，因此无论当前选中哪个标签页，逐标签页的截图都不会包含它。
+`docs\images\settings-*.png` 与 `docs\images\shakeit-*.png`（在两个 README 中被引用）由仓库内的 `tools\screenshot-harness\` 渲染（不属于 `QAdvanceFeedback.sln`；构建/运行步骤见其 `ScreenshotHarness.csproj` 头部注释）——它加载已构建好的 `QAdvanceFeedback.dll`，像 SimHub 一样向插件请求设置页（`GetWPFSettingsControl`：绑定到 `Ui\Views\SettingsPageView` 的薄 `SettingsControl`，`x:Name="Page"`），并按标签页渲染为 PNG；选中标签页后先运行调度器 600 ms，使 MahApps ToggleSwitch 的滑块（加载后由绑定设置）停止动画；`--out <目录>` 把对比用的一组图片写到别处而非 `docs\images`。Apply/Restore 按钮行是 `SettingsPageView.xaml` 中 `MainTabs` 的一个 `DockPanel.Dock="Bottom"` 同级元素——它位于 `TabControl` 之外，因此无论当前选中哪个标签页，逐标签页的截图都不会包含它。
 
 按标签页划分的采集规则（未来每次重新生成截图都应遵循，无需再次提醒）：
 
-- **Wheel Lock、Wheel Slip、G-Force**——这三个标签页内容较长。只截取当前选中 `TabItem` 的内容（其 `ScrollViewer` 的内容元素），不包含上方的标签条和下方的按钮行，使整个标签页的设置内容都能完整地放进一张图片，不被裁切。
+- **Wheel Lock、Wheel Slip、Slip Angle、G-Force、Clutch**——这些标签页内容较长。只截取当前选中 `TabItem` 的内容（其 `ScrollViewer` 的内容元素），不包含上方的标签条和下方的按钮行，使整个标签页的设置内容都能完整地放进一张图片，不被裁切。
 - **General**——足够短，即使包含外层框架也不会丢失内容。改为截取完整的 `SettingsControl`：标签条、General 标签页的内容，以及 Apply/Restore 按钮行都包含在内。
+- **原生 ShakeIt 效果**——`shakeit-wheellock|wheelslip|gforce|clutch|slipangle.png`（另有 `shakeit-wheellock-test`：Front/Rear 路由下运行的 Lock 测试，显示分组滑条；以及 `shakeit-clutch-test`），各自带 `.zh-Hans.png` 中文版本（`Strings.Culture` = zh-Hans），由 `tools\screenshot-harness\ShakeItEffectCaptures.cs` 渲染：效果面板，加上 WheelLock/WheelSlip/Slip Angle 在 ShakeIt 响应曲线位置的只读图，四周 12 px 留白。
 
 在这两种情况下，都要按渲染目标自身的完整自然尺寸进行测量/排布（`Measure` 时高度设为 `PositiveInfinity`，随后在得到的 `DesiredSize` 上进行一次显式的 `Arrange`），而不是采用预览窗口宿主恰好施加的高度——如果跳过这个显式的重新 `Arrange` 步骤，`ScrollViewer` 的视口会裁切较长的内容，而 `DockPanel` 中负责填充的子元素又会拉伸以填满一个过大的宿主窗口，导致按钮行上方出现一段空白。
 
-输出文件名（注意是 `settings-gforce.png`，而不是 `settings-g-force.png`——采集工具是从标签页标题文字推导文件名的，G-Force 这一个需要单独改名以匹配 README 中的链接）：`settings-wheel-lock.png`、`settings-wheel-slip.png`、`settings-gforce.png`、`settings-general.png`。
+输出文件名（注意是 `settings-gforce.png`，而不是 `settings-g-force.png`——采集工具是从标签页标题文字推导文件名的，G-Force 这一个需要单独改名以匹配 README 中的链接）：`settings-wheel-lock.png`、`settings-wheel-slip.png`、`settings-slip-angle.png`、`settings-gforce.png`、`settings-clutch.png`、`settings-general.png`。
 
 建立这条规则那次工作的完整依据、验证证据和像素尺寸：`docs\screenshot-capture-rule.md`。
 
@@ -457,12 +738,12 @@
 - 每一个对未文档化 SimHub 内部机制的反射包装（`SimHubScriptEditor`、`PropertyPickerLauncher`、`SimHubExpressionEvaluator`）都只解析一次、缓存结果，并且一旦失败就在本次会话剩余时间内永久降级为「不可用」——绝不会在下一帧/下一次点击时重试并再次抛出异常。`SimHubTelemetryAdapter.CaptureRawTelemetry` 自己对 `GetFeedbackCapabilities` 的调用（这是一个真实的 API，不是反射，但同样依赖一个未文档化的 SimHub 形状）也采用相同方式加固。
 - 所有文件 I/O（`ConfigStore`、`RuntimeStore`、`CsvExportWriter`）在文件缺失、损坏、被锁定或权限不足时，都会降级为使用默认值/停止记录，而不是抛出异常。
 - `RuntimeStore` 后台刷新用的 `Timer` 回调（`FlushTick`）是这里最危险的一个类：在 .NET Framework 下，直接发生在这个原始线程池线程上的未处理异常可能会终止整个 SimHub 进程。它（以及现在同样在该线程之外的 `Task.Run` 中独立运行的 `WriteAtomic`）都被一个宽泛的、兜底的 `catch (Exception)` 完整包裹。
-- 设置界面的构造函数由 `GetWPFSettingsControl` 自身的防护覆盖；其顶层的 `Button.Click` 处理程序（Apply、Restore all defaults、按数据源重置、脚本编辑器/属性选择器的操作按钮）都分别包裹在 `SettingsControl.SafeUiAction`/`SafeUiActionAsync` 中——因为在构造完成之后很久才被调用的 WPF 事件处理程序，其上游本来不会有任何东西去捕获异常。
+- 设置界面的构造由 `GetWPFSettingsControl` 自身的防护覆盖；此后的每个页面操作（Apply、Restore all defaults、关键数据重置、脚本编辑器/属性选择器的操作按钮、集线器驱动的重新加载）都在 `SettingsPageContext.Guard` 中运行——完整保留旧页面 `SafeUiAction` 的行为：写一行 SimHub 日志（`ISettingsPageHost.LogError`）、记录一条 Degraded 级的 `SettingsUi` 健康条目并刷新健康列表——因为在构造完成之后很久才被调用的绑定或命令，其上游本来不会有任何东西去捕获异常。
 - 异常的遥测数据（NaN/无穷大/负值或过大的 `dt`、null 的 `GameData`/`NewData`/`OldData`、缺失车辆或游戏 id）在两端都受到防护：`DataUpdate` 自己的 null/状态检查会在到达 Core 之前就短路处理，而每一个 Core 引擎也都独立对自己的输入做有限性检查（见 `AbsentTelemetryTests`/`DtNormalizationTests`/`ClampMathTests` 等测试）——单独任何一道防护本身就足以防止异常抛出，因此这是刻意的双重保险，而不是一个单点故障。
 
 **健康状态注册表（`QAdvanceFeedback.Core.Health`）：** 一个小型、纯净、不依赖 SimHub 的注册表（`HealthRegistry`、`HealthEntry`、`HealthSeverity`、`HealthSubsystems`），上面所有被加固的边界都会从各自的 catch 块内向它上报——绝不主动上报，也绝不在每一帧都宣称「一切正常」，这正是让「注册表中完全没有记录」成为健康状态的原因。每一条记录都包含子系统名称、严重程度（`Degraded`/`Failed`）、一个用于生成简短的、驾驶者可读的「这对你意味着什么」提示的本地化键（在显示时通过 `Strings.Get` 解析，绝不会写死成英文）、原始异常详情（供提交问题报告使用，刻意不做本地化）、首次发生的时间，以及可能的根本原因是否是 SimHub 更新移动/重命名/改变了本插件所依赖的某个东西（`IsSimHubCompatibilityIssue`）——这是车主特别要求要被明确点名、而不是笼统显示为一个不透明失败的唯一情形。再次上报同一个子系统（例如某个取值逻辑每一帧都在抛出异常）只会更新已有那条记录的时间戳/发生次数，而不会让注册表不断增长——这正是即使在持续故障下，也能维持「只记录一次日志，而不是按帧记录」的原因。
 
-**设置界面呈现方式（General 标签页，「Plugin health」分组）：** 当 `HealthRegistry.Snapshot()` 为空时，只显示一行且不显眼的提示（「All systems normal - nothing to report.」），因此在正常情况下不会带来任何视觉干扰。否则，每个降级的子系统都会显示一行加粗的警告——一个驾驶者可读的子系统名称加上它的影响说明，`Degraded` 用橙色，`Failed` 用暗红色——并且对于任何被标记为 SimHub 兼容性问题的记录，还会附加一句通俗易懂的提示「此功能需要针对你的 SimHub 版本进行更新」，而不是显示一段原始异常信息。一个「Copy details for a bug report」按钮（仅在确有内容可报告时显示）会把每条记录的技术细节（子系统、严重程度、时间戳、发生次数、异常文本）复制到剪贴板，方便车主粘贴到问题反馈中。这个界面只在设置控件构造函数结束时刷新一次（`SettingsControl.RefreshHealthUi`，在该控件用到的每一个反射包装都已经被构造函数早先的接线逻辑强制解析完毕之后调用），并且在任何一次 `SafeUiAction`/`SafeUiActionAsync` 捕获到异常之后也会再次刷新，因此点击操作过程中发生的故障无需重新打开标签页就能立刻反映出来。
+**设置界面呈现方式（General 标签页，「Plugin health」分组）：** 当 `HealthRegistry.Snapshot()` 为空时，只显示一行且不显眼的提示（「All systems normal - nothing to report.」），因此在正常情况下不会带来任何视觉干扰。否则，每个降级的子系统都会显示一行加粗的警告——一个驾驶者可读的子系统名称加上它的影响说明，`Degraded` 用橙色，`Failed` 用暗红色——并且对于任何被标记为 SimHub 兼容性问题的记录，还会附加一句通俗易懂的提示「此功能需要针对你的 SimHub 版本进行更新」，而不是显示一段原始异常信息。一个「Copy details for a bug report」按钮（仅在确有内容可报告时显示）会把每条记录的技术细节（子系统、严重程度、时间戳、发生次数、异常文本）复制到剪贴板，方便车主粘贴到问题反馈中。这个列表在设置页视图模型创建时读取，每次显示 General 页签时重读，并在任何页面操作失败之后（`SettingsPageContext.ActionFailed`）再次刷新，因此点击操作过程中发生的故障无需重新打开标签页就能立刻反映出来（`GeneralViewModel` / `HealthListViewModel`）。
 
 **已知的未加固路径，明确说明：** SimHub 自身的 `PluginManager.GetPropertyValue`，以及最终到达 `PropertyEntryWrapper.GetValue()` 的 NCalc/公式引擎调用链，已通过反编译确认本身就是异常安全/实践中安全的（见 pipeline-exception-safety 报告）——本插件既不会也不能去修补 SimHub 自身的基础机制。如果某个其他调用方（另一个插件、ShakeIt 自身的内部逻辑）在没有经过 SimHub 自身包装的情况下，直接调用了 `PropertyEntry.Evaluate()`/`PropertyEntryWrapper.GetValue()`，那仍然是真正未加固的——这超出了本插件的能力范围，本文档也不声称已经修复了这一点。
 

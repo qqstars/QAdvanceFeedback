@@ -31,85 +31,44 @@ namespace QAdvanceFeedback.Tests
             return dir.FullName;
         }
 
-        private static string CodeBehind() => File.ReadAllText(Path.Combine(
-            RepoRoot(), "QAdvanceFeedback", "Settings", "SettingsControl.xaml.cs"));
-
-        private static string PushBody()
-        {
-            string code = CodeBehind();
-            int start = code.IndexOf("public void UpdateLearnedKeyDataPoints", System.StringComparison.Ordinal);
-            Assert.True(start > 0, "UpdateLearnedKeyDataPoints not found");
-            int end = code.IndexOf("\n        /// <summary>", start, System.StringComparison.Ordinal);
-            if (end < 0) end = code.Length;
-            return code.Substring(start, end - start);
-        }
+        // Wave 2 (docs\full-mvvm-plan.md): the page no longer receives a push it could mis-file - it ASKS the
+        // plugin for one identity's learned values and gate (KeyDataPageViewModelTests
+        // Learned_values_belong_to_the_source_they_were_learned_for_only,
+        // Learned_hints_show_only_in_Manual_and_for_an_unknown_source_only_once_the_gate_opened,
+        // A_game_arriving_re_resolves_the_per_game_slot pin the old push rules). What stays here is the
+        // display-only guarantee.
 
         [Fact]
-        public void The_pushed_values_are_only_taken_when_the_identity_matches_the_page()
+        public void No_engine_path_reads_the_display_only_learned_values()
         {
-            string body = PushBody();
-            _out.WriteLine(body);
-
-            Assert.Contains("string.Equals(lockSourceIdentity, _currentLockSource", body);
-            Assert.Contains("string.Equals(slipSourceIdentity, _currentSlipSource", body);
-
-            // Every one of the six learned fields is gated, not just SMax - a mismatched S90/S75 would
-            // put the other source's lower anchors on screen just as wrongly.
-            foreach (string field in new[]
-                     {
-                         "_lockLearnedSMax = lockMatches", "_lockLearnedS90 = lockMatches",
-                         "_lockLearnedS75 = lockMatches", "_slipLearnedSMax = slipMatches",
-                         "_slipLearnedS90 = slipMatches", "_slipLearnedS75 = slipMatches",
-                     })
-                Assert.Contains(field, body);
-        }
-
-        [Fact]
-        public void The_manual_gate_is_gated_by_the_same_match()
-        {
-            // "This source has learned enough to seed a manual value" says nothing about a source the
-            // page is not showing, and it decides whether the learned hint is offered at all.
-            string body = PushBody();
-            Assert.Contains("_lockManualLive = lockMatches && lockManualLive", body);
-            Assert.Contains("_slipManualLive = slipMatches && slipManualLive", body);
-        }
-
-        [Fact]
-        public void The_game_id_is_still_taken_unconditionally()
-        {
-            // The game can ONLY come from the plugin, and it is not source-specific - gating it would
-            // reintroduce the Per-Game and Viper-support defects fixed on 2026-09-30.
-            string body = PushBody();
-            Assert.Contains("_currentGameId = gameId;", body);
-            Assert.DoesNotContain("_currentGameId = lockMatches", body);
-        }
-
-        [Fact]
-        public void No_engine_path_reads_the_display_only_learned_fields()
-        {
-            // The regression guard. These fields must stay confined to the settings page, so a change
-            // here can never reach learning or output.
+            // The regression guard: the display reads stay confined to the UI hosts, so a change there can
+            // never reach learning or output.
             string root = RepoRoot();
             foreach (string file in Directory.GetFiles(Path.Combine(root, "QAdvanceFeedback"), "*.cs",
                                                        SearchOption.AllDirectories))
             {
                 if (file.Contains("\\obj\\") || file.Contains("\\bin\\")) continue;
-                if (Path.GetFileName(file) == "SettingsControl.xaml.cs") continue;
+                string name = Path.GetFileName(file);
+                if (name == "PluginPageHost.cs" || name == "PluginPanelHost.cs" || name.StartsWith("QAdvanceFeedback.", System.StringComparison.Ordinal)) continue;
 
                 string text = File.ReadAllText(file);
-                foreach (string field in new[] { "_lockLearnedSMax", "_slipLearnedSMax", "_lockManualLive", "_slipManualLive" })
-                    Assert.False(text.Contains(field),
-                        $"{Path.GetFileName(file)} reads {field} - these are display-only fields");
+                foreach (string member in new[] { "GetLearnedKeyDataForDisplay", "ManualGateReadyForDisplay" })
+                    Assert.False(text.Contains(member), $"{name} reads {member} - display only, the UI hosts' alone");
             }
+            // ...and the plugin itself only defines them: no frame-loop path calls them.
+            string plugin = File.ReadAllText(Path.Combine(root, "QAdvanceFeedback", "QAdvanceFeedback.cs"));
+            Assert.Single(System.Text.RegularExpressions.Regex.Matches(plugin, "GetLearnedKeyDataForDisplay\\("));
+            Assert.DoesNotContain("ManualGateReadyForDisplay(", plugin);
         }
 
         [Fact]
-        public void The_shipped_version_is_1_1_0_1()
+        public void The_shipped_version_is_1_2_0_0()
         {
+            // 1.2.0.0: native ShakeIt effects (docs\shakeit-native-effects-design.md).
             string csproj = File.ReadAllText(Path.Combine(
                 RepoRoot(), "QAdvanceFeedback", "QAdvanceFeedback.csproj"));
-            Assert.Contains("<AssemblyVersion>1.1.0.1</AssemblyVersion>", csproj);
-            Assert.Contains("<FileVersion>1.1.0.1</FileVersion>", csproj);
+            Assert.Contains("<AssemblyVersion>1.2.0.0</AssemblyVersion>", csproj);
+            Assert.Contains("<FileVersion>1.2.0.0</FileVersion>", csproj);
         }
     }
 }

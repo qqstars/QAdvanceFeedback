@@ -282,6 +282,13 @@ namespace QAdvanceFeedback.Settings
         /// </summary>
         public bool IntegrateWheelLockAndSlip { get; set; } = true;
 
+        /// <summary>Whether Slip Angle contributes to the G-Force shake (docs\slip-angle-design.md section 10):
+        /// an angle at or above <see cref="ShakeTriggerThresholdPercent"/> opens the shake gate on its own,
+        /// and its scaled value (<see cref="WheelSlipAngleShakeScale"/>) competes with lock/slip for the
+        /// drive. Default ON for fresh installs and upgrades; a config without the field loads ON. Pushed
+        /// onto <see cref="GForceEngine.IntegrateSlipAngle"/> by <see cref="ApplyTo"/>.</summary>
+        public bool IntegrateSlipAngle { get; set; } = true;
+
         /// <summary>The feeling a fresh install ships with. Named rather than repeated, because
         /// <see cref="_shakeFrequencyHz"/>'s own default is derived from it - see there.</summary>
         public const ShakeFeeling DefaultShakeFeeling = Core.GForce.ShakeFeeling.OppositePhase;
@@ -508,12 +515,23 @@ namespace QAdvanceFeedback.Settings
             set => _wheelSlipShakeScale = value >= 0.0 ? value : 0.0;
         }
 
+        private double _wheelSlipAngleShakeScale = DefaultShakeScaleFor(DefaultShakeApplyMode);
+
+        /// <summary>Non-negative, clamped in the setter. Default <see cref="DefaultShakeScaleFor"/> of the
+        /// shipped mode, like <see cref="WheelLockShakeScale"/> - see there for the full rationale
+        /// (identical, mirrored for the Slip Angle channel; a mode switch never rewrites it).</summary>
+        public double WheelSlipAngleShakeScale
+        {
+            get => _wheelSlipAngleShakeScale;
+            set => _wheelSlipAngleShakeScale = value >= 0.0 ? value : 0.0;
+        }
+
         private double _sustainTimeConstantSeconds = 0.15;
         private double _transientTimeConstantSeconds = 0.08;
-        // SWEEP SPEED. Default 1.2 -> **1.0** (owner, 2026-09-06, after seat time: a slower, smoother
-        // transition reads better). Lower = the sweep travels more gradually across the pads for the
+        // SWEEP SPEED. Default 1.2 -> 1.0 (owner, 2026-09-06) -> **0.6** (owner, 2026-11-20): a slower, smoother
+        // transition reads better. Lower = the sweep travels more gradually across the pads for the
         // same pedal input; higher = it snaps through the three stages sooner.
-        private double _transientGain = 1.0;
+        private double _transientGain = 0.6;
 
         /// <summary>Seconds, clamped positive. See <see cref="GForceEngine.SustainTimeConstantSeconds"/>'s
         /// remarks for the default's reasoning.</summary>
@@ -613,6 +631,7 @@ namespace QAdvanceFeedback.Settings
             // fallback for a caller that invokes Compute without either override.
             engine.TransitionAnimationScale = FixedTransitionAnimationScale;
             engine.IntegrateWheelLockAndSlip = IntegrateWheelLockAndSlip;
+            engine.IntegrateSlipAngle = IntegrateSlipAngle;
             engine.ShakeApplyMode = ShakeApplyMode;
             engine.ShakeFeeling = ShakeFeeling;
 
@@ -632,6 +651,7 @@ namespace QAdvanceFeedback.Settings
             engine.ShakeTriggerThreshold = ShakeTriggerThresholdPercent;
             engine.WheelLockShakeScale = WheelLockShakeScale;
             engine.WheelSlipShakeScale = WheelSlipShakeScale;
+            engine.WheelSlipAngleShakeScale = WheelSlipAngleShakeScale;
         }
 
         /// <summary>

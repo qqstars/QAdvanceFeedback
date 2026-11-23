@@ -38,5 +38,9 @@ namespace QAdvanceFeedback.Core
         /// to construct a "raw SimHub-scale" reading from a known G value (e.g. reproducing this
         /// session's own captured m/s^2 magnitudes from a G-denominated test expectation).</summary>
         public static double GToMs2(double g) => g * MetersPerSecondSquaredPerG;
+
+        /// <summary>Degrees to radians, sign-preserving - used for SimHub's deg/s
+        /// <c>YawChangeVelocity</c> (spike report) at the same Layer 1/2 boundary.</summary>
+        public static double DegToRad(double degrees) => degrees * (System.Math.PI / 180.0);
     }
 }

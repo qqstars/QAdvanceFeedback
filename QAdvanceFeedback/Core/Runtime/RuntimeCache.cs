@@ -24,6 +24,22 @@ namespace QAdvanceFeedback.Core.Runtime
         private RuntimeDocument _document = new RuntimeDocument();
         private bool _dirty;
 
+        /// <summary>The top-level <see cref="RuntimeDocument"/> fields changed since the last snapshot (by field name), so
+        /// the writer regenerates only those sections (docs\parameters-file-format-report.md). Under <see cref="_gate"/>.</summary>
+        private readonly HashSet<string> _dirtySections = new HashSet<string>(StringComparer.Ordinal);
+
+        private void MarkSection(params string[] sections)
+        {
+            foreach (string s in sections) _dirtySections.Add(s);
+            _dirty = true;
+        }
+
+        private void MarkAllSections()
+        {
+            foreach (System.Reflection.FieldInfo f in typeof(RuntimeDocument).GetFields()) _dirtySections.Add(f.Name);
+            _dirty = true;
+        }
+
         /// <summary>Seeds the cache from a freshly loaded (or freshly defaulted) document - called
         /// once, at plugin initialisation. Never marks the cache dirty: loading is not itself a
         /// change that needs writing straight back out.</summary>
@@ -33,6 +49,7 @@ namespace QAdvanceFeedback.Core.Runtime
             {
                 _document = document ?? new RuntimeDocument();
                 _dirty = false;
+                _dirtySections.Clear();
             }
         }
 
@@ -43,7 +60,7 @@ namespace QAdvanceFeedback.Core.Runtime
         /// change.</summary>
         public void MarkDirty()
         {
-            lock (_gate) { _dirty = true; }
+            lock (_gate) { MarkAllSections(); }
         }
 
         public void LoadLockLearners(out Dictionary<string, GripLearnerState> data)
@@ -56,7 +73,7 @@ namespace QAdvanceFeedback.Core.Runtime
             lock (_gate)
             {
                 _document.LockLearners = new Dictionary<string, GripLearnerState>(data ?? EmptyLearners, StringComparer.Ordinal);
-                _dirty = true;
+                MarkSection(nameof(RuntimeDocument.LockLearners));
             }
         }
 
@@ -70,7 +87,7 @@ namespace QAdvanceFeedback.Core.Runtime
             lock (_gate)
             {
                 _document.SlipLearners = new Dictionary<string, GripLearnerState>(data ?? EmptyLearners, StringComparer.Ordinal);
-                _dirty = true;
+                MarkSection(nameof(RuntimeDocument.SlipLearners));
             }
         }
 
@@ -89,7 +106,7 @@ namespace QAdvanceFeedback.Core.Runtime
             lock (_gate)
             {
                 _document.LockScaleLearners = new Dictionary<string, ScaleLearnerState>(data ?? EmptyScaleLearners, StringComparer.Ordinal);
-                _dirty = true;
+                MarkSection(nameof(RuntimeDocument.LockScaleLearners));
             }
         }
 
@@ -103,11 +120,116 @@ namespace QAdvanceFeedback.Core.Runtime
             lock (_gate)
             {
                 _document.SlipScaleLearners = new Dictionary<string, ScaleLearnerState>(data ?? EmptyScaleLearners, StringComparer.Ordinal);
-                _dirty = true;
+                MarkSection(nameof(RuntimeDocument.SlipScaleLearners));
             }
         }
 
         private static readonly Dictionary<string, ScaleLearnerState> EmptyScaleLearners = new Dictionary<string, ScaleLearnerState>();
+
+        public void LoadClutchBiteLearners(out Dictionary<string, Clutch.ClutchBiteLearnerState> data)
+        {
+            lock (_gate) { data = CloneClutch(_document.ClutchBiteLearners); }
+        }
+
+        public void SaveClutchBiteLearners(Dictionary<string, Clutch.ClutchBiteLearnerState> data)
+        {
+            lock (_gate)
+            {
+                _document.ClutchBiteLearners = CloneClutch(data);
+                MarkSection(nameof(RuntimeDocument.ClutchBiteLearners));
+            }
+        }
+
+        public string LoadLastClutchKey()
+        {
+            lock (_gate) { return _document.LastClutchKey; }
+        }
+
+        /// <summary>The last key-data context (see <see cref="RuntimeDocument.LastKeyDataGame"/>); false
+        /// when none was ever saved.</summary>
+        public bool TryLoadLastKeyDataContext(out string gameId, out string carId)
+        {
+            lock (_gate)
+            {
+                gameId = _document.LastKeyDataGame;
+                carId = _document.LastKeyDataCar ?? string.Empty;
+                return gameId != null;
+            }
+        }
+
+        public void SaveLastKeyDataContext(string gameId, string carId)
+        {
+            if (gameId == null) return;
+            carId = carId ?? string.Empty;
+            lock (_gate)
+            {
+                if (string.Equals(_document.LastKeyDataGame, gameId, StringComparison.Ordinal)
+                    && string.Equals(_document.LastKeyDataCar, carId, StringComparison.Ordinal)) return;
+                _document.LastKeyDataGame = gameId;
+                _document.LastKeyDataCar = carId;
+                MarkSection(nameof(RuntimeDocument.LastKeyDataGame), nameof(RuntimeDocument.LastKeyDataCar));
+            }
+        }
+
+        /// <summary>The last Slip Angle key-data context (see <see cref="RuntimeDocument.LastSlipAngleGame"/>);
+        /// false when none was ever saved. An unreadable tier reads as Unknown.</summary>
+        public bool TryLoadLastSlipAngleContext(out string gameId, out string carId, out SourceNativeness tier)
+        {
+            lock (_gate)
+            {
+                gameId = _document.LastSlipAngleGame;
+                carId = _document.LastSlipAngleCar ?? string.Empty;
+                string t = _document.LastSlipAngleTier;
+                tier = !string.IsNullOrEmpty(t) && Enum.TryParse(t, false, out SourceNativeness parsed)
+                    && Enum.IsDefined(typeof(SourceNativeness), parsed) ? parsed : SourceNativeness.Unknown;
+                return !string.IsNullOrEmpty(gameId);
+            }
+        }
+
+        /// <summary>Saves the last Slip Angle context; a no-op (not dirty) unless it changed, or for no game.</summary>
+        public void SaveLastSlipAngleContext(string gameId, string carId, SourceNativeness tier)
+        {
+            if (string.IsNullOrEmpty(gameId)) return;
+            carId = carId ?? string.Empty;
+            string t = tier.ToString();
+            lock (_gate)
+            {
+                if (string.Equals(_document.LastSlipAngleGame, gameId, StringComparison.Ordinal)
+                    && string.Equals(_document.LastSlipAngleCar, carId, StringComparison.Ordinal)
+                    && string.Equals(_document.LastSlipAngleTier, t, StringComparison.Ordinal)) return;
+                _document.LastSlipAngleGame = gameId;
+                _document.LastSlipAngleCar = carId;
+                _document.LastSlipAngleTier = t;
+                MarkSection(nameof(RuntimeDocument.LastSlipAngleGame), nameof(RuntimeDocument.LastSlipAngleCar), nameof(RuntimeDocument.LastSlipAngleTier));
+            }
+        }
+
+        public void SaveLastClutchKey(string key)
+        {
+            lock (_gate)
+            {
+                if (string.Equals(_document.LastClutchKey, key, StringComparison.Ordinal)) return;
+                _document.LastClutchKey = key;
+                MarkSection(nameof(RuntimeDocument.LastClutchKey));
+            }
+        }
+
+        private static Dictionary<string, Clutch.ClutchBiteLearnerState> CloneClutch(Dictionary<string, Clutch.ClutchBiteLearnerState> source)
+        {
+            var copy = new Dictionary<string, Clutch.ClutchBiteLearnerState>(StringComparer.Ordinal);
+            if (source == null) return copy;
+            foreach (KeyValuePair<string, Clutch.ClutchBiteLearnerState> kv in source)
+            {
+                if (kv.Key == null || kv.Value == null) continue;
+                copy[kv.Key] = new Clutch.ClutchBiteLearnerState
+                {
+                    Samples = new List<double>(kv.Value.Samples ?? new List<double>()),
+                    TotalCount = kv.Value.TotalCount,
+                    Matured = kv.Value.Matured,
+                };
+            }
+            return copy;
+        }
 
         /// <summary>Version 3 (item 2): per-GAME telemetry support detection - see
         /// <c>KeyedTelemetrySupport</c>.</summary>
@@ -121,7 +243,7 @@ namespace QAdvanceFeedback.Core.Runtime
             lock (_gate)
             {
                 _document.SurfaceSupportByGame = new Dictionary<string, bool>(data ?? EmptySurfaceSupport, StringComparer.Ordinal);
-                _dirty = true;
+                MarkSection(nameof(RuntimeDocument.SurfaceSupportByGame));
             }
         }
 
@@ -140,7 +262,7 @@ namespace QAdvanceFeedback.Core.Runtime
             lock (_gate)
             {
                 _document.LockPhysicalReference = new Dictionary<string, GripLearnerState>(data ?? EmptyLearners, StringComparer.Ordinal);
-                _dirty = true;
+                MarkSection(nameof(RuntimeDocument.LockPhysicalReference));
             }
         }
 
@@ -154,7 +276,7 @@ namespace QAdvanceFeedback.Core.Runtime
             lock (_gate)
             {
                 _document.SlipPhysicalReference = new Dictionary<string, GripLearnerState>(data ?? EmptyLearners, StringComparer.Ordinal);
-                _dirty = true;
+                MarkSection(nameof(RuntimeDocument.SlipPhysicalReference));
             }
         }
 
@@ -170,7 +292,7 @@ namespace QAdvanceFeedback.Core.Runtime
             lock (_gate)
             {
                 _document.LockScaleCrossCarSeed = new Dictionary<string, ScaleLearnerState>(data ?? EmptyScaleLearners, StringComparer.Ordinal);
-                _dirty = true;
+                MarkSection(nameof(RuntimeDocument.LockScaleCrossCarSeed));
             }
         }
 
@@ -184,7 +306,7 @@ namespace QAdvanceFeedback.Core.Runtime
             lock (_gate)
             {
                 _document.SlipScaleCrossCarSeed = new Dictionary<string, ScaleLearnerState>(data ?? EmptyScaleLearners, StringComparer.Ordinal);
-                _dirty = true;
+                MarkSection(nameof(RuntimeDocument.SlipScaleCrossCarSeed));
             }
         }
 
@@ -201,7 +323,7 @@ namespace QAdvanceFeedback.Core.Runtime
             lock (_gate)
             {
                 _document.LockAnchors = new Dictionary<string, LockAnchorState>(data ?? EmptyLockAnchors, StringComparer.Ordinal);
-                _dirty = true;
+                MarkSection(nameof(RuntimeDocument.LockAnchors));
             }
         }
 
@@ -222,7 +344,7 @@ namespace QAdvanceFeedback.Core.Runtime
             lock (_gate)
             {
                 _document.ShakeItCalibration = data ?? new Dictionary<string, RawCalculator.Calibration.CalibrationData>(StringComparer.Ordinal);
-                _dirty = true;
+                MarkSection(nameof(RuntimeDocument.ShakeItCalibration));
             }
         }
 
@@ -236,7 +358,7 @@ namespace QAdvanceFeedback.Core.Runtime
             lock (_gate)
             {
                 _document.ShakeItPrecalibration = data ?? new Dictionary<string, Dictionary<string, RawCalculator.Calibration.PreloadedCalibrationData>>(StringComparer.Ordinal);
-                _dirty = true;
+                MarkSection(nameof(RuntimeDocument.ShakeItPrecalibration));
             }
         }
 
@@ -250,7 +372,7 @@ namespace QAdvanceFeedback.Core.Runtime
             lock (_gate)
             {
                 _document.ShakeItGameBounds = data ?? new Dictionary<string, RawCalculator.Calibration.GameCalibrationBounds>(StringComparer.Ordinal);
-                _dirty = true;
+                MarkSection(nameof(RuntimeDocument.ShakeItGameBounds));
             }
         }
 
@@ -264,10 +386,78 @@ namespace QAdvanceFeedback.Core.Runtime
             lock (_gate)
             {
                 _document.ShakeItSourceTimestamps = data ?? new Dictionary<string, long>(StringComparer.Ordinal);
-                _dirty = true;
+                MarkSection(nameof(RuntimeDocument.ShakeItSourceTimestamps));
             }
         }
 
+
+        // ---- Version 12 (slip-angle plan, Task 15): the Slip Angle learners. Stored BY REFERENCE (a
+        // shallow dictionary copy): KeyedSlipAngleLearner.Export builds fresh state objects on the data
+        // thread and nothing mutates them afterwards, so the flush snapshot can share them safely - and a
+        // deep clone of ~1.5k doubles per learner on every save would buy nothing.
+
+        public void LoadSlipAngleLearners(out Dictionary<string, SlipAngle.SlipAngleKeyState> data)
+        {
+            lock (_gate) { data = new Dictionary<string, SlipAngle.SlipAngleKeyState>(_document.SlipAngleLearners ?? EmptySlipAngle, StringComparer.Ordinal); }
+        }
+
+        public void SaveSlipAngleLearners(Dictionary<string, SlipAngle.SlipAngleKeyState> data)
+        {
+            lock (_gate)
+            {
+                _document.SlipAngleLearners = new Dictionary<string, SlipAngle.SlipAngleKeyState>(data ?? EmptySlipAngle, StringComparer.Ordinal);
+                MarkSection(nameof(RuntimeDocument.SlipAngleLearners));
+            }
+        }
+
+        // ---- Version 13: the Slip Angle speed bands - by reference, like the learners (Export builds fresh
+        // objects on the data thread and nothing mutates them afterwards).
+
+        public void LoadSlipAngleSpeedBands(out Dictionary<string, SlipAngle.SlipAngleSpeedBandSetState> data)
+        {
+            lock (_gate) { data = new Dictionary<string, SlipAngle.SlipAngleSpeedBandSetState>(_document.SlipAngleSpeedBands ?? EmptySpeedBands, StringComparer.Ordinal); }
+        }
+
+        public void SaveSlipAngleSpeedBands(Dictionary<string, SlipAngle.SlipAngleSpeedBandSetState> data)
+        {
+            lock (_gate)
+            {
+                _document.SlipAngleSpeedBands = new Dictionary<string, SlipAngle.SlipAngleSpeedBandSetState>(data ?? EmptySpeedBands, StringComparer.Ordinal);
+                MarkSection(nameof(RuntimeDocument.SlipAngleSpeedBands));
+            }
+        }
+
+        private static readonly Dictionary<string, SlipAngle.SlipAngleSpeedBandSetState> EmptySpeedBands =
+            new Dictionary<string, SlipAngle.SlipAngleSpeedBandSetState>();
+
+        // ---- Version 14: the SMax evidence - by reference (ExportEvidence hands out snapshots it never
+        // mutates again), so a save copies only the dictionary, never the distributions.
+
+        public void LoadScaleEvidence(bool isLock, out Dictionary<string, ScaleEvidenceState> data)
+        {
+            lock (_gate)
+            {
+                Dictionary<string, ScaleEvidenceState> source = isLock ? _document.LockScaleEvidence : _document.SlipScaleEvidence;
+                data = new Dictionary<string, ScaleEvidenceState>(source ?? EmptyScaleEvidence, StringComparer.Ordinal);
+            }
+        }
+
+        public void SaveScaleEvidence(bool isLock, Dictionary<string, ScaleEvidenceState> data)
+        {
+            lock (_gate)
+            {
+                var copy = new Dictionary<string, ScaleEvidenceState>(data ?? EmptyScaleEvidence, StringComparer.Ordinal);
+                if (isLock) _document.LockScaleEvidence = copy;
+                else _document.SlipScaleEvidence = copy;
+                MarkSection(isLock ? nameof(RuntimeDocument.LockScaleEvidence) : nameof(RuntimeDocument.SlipScaleEvidence));
+            }
+        }
+
+        private static readonly Dictionary<string, ScaleEvidenceState> EmptyScaleEvidence =
+            new Dictionary<string, ScaleEvidenceState>();
+
+        private static readonly Dictionary<string, SlipAngle.SlipAngleKeyState> EmptySlipAngle =
+            new Dictionary<string, SlipAngle.SlipAngleKeyState>();
 
         public void LoadGForceLearners(out Dictionary<string, double> accel, out Dictionary<string, double> decel)
             => LoadGForceLearners(out accel, out decel, out _);
@@ -294,7 +484,7 @@ namespace QAdvanceFeedback.Core.Runtime
                 _document.GForceAccelLearnedMaxima = new Dictionary<string, double>(accel ?? EmptyMap, StringComparer.Ordinal);
                 _document.GForceDecelLearnedMaxima = new Dictionary<string, double>(decel ?? EmptyMap, StringComparer.Ordinal);
                 _document.GForceLatLearnedMaxima = new Dictionary<string, double>(lateral ?? EmptyMap, StringComparer.Ordinal);
-                _dirty = true;
+                MarkSection(nameof(RuntimeDocument.GForceAccelLearnedMaxima), nameof(RuntimeDocument.GForceDecelLearnedMaxima), nameof(RuntimeDocument.GForceLatLearnedMaxima));
             }
         }
 
@@ -316,7 +506,7 @@ namespace QAdvanceFeedback.Core.Runtime
             lock (_gate)
             {
                 _document = new RuntimeDocument();
-                _dirty = true;
+                MarkAllSections();
             }
         }
 
@@ -327,12 +517,19 @@ namespace QAdvanceFeedback.Core.Runtime
         /// concurrent callers can never both think they own writing it). Returns null when nothing
         /// has changed - the caller must treat null as "nothing to write".
         /// </summary>
-        public RuntimeDocument SnapshotIfDirty()
+        public RuntimeDocument SnapshotIfDirty() => SnapshotIfDirty(out _);
+
+        /// <summary>As <see cref="SnapshotIfDirty()"/>, also handing over (and clearing) the names of the sections
+        /// changed since the last snapshot.</summary>
+        public RuntimeDocument SnapshotIfDirty(out HashSet<string> changedSections)
         {
             lock (_gate)
             {
+                changedSections = null;
                 if (!_dirty) return null;
                 _dirty = false;
+                changedSections = new HashSet<string>(_dirtySections, StringComparer.Ordinal);
+                _dirtySections.Clear();
                 return Clone(_document);
             }
         }
@@ -344,6 +541,8 @@ namespace QAdvanceFeedback.Core.Runtime
             SlipLearners = CloneLearners(source.SlipLearners),
             GForceAccelLearnedMaxima = new Dictionary<string, double>(source.GForceAccelLearnedMaxima, StringComparer.Ordinal),
             GForceDecelLearnedMaxima = new Dictionary<string, double>(source.GForceDecelLearnedMaxima, StringComparer.Ordinal),
+            // Was missing: the learned lateral maxima never reached the file (found writing the section writer).
+            GForceLatLearnedMaxima = new Dictionary<string, double>(source.GForceLatLearnedMaxima ?? EmptyMap, StringComparer.Ordinal),
             LockScaleLearners = CloneScaleLearners(source.LockScaleLearners),
             SlipScaleLearners = CloneScaleLearners(source.SlipScaleLearners),
             SurfaceSupportByGame = new Dictionary<string, bool>(source.SurfaceSupportByGame, StringComparer.Ordinal),
@@ -356,6 +555,17 @@ namespace QAdvanceFeedback.Core.Runtime
             ShakeItPrecalibration = new Dictionary<string, Dictionary<string, RawCalculator.Calibration.PreloadedCalibrationData>>(source.ShakeItPrecalibration ?? EmptyShakeItPrecalibration, StringComparer.Ordinal),
             ShakeItGameBounds = new Dictionary<string, RawCalculator.Calibration.GameCalibrationBounds>(source.ShakeItGameBounds ?? EmptyShakeItBounds, StringComparer.Ordinal),
             ShakeItSourceTimestamps = new Dictionary<string, long>(source.ShakeItSourceTimestamps ?? EmptyShakeItStamps, StringComparer.Ordinal),
+            ClutchBiteLearners = CloneClutch(source.ClutchBiteLearners),
+            LastClutchKey = source.LastClutchKey,
+            LastKeyDataGame = source.LastKeyDataGame,
+            LastKeyDataCar = source.LastKeyDataCar,
+            LastSlipAngleGame = source.LastSlipAngleGame,
+            LastSlipAngleCar = source.LastSlipAngleCar,
+            LastSlipAngleTier = source.LastSlipAngleTier,
+            SlipAngleLearners = new Dictionary<string, SlipAngle.SlipAngleKeyState>(source.SlipAngleLearners ?? EmptySlipAngle, StringComparer.Ordinal),
+            SlipAngleSpeedBands = new Dictionary<string, SlipAngle.SlipAngleSpeedBandSetState>(source.SlipAngleSpeedBands ?? EmptySpeedBands, StringComparer.Ordinal),
+            LockScaleEvidence = new Dictionary<string, ScaleEvidenceState>(source.LockScaleEvidence ?? EmptyScaleEvidence, StringComparer.Ordinal),
+            SlipScaleEvidence = new Dictionary<string, ScaleEvidenceState>(source.SlipScaleEvidence ?? EmptyScaleEvidence, StringComparer.Ordinal),
         };
 
         private static Dictionary<string, LockAnchorState> CloneLockAnchors(Dictionary<string, LockAnchorState> source)
@@ -370,6 +580,20 @@ namespace QAdvanceFeedback.Core.Runtime
                     S90 = pair.Value.S90,
                     Hits90 = pair.Value.Hits90,
                     Candidate90 = pair.Value.Candidate90,
+                    // The ratio fields too - without them the learned S90/S75 ratios never reached the
+                    // file and every restart fell back to the 0.90/0.70 seeds (LockAnchorPersistenceTests).
+                    RatioLevel75 = pair.Value.RatioLevel75,
+                    RatioHits75 = pair.Value.RatioHits75,
+                    RatioCandidate75 = pair.Value.RatioCandidate75,
+                    RatioLevel90 = pair.Value.RatioLevel90,
+                    RatioHits90 = pair.Value.RatioHits90,
+                    RatioCandidate90 = pair.Value.RatioCandidate90,
+                    PhysicalRatioLevel75 = pair.Value.PhysicalRatioLevel75,
+                    PhysicalRatioHits75 = pair.Value.PhysicalRatioHits75,
+                    PhysicalRatioCandidate75 = pair.Value.PhysicalRatioCandidate75,
+                    PhysicalRatioLevel90 = pair.Value.PhysicalRatioLevel90,
+                    PhysicalRatioHits90 = pair.Value.PhysicalRatioHits90,
+                    PhysicalRatioCandidate90 = pair.Value.PhysicalRatioCandidate90,
                 };
             return copy;
         }
@@ -384,6 +608,14 @@ namespace QAdvanceFeedback.Core.Runtime
                     Samples = pair.Value.Samples,
                     GMech = pair.Value.GMech,
                     K = pair.Value.K,
+                    // Persisted per GripLearnerState's own contract ("so a returning car resumes warm") -
+                    // this copy used to drop them, so they never reached the file (found by the Task G
+                    // save/load round-trip test, the same gap the anchors copy had).
+                    RaiseCandidateG = pair.Value.RaiseCandidateG,
+                    RaiseCandidateHits = pair.Value.RaiseCandidateHits,
+                    LowerCandidateG = pair.Value.LowerCandidateG,
+                    LowerCandidateHits = pair.Value.LowerCandidateHits,
+                    QuietStreak = pair.Value.QuietStreak,
                 };
             return copy;
         }

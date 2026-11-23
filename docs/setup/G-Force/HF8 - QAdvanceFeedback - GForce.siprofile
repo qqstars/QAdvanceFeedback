@@ -51,12 +51,110 @@
       "MinimumForce": 10,
       "Threshold": 5,
       "EffectToChannelsMapStore": {
+        "WheelsImpactContainer": {
+          "FrontLeft": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          },
+          "FrontRight": {
+            "MapsStore": "0;1;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          },
+          "RearLeft": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          },
+          "RearRight": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          }
+        },
+        "QAdvanceFeedbackGForceBackTopContainer": {
+          "Left": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;1;100;Back H.L.;;"
+          },
+          "Right": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;1;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          }
+        },
+        "GearEffectContainer": {
+          "All": {
+            "MapsStore": "0;1;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          }
+        },
+        "CustomEffectContainerQAdvanceFeedback-Back": {
+          "FrontLeft": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;1;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          },
+          "FrontRight": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          },
+          "RearLeft": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;1;100;Back H.L.;;"
+          },
+          "RearRight": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;1;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          }
+        },
+        "QAdvanceFeedbackGForceBackLowContainer": {
+          "Left": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;1;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          },
+          "Right": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          }
+        },
+        "ImpactEffectContainer": {
+          "All": {
+            "MapsStore": "0;1;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;1;100;Back H.R.;;|7;1;100;Back H.L.;;"
+          }
+        },
+        "WheelsVibrationContainer": {
+          "FrontLeft": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          },
+          "FrontRight": {
+            "MapsStore": "0;1;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          },
+          "RearLeft": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          },
+          "RearRight": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          }
+        },
+        "QAdvanceFeedbackGForceBottomRearContainer": {
+          "Left": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          },
+          "Right": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          }
+        },
+        "QAdvanceFeedbackGForceBottomFrontContainer": {
+          "Left": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          },
+          "Right": {
+            "MapsStore": "0;1;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          }
+        },
         "CustomEffectContainer": {
           "FrontLeft": {
             "MapsStore": "0;0;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
           },
           "FrontRight": {
             "MapsStore": "0;1;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          },
+          "RearLeft": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          },
+          "RearRight": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          }
+        },
+        "CustomEffectContainerQAdvanceFeedback-Bottom": {
+          "FrontLeft": {
+            "MapsStore": "0;1;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+          },
+          "FrontRight": {
+            "MapsStore": "0;0;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
           },
           "RearLeft": {
             "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
@@ -79,80 +177,14 @@
             "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
           }
         },
-        "WheelsVibrationContainer": {
-          "FrontLeft": {
-            "MapsStore": "0;0;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          },
-          "FrontRight": {
-            "MapsStore": "0;1;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          },
-          "RearLeft": {
-            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          },
-          "RearRight": {
-            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          }
-        },
         "GearMissedContainer": {
           "All": {
             "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
           }
         },
-        "ImpactEffectContainer": {
-          "All": {
-            "MapsStore": "0;1;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;1;100;Back H.R.;;|7;1;100;Back H.L.;;"
-          }
-        },
         "RPMContainer": {
           "All": {
             "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          }
-        },
-        "GearEffectContainer": {
-          "All": {
-            "MapsStore": "0;1;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          }
-        },
-        "CustomEffectContainerQAdvanceFeedback-Bottom": {
-          "FrontLeft": {
-            "MapsStore": "0;1;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          },
-          "FrontRight": {
-            "MapsStore": "0;0;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          },
-          "RearLeft": {
-            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          },
-          "RearRight": {
-            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          }
-        },
-        "CustomEffectContainerQAdvanceFeedback-Back": {
-          "FrontLeft": {
-            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;1;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          },
-          "FrontRight": {
-            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          },
-          "RearLeft": {
-            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;1;100;Back H.L.;;"
-          },
-          "RearRight": {
-            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;1;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          }
-        },
-        "WheelsImpactContainer": {
-          "FrontLeft": {
-            "MapsStore": "0;0;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          },
-          "FrontRight": {
-            "MapsStore": "0;1;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          },
-          "RearLeft": {
-            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
-          },
-          "RearRight": {
-            "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
           }
         }
       },
@@ -281,245 +313,49 @@
       "ContainerType": "GroupContainer",
       "IsEnabled": true,
       "Gain": 100.0,
-      "Description": "Data Source - DONOT MODIFY",
-      "EffectsContainers": [
-        {
-          "ContainerType": "WheelsLockContainer",
-          "IsEnabled": true,
-          "Gain": 100.0,
-          "IsLock": true,
-          "UseLegacyIracingAlgorythm": true,
-          "LockSensibility": 50.0,
-          "BrakeFilter": 20,
-          "ContainerId": "153ba5c8-d620-4c7c-89bf-eaae714c17ce",
-          "AggregationMode": "Corners",
-          "Filter": {
-            "GammaValue": 1.0,
-            "InputGain": 100.0,
-            "MinimumForce": 0,
-            "Threshold": 0,
-            "FilterType": "GammaFilter"
-          },
-          "Output": {
-            "PropertyName": "WheelLock.IRacing",
-            "ExportProperty": true,
-            "DisableOutput": true,
-            "OutputType": "VibrationOutput"
-          }
-        },
-        {
-          "ContainerType": "WheelsSlipContainer",
-          "IsEnabled": true,
-          "Gain": 100.0,
-          "BrakeFilter": 99,
-          "MuteWhenLockEffectIsActive": false,
-          "ThrottleFilter": 10,
-          "UseBrakeFilter": true,
-          "UseThrottleFilter": true,
-          "UseLegacyIracingAlgorythm": true,
-          "ContainerId": "d5130b00-f2f4-4f3d-a3a9-84c8a2e00967",
-          "AggregationMode": "Corners",
-          "Filter": {
-            "GammaValue": 1.0,
-            "InputGain": 100.0,
-            "MinimumForce": 0,
-            "Threshold": 0,
-            "FilterType": "GammaFilter"
-          },
-          "Output": {
-            "PropertyName": "WheelSlip.IRacing",
-            "ExportProperty": true,
-            "DisableOutput": true,
-            "OutputType": "VibrationOutput"
-          }
-        },
-        {
-          "ContainerType": "TractionLossContainer",
-          "IsEnabled": true,
-          "Gain": 100.0,
-          "ContainerId": "46da4bf4-31fa-4c99-9bca-b65ff3d85654",
-          "AggregationMode": "Left/Right",
-          "Filter": {
-            "GammaValue": 3.0,
-            "InputGain": 160.0,
-            "MinimumForce": 15,
-            "Threshold": 55,
-            "FilterType": "GammaFilter"
-          },
-          "Output": {
-            "PropertyName": "TractionLost.LR",
-            "ExportProperty": true,
-            "DisableOutput": true,
-            "OutputType": "VibrationOutput"
-          }
-        },
-        {
-          "ContainerType": "TractionLossContainer",
-          "IsEnabled": true,
-          "Gain": 100.0,
-          "ContainerId": "8feaf2c3-d893-4b9d-b7ee-3ad163ed930b",
-          "AggregationMode": "Mono",
-          "Filter": {
-            "GammaValue": 5.0,
-            "InputGain": 160.0,
-            "MinimumForce": 15,
-            "Threshold": 55,
-            "FilterType": "GammaFilter"
-          },
-          "Output": {
-            "PropertyName": "TractionLost.Mono",
-            "ExportProperty": true,
-            "DisableOutput": true,
-            "OutputType": "VibrationOutput"
-          }
-        },
-        {
-          "ContainerType": "CustomEffectContainer",
-          "IsEnabled": true,
-          "Gain": 100.0,
-          "Description": "Source - Clutch 10% to 65%",
-          "FrontLeftFormula": {
-            "Expression": "if([Clutch]>=40 && [Clutch]<70\r\n\t, 100 - (70-[Clutch]) / (70-40) * 100\r\n\t, if([Clutch]>10 && [Clutch]<40\r\n\t\t, 100 - ([Clutch]-10) / (40-10) * 100\r\n\t\t, 0))"
-          },
-          "FrontRightFormula": {
-            "Expression": ""
-          },
-          "RearLeftFormula": {
-            "Expression": ""
-          },
-          "RearRightFormula": {
-            "Expression": ""
-          },
-          "ForceFrequencies": false,
-          "FrontLeftFrequencyFormula": {
-            "Expression": ""
-          },
-          "FrontRightFrequencyFormula": {
-            "Expression": ""
-          },
-          "RearLeftFrequencyFormula": {
-            "Expression": ""
-          },
-          "RearRightFrequencyFormula": {
-            "Expression": ""
-          },
-          "AlwaysExecute": false,
-          "ContainerId": "b08104b9-4dfa-42a0-b38b-13a426cb17b2",
-          "AggregationMode": "Mono",
-          "Filter": {
-            "GammaValue": 2.0,
-            "InputGain": 150.0,
-            "MinimumForce": 0,
-            "Threshold": 0,
-            "FilterType": "GammaFilter"
-          },
-          "Output": {
-            "PropertyName": "MyDataFields.Clutch40",
-            "ExportProperty": true,
-            "DisableOutput": true,
-            "OutputType": "VibrationOutput"
-          }
-        }
-      ],
-      "ContainerId": "abc9907a-e503-44d8-b723-5c61ab0d4b4d",
-      "Filter": null,
-      "Output": null
-    },
-    {
-      "ContainerType": "GroupContainer",
-      "IsEnabled": true,
-      "Gain": 100.0,
       "Description": "G-Force-QAdvanceFeedback",
       "EffectsContainers": [
         {
-          "ContainerType": "CustomEffectContainer",
+          "ContainerType": "QAdvanceFeedbackGForceBackTopContainer",
           "IsEnabled": true,
           "Gain": 100.0,
-          "Description": "G-Force-QAdvanceFeedback-Bottom",
-          "FrontLeftFormula": {
-            "Expression": "[QAdvanceFeedback.GForce.Bottom.FrontLeft]"
-          },
-          "FrontRightFormula": {
-            "Expression": "[QAdvanceFeedback.GForce.Bottom.FrontRight]"
-          },
-          "RearLeftFormula": {
-            "Expression": "[QAdvanceFeedback.GForce.Bottom.RearLeft]"
-          },
-          "RearRightFormula": {
-            "Expression": "[QAdvanceFeedback.GForce.Bottom.RearRight]"
-          },
-          "ForceFrequencies": false,
-          "FrontLeftFrequencyFormula": {
-            "Expression": ""
-          },
-          "FrontRightFrequencyFormula": {
-            "Expression": ""
-          },
-          "RearLeftFrequencyFormula": {
-            "Expression": ""
-          },
-          "RearRightFrequencyFormula": {
-            "Expression": ""
-          },
-          "AlwaysExecute": false,
-          "ContainerId": "4e97e104-9743-4f21-b63b-428e853ead92",
-          "AggregationMode": "Corners",
-          "Filter": {
-            "GammaValue": 1.0,
-            "InputGain": 100.0,
-            "MinimumForce": 0,
-            "Threshold": 0,
-            "FilterType": "GammaFilter"
-          },
+          "ContainerId": "46f64e33-b3a8-46f9-b780-34c696020f39",
+          "AggregationMode": "Left/Right",
+          "Filter": null,
           "Output": {
-            "AssignToChannelGroup": true,
-            "ChannelGroupName": "QAdvanceFeedback-Bottom",
             "OutputType": "VibrationOutput"
           }
         },
         {
-          "ContainerType": "CustomEffectContainer",
+          "ContainerType": "QAdvanceFeedbackGForceBackLowContainer",
           "IsEnabled": true,
           "Gain": 100.0,
-          "Description": "G-Force-QAdvanceFeedback-Back",
-          "FrontLeftFormula": {
-            "Expression": "[QAdvanceFeedback.GForce.Back.LowLeft]"
-          },
-          "FrontRightFormula": {
-            "Expression": "[QAdvanceFeedback.GForce.Back.LowRight]"
-          },
-          "RearLeftFormula": {
-            "Expression": "[QAdvanceFeedback.GForce.Back.TopLeft]"
-          },
-          "RearRightFormula": {
-            "Expression": "[QAdvanceFeedback.GForce.Back.TopRight]"
-          },
-          "ForceFrequencies": false,
-          "FrontLeftFrequencyFormula": {
-            "Expression": ""
-          },
-          "FrontRightFrequencyFormula": {
-            "Expression": ""
-          },
-          "RearLeftFrequencyFormula": {
-            "Expression": ""
-          },
-          "RearRightFrequencyFormula": {
-            "Expression": ""
-          },
-          "AlwaysExecute": false,
-          "ContainerId": "c68d12e2-0cbf-4fcc-a6b6-0e6dc445ddc2",
-          "AggregationMode": "Corners",
-          "Filter": {
-            "GammaValue": 1.0,
-            "InputGain": 100.0,
-            "MinimumForce": 0,
-            "Threshold": 0,
-            "FilterType": "GammaFilter"
-          },
+          "ContainerId": "9c11e45c-d19f-411d-a9e6-74da2ed14512",
+          "AggregationMode": "Left/Right",
+          "Filter": null,
           "Output": {
-            "AssignToChannelGroup": true,
-            "ChannelGroupName": "QAdvanceFeedback-Back",
+            "OutputType": "VibrationOutput"
+          }
+        },
+        {
+          "ContainerType": "QAdvanceFeedbackGForceBottomRearContainer",
+          "IsEnabled": true,
+          "Gain": 100.0,
+          "ContainerId": "34f664fb-9714-432f-8e80-73de5c889838",
+          "AggregationMode": "Left/Right",
+          "Filter": null,
+          "Output": {
+            "OutputType": "VibrationOutput"
+          }
+        },
+        {
+          "ContainerType": "QAdvanceFeedbackGForceBottomFrontContainer",
+          "IsEnabled": true,
+          "Gain": 100.0,
+          "ContainerId": "31b05b70-055c-4860-a352-9729695a0e55",
+          "AggregationMode": "Left/Right",
+          "Filter": null,
+          "Output": {
             "OutputType": "VibrationOutput"
           }
         }

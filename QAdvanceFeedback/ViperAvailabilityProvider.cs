@@ -8,10 +8,10 @@ namespace QAdvanceFeedback
     /// <summary>
     /// Adapts a live <see cref="PluginManager"/> to <see cref="ViperAvailabilityResolver"/> so the
     /// settings UI can decide whether to show the "plugin not detected" warning under the Viper
-    /// source-mode option. The twin of <see cref="MotorsExportAvailabilityProvider"/> and held to the
+    /// source-mode option. Once the twin of the (since removed) ShakeIt Motors export provider, held to the
     /// same discipline: never throws, degrades silently, logs at most once.
     /// <para/>
-    /// ONE ANSWER FOR BOTH CHANNELS, unlike the ShakeIt provider. Lock and Slip read the SAME four Viper
+    /// ONE ANSWER FOR BOTH CHANNELS, unlike the old ShakeIt export provider. Lock and Slip read the SAME four Viper
     /// properties and differ only in sign, so there is a single availability fact; a per-channel API
     /// here would imply a distinction that does not exist.
     /// <para/>
@@ -38,8 +38,8 @@ namespace QAdvanceFeedback
                 // Distinct from the resolver simply concluding "not installed" - the common, expected,
                 // NOT-a-fault case already surfaced by the inline UI warning. This is a real exception
                 // out of GetPropertyValue, which IS worth recording.
-                HealthRegistry.Report(HealthSubsystems.ShakeItExport, HealthSeverity.Degraded,
-                    "Health.Impact.ShakeItExport", e.ToString());
+                HealthRegistry.Report(HealthSubsystems.ViperAvailability, HealthSeverity.Degraded,
+                    "Health.Impact.ViperAvailability", e.ToString());
                 return null;
             }
         }

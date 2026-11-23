@@ -13,9 +13,13 @@ namespace QAdvanceFeedback.Settings
     /// </summary>
     public sealed class KeyDataPointEntry
     {
-        public double SMax { get; set; }
-        public double S90 { get; set; }
-        public double S75 { get; set; }
+        private double _sMax, _s90, _s75;
+
+        // Clamped to the hard SMax limit on every write, deserialisation included - see
+        // KeyDataPointSettings.MaxSMax.
+        public double SMax { get => _sMax; set => _sMax = KeyDataPointSettings.AtMostMaxSMax(value); }
+        public double S90 { get => _s90; set => _s90 = KeyDataPointSettings.AtMostMaxSMax(value); }
+        public double S75 { get => _s75; set => _s75 = KeyDataPointSettings.AtMostMaxSMax(value); }
 
         /// <summary>Whether this slot has already had the learned values written in once. Per SLOT, not
         /// per channel, which is what makes "a game you have never played seeds again" work.</summary>
@@ -245,6 +249,18 @@ namespace QAdvanceFeedback.Settings
         public const double MinValue = 0.0;
         public const double MaxValue = 100.0;
 
+        /// <summary>THE HARD SMAX LIMIT for typed values (owner, 2026-11-19) - the same absolute 95 the
+        /// learner and the crossing gates obey (<see cref="KeyedScaleLearner.MaxLearnedCeiling"/>). Every
+        /// stored key-data value (<see cref="KeyDataPointEntry"/>) and Custom reference
+        /// (<see cref="KeyDataPointDefaultSet"/>) is clamped to it on the way in, so the page, the ShakeIt
+        /// panel and a hand-edited file all land on the same rule.</summary>
+        public const double MaxSMax = KeyedScaleLearner.MaxLearnedCeiling;
+
+        /// <summary>A typed source-scale value clamped to <see cref="MaxSMax"/>. Only values still inside the
+        /// source range (up to <see cref="MaxValue"/>) are clamped; anything beyond it - and non-finite
+        /// values - pass through unchanged so <see cref="IsValid"/> still rejects them as nonsense.</summary>
+        public static double AtMostMaxSMax(double value) => value > MaxSMax && value <= MaxValue ? MaxSMax : value;
+
         /// <summary>
         /// The slot a given (mode, game, source) combination stores under.
         /// <para/>
@@ -330,6 +346,16 @@ namespace QAdvanceFeedback.Settings
         public static KnownFeedbackSource ClassifyExact(string sourceIdentity, bool isLockChannel)
         {
             if (string.IsNullOrWhiteSpace(sourceIdentity)) return KnownFeedbackSource.Unknown;
+
+            // A ShakeIt Built-in key carries the channel's ShakeIt algorithm fingerprint
+            // (docs\shakeit-source-design.md §6). Shipped defaults are per source TYPE, so a fingerprinted
+            // ShakeIt identity classifies as ShakeIt - for the engine and the panel alike. Only the ShakeIt
+            // verdict is accepted for a stripped identity: no other source carries a fingerprint.
+            string baseIdentity = Core.ShakeItEffects.ShakeItAlgorithmFingerprint.BaseIdentity(sourceIdentity);
+            if (!ReferenceEquals(baseIdentity, sourceIdentity))
+                return string.Equals(baseIdentity, ShippedShakeItIdentity(isLockChannel), StringComparison.OrdinalIgnoreCase)
+                    ? KnownFeedbackSource.ShakeItMotorsExport
+                    : KnownFeedbackSource.Unknown;
 
             if (string.Equals(sourceIdentity, ShippedRawIdentity(isLockChannel), StringComparison.OrdinalIgnoreCase))
                 return KnownFeedbackSource.QAdvanceFeedbackRaw;

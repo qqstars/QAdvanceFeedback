@@ -1,0 +1,122 @@
+<UserControl x:Class="QAdvanceFeedbackViews.SettingsPageView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mah="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro"
+             xmlns:v="clr-namespace:QAdvanceFeedbackViews"
+             v:ViewModelLifetime.Activate="True">
+  <!-- The plugin settings page (docs\full-mvvm-plan.md 3.3), bound to a SettingsPageViewModel: the tabs,
+       the unapplied-changes banner and the Apply / Restore all defaults bar. Laid out exactly like the old
+       Settings\SettingsControl.xaml; the TabControl and TabItem x:Names are the ones
+       tools\screenshot-harness looks up. Each tab hosts its own bound view inside the same ScrollViewer as
+       before. Activated while shown: the page view model catches up with live changes nobody signalled. -->
+  <UserControl.Resources>
+    <v:VisibleWhenConverter x:Key="VisibleWhen"/>
+
+    <!-- The page's implicit styles. They reach into every nested tab view on purpose - that is what lines
+         the tabs' controls up (the nested views do not repeat them). Keyed resources a tab region uses
+         (script-type button style, brushes) live in that tab's own view. -->
+    <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+      <Setter Property="Margin" Value="4"/>
+      <Setter Property="MinWidth" Value="200"/>
+    </Style>
+
+    <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+      <Setter Property="Margin" Value="4"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+
+    <Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+      <Setter Property="Margin" Value="4"/>
+      <Setter Property="MinWidth" Value="160"/>
+    </Style>
+
+    <Style TargetType="GroupBox" BasedOn="{StaticResource {x:Type GroupBox}}">
+      <Setter Property="Margin" Value="8"/>
+      <Setter Property="Padding" Value="8"/>
+    </Style>
+
+    <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+      <Setter Property="Margin" Value="4"/>
+    </Style>
+
+    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+      <Setter Property="Margin" Value="4"/>
+    </Style>
+
+    <Style TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
+      <Setter Property="Padding" Value="10,4"/>
+    </Style>
+
+    <Style TargetType="mah:NumericUpDown" BasedOn="{StaticResource {x:Type mah:NumericUpDown}}">
+      <Setter Property="Margin" Value="4"/>
+      <Setter Property="Width" Value="80"/>
+      <Setter Property="Minimum" Value="0"/>
+      <Setter Property="Maximum" Value="100"/>
+      <Setter Property="Interval" Value="1"/>
+      <Setter Property="StringFormat" Value="0.#"/>
+      <Setter Property="InterceptArrowKeys" Value="True"/>
+      <Setter Property="InterceptMouseWheel" Value="True"/>
+    </Style>
+  </UserControl.Resources>
+
+  <DockPanel>
+    <!-- Apply is enabled exactly while the page holds unapplied edits (the command's CanExecute is
+         IsDirty) - the same fact the banner shows, so the two can never disagree. -->
+    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="8,8,8,0">
+      <Button x:Name="ApplyButton" Padding="16,4" Content="{Binding ApplyLabel, Mode=OneWay}" Command="{Binding ApplyCommand}"/>
+      <Button x:Name="RestoreAllDefaultsButton" Padding="16,4" Content="{Binding RestoreDefaultsLabel, Mode=OneWay}"
+              Command="{Binding RestoreDefaultsCommand}"/>
+    </StackPanel>
+
+    <!-- Sits directly above the two buttons (Dock=Bottom stacks upward), so "you have not applied this
+         yet" is the last thing between an edit and the driver walking away from the page (owner). -->
+    <TextBlock DockPanel.Dock="Bottom" x:Name="UnappliedChangesBanner" Margin="12,8,8,0"
+               TextWrapping="Wrap" FontWeight="Bold" Foreground="#FFCC4400"
+               Text="{Binding UnappliedBannerText, Mode=OneWay}"
+               Visibility="{Binding IsDirty, Converter={StaticResource VisibleWhen}}"/>
+
+    <TabControl x:Name="MainTabs">
+
+      <TabItem x:Name="WheelLockTab" Header="{v:Loc Tab.WheelLock}">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <v:WheelChannelPageView DataContext="{Binding LockTab}" Grid.IsSharedSizeScope="True"/>
+        </ScrollViewer>
+      </TabItem>
+
+      <TabItem x:Name="WheelSlipTab" Header="{v:Loc Tab.WheelSlip}">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <v:WheelChannelPageView DataContext="{Binding SlipTab}" Grid.IsSharedSizeScope="True"/>
+        </ScrollViewer>
+      </TabItem>
+
+      <!-- SLIP ANGLE (docs\slip-angle-design.md 9.9): laid out exactly like the Wheel Lock tab. -->
+      <TabItem x:Name="SlipAngleTab" Header="{v:Loc Tab.SlipAngle}">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <v:SlipAngleTabView x:Name="SlipAngleTabView" DataContext="{Binding SlipAngleTab}"/>
+        </ScrollViewer>
+      </TabItem>
+
+      <TabItem x:Name="GForceTab" Header="{v:Loc Tab.GForce}">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <v:GForcePageView DataContext="{Binding GForceTab}" Grid.IsSharedSizeScope="True"/>
+        </ScrollViewer>
+      </TabItem>
+
+      <!-- CLUTCH BITE (docs\clutch-bite-design.md): the shared view, the same view model shape as the
+           native ShakeIt effect's panel. It applies at once through the settings hub (like the key data),
+           so nothing here is part of the page's Apply. -->
+      <TabItem x:Name="ClutchTab" Header="{v:Loc Tab.Clutch}">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <v:ClutchBiteView x:Name="ClutchBiteView" DataContext="{Binding ClutchTab}"/>
+        </ScrollViewer>
+      </TabItem>
+
+      <TabItem x:Name="GeneralTab" Header="{v:Loc Tab.General}">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <v:GeneralPageView DataContext="{Binding GeneralTab}"/>
+        </ScrollViewer>
+      </TabItem>
+
+    </TabControl>
+  </DockPanel>
+</UserControl>

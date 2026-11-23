@@ -630,7 +630,8 @@ suspicions cleared by reading the code.
    `ObserveGeneral` still tests the live one, which is correct for it.
 4. **An unusable snapshot failed silently.** `TeachingBasis` now falls back to the live reading when the
    snapshot is not something the learner would accept, rather than handing over a value that is
-   discarded.
+   discarded. **SUPERSEDED 2026-11-19 (§10):** that live fallback taught the post-crossing runaway and was
+   the cause of SMax 100/90/70. A crossing with an unusable snapshot is now rejected instead.
 5. **`ApplyCrossChannelFallback` let a NaN through** - `NaN <= 0.0` is false, so the bare positivity
    test would have published a NaN ceiling into `Rescale`. Not reachable today; the guard is free.
 
@@ -739,3 +740,85 @@ rather than at the bottom of the ramp. Both are needed for the learned ceiling t
 the number the old constant warm-up produced — otherwise every test with an exact derived expectation
 (Rescale outputs, borrowed Tier-3 references, the front-bias mutation gap) shifts by a few points. A
 first attempt that held recovery at the ramp's bottom taught 88 instead of 90.
+
+---
+
+## 10. SMax 100/90/70 — the walk-back, the live fallback, and the 95 ceiling (2026-11-19)
+
+Owner report: Lock and Slip learned **SMax 100, S90 90, S75 70** from both the ShakeIt and the Raw source.
+That is impossible: a source at 100 is a fully locked or spinning wheel, never the grip limit. 1.1.0 and
+1.2.0 replay identically on the two field sessions that show it (FH6 `session-20260925-115227`, Viper
+`session-20260925-201807`), so this was not a 1.2.0 regression. It is a defect in the shared gate
+(`Core\Normalized\CrossingGate.cs`, used by Lock, Slip and Slip Angle).
+
+### 10.1 What went wrong — FH6 frame 5300
+
+| frame | Lock source | G | what the gate did |
+|---|---|---|---|
+| 5298 | 0.0 | 1.83 | flat |
+| **5299** | **0.0** | **1.90** | the frame the rise STARTED from |
+| **5300** | **7.2** | **1.87** | crossing detected (source rising, G falling) → walk back |
+| 5301 | 67.5 | 1.54 | inside the 1 s hold window |
+| 5306 | 90.0 | 1.42 | |
+| 5334–5340 | 100.0 | 1.32 → 1.26 | all four wheels locked |
+
+1. **The walk-back stepped one frame too far.** It stepped back while "the previous frame is lower" and
+   "its G is inside the 10 % band" held. Both hold for 5299, the flat frame the rise started from. 5299
+   also has the highest G, so the snapshot was its source value: **0**.
+2. **A 0 snapshot fell back to the live value.** `TeachingBasis` treated 0 as "no snapshot" and taught
+   each hold-window frame's own live value instead: 67.5, 90, 97.5, then 100, 100, 100.
+3. **P90 then settled at 100.** 24 of the session's 119 taught samples were 100, all of them from such
+   windows, enough for the 90th percentile of the at-limit distribution to reach 100 (frame 5346).
+   S90/S75 follow SMax, so they became 90/70. The real crossings in the session were 78.9 and 67.5.
+
+The Viper session did the same in one frame (frame 2954 flat at 0, frame 2955 jumps to 67.5).
+
+### 10.2 The rules now
+
+- **The walk-back stays inside the rise.** A frame may be stepped onto only if it rose from its own
+  predecessor (recorded when the frame is written, `_roseIntoHistory`, so the oldest frame in the ring is
+  judged against its real predecessor). The frame a rise starts from is never a candidate. Genuine
+  progressive rises still walk back to their grip peak.
+- **A window teaches only its snapshot.** While a crossing window is open, `TeachingBasis` and
+  `TeachingFallbackBasis` return the snapshot, never the live value. A crossing whose snapshot is not
+  usable (≤ 0 or non-finite) is **rejected**: no window opens. Every snapshot the fixed walk can choose is
+  a rising frame, so this never fires in practice; it is the guard against the live fallback returning.
+- **The learn ceiling.** `CrossingGateParameters.LearnCeiling`: every taught basis (snapshot, or the live
+  value outside a window when a non-crossing weight is configured) is clamped to it. Lock and Slip:
+  **95** (`LockCrossingGate.LearnCeiling` = `SlipCrossingGate.LearnCeiling` =
+  `KeyedScaleLearner.MaxLearnedCeiling`). Detection is unchanged: the trend still clamps only to the
+  100 source ceiling. Slip Angle keeps its 45° gate ceiling; its learned-Max cap depends on the source
+  and lives in the Slip Angle learner (see `docs\slip-angle-design.md`).
+- **The learner's hard limit.** `KeyedScaleLearner.MaxLearnedCeiling = 95` caps every ceiling it answers
+  (`LearnedCeiling`, all tiers, `PublishedCeiling`, `PersistedCeiling`, `ExportAll`). `ImportAll` and
+  `LoadCold` clamp a stored value above 95, so a parameters file saved at 100 by an older version heals
+  on the next start.
+- **Typed values too.** A Manual key-data triple and a Custom cold-start reference are stored at most 95
+  (`KeyDataPointSettings.MaxSMax`, clamped in `KeyDataPointEntry` and `KeyDataPointDefaultSet`) — from
+  the settings page, the ShakeIt panel, or a hand-edited file. Values beyond the 0–100 source range are
+  still rejected as invalid, not clamped.
+
+FH6 frame 5300 now snapshots 7.2. That is below the observation floor, so the window teaches nothing.
+Viper frame 2955 snapshots 67.5, which matches its other real crossing.
+
+### 10.3 Measured — the 14-log corpus, cold start, through the real persistence path
+
+| session | Lock SMax before → after | Slip SMax before → after |
+|---|---|---|
+| 1.0.9 FH6 `115227` | **100.0 → 74.4** | 54.9 → 54.9 |
+| 1.0.9 Viper `201807` | **100.0 → 67.5** | 36.2 → 26.1 |
+| the other 12 (1.0.6, 1.0.9, 1.1.0) | unchanged or +0.3 … +3 | unchanged or +0.5 … +3 |
+
+No session reaches the 95 ceiling. The small increases elsewhere come from snapshots that no longer land
+on the frame a rise started from.
+
+### 10.4 Tests
+
+`CrossingGateSmaxFixTests` (the FH6 and Viper sequences, a progressive rise, every window frame teaching
+the snapshot, the 95 ceiling), `KeyedScaleLearnerCeilingCapTests`, `KeyDataSMaxLimitTests`.
+`CrossingGateEquivalenceTests` keeps the frozen pre-extraction oracles untouched, as their header
+requires. It still compares window opening, `Qualified`, `CrossedThisFrame` and every weight bit for bit.
+The taught basis is compared wrapper against bare gate, and against the oracle only outside a window
+(capped at 95). Re-baselined: `CrossingGateWalkBackTests` (the dip a rise starts from is no longer
+reachable: 45 → 55), `CrossingGateSaturatedWheelTests` (the 98.249 snapshot now teaches 95),
+`ColdStartAndCrossCarSeedTests` (the helper ramp's first frame is where its rise starts: 88.9 → 87.0).

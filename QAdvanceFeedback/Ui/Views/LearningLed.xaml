@@ -1,0 +1,77 @@
+<UserControl x:Class="QAdvanceFeedbackViews.LearningLed"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:v="clr-namespace:QAdvanceFeedbackViews"
+             x:Name="Root" Focusable="False" VerticalAlignment="Stretch" Background="Transparent"
+             Visibility="{Binding IsVisible, Converter={x:Static v:LearningLedConverters.VisibleWhen}}"
+             ToolTip="{Binding ToolTip}" ToolTipService.ShowOnDisabled="True" ToolTipService.InitialShowDelay="200">
+  <!-- LEARNING INDICATOR (docs\learning-maturity-indicator-report.md). Bound one way to a LearningIndicator
+       (IsVisible / Level / IsBorrowed / OwnLevel / ToolTip): collapsed - no space - when hidden. Colours: Red only at
+       0%, Orange below 25%, Yellow 25-50%, Azure 50-75%, Blue 75-100%, Green 100%; a borrowed confidence shows its left
+       half in the colour of the key's own confidence (Red while it has none), its right half the borrowed level. Sized to 42% of the height the
+       containing row gives it (the text box beside it), centred vertically. A radial gradient (bright core,
+       main colour, dark edge), a thin dark rim and a soft white glint make it read as a real LED. -->
+  <UserControl.Resources>
+    <RadialGradientBrush x:Key="LedGreen" GradientOrigin="0.35,0.3" Center="0.42,0.38" RadiusX="0.62" RadiusY="0.62">
+      <GradientStop Color="#FFB9F6CA" Offset="0"/><GradientStop Color="#FF00C853" Offset="0.55"/><GradientStop Color="#FF00601A" Offset="1"/>
+    </RadialGradientBrush>
+    <RadialGradientBrush x:Key="LedAzure" GradientOrigin="0.35,0.3" Center="0.42,0.38" RadiusX="0.62" RadiusY="0.62">
+      <GradientStop Color="#FFB3E5FC" Offset="0"/><GradientStop Color="#FF00B0FF" Offset="0.55"/><GradientStop Color="#FF005B85" Offset="1"/>
+    </RadialGradientBrush>
+    <RadialGradientBrush x:Key="LedBlue" GradientOrigin="0.35,0.3" Center="0.42,0.38" RadiusX="0.62" RadiusY="0.62">
+      <GradientStop Color="#FF82B1FF" Offset="0"/><GradientStop Color="#FF2962FF" Offset="0.55"/><GradientStop Color="#FF0D2A80" Offset="1"/>
+    </RadialGradientBrush>
+    <RadialGradientBrush x:Key="LedYellow" GradientOrigin="0.35,0.3" Center="0.42,0.38" RadiusX="0.62" RadiusY="0.62">
+      <GradientStop Color="#FFFFF9C4" Offset="0"/><GradientStop Color="#FFFFD600" Offset="0.55"/><GradientStop Color="#FF8A7300" Offset="1"/>
+    </RadialGradientBrush>
+    <RadialGradientBrush x:Key="LedOrange" GradientOrigin="0.35,0.3" Center="0.42,0.38" RadiusX="0.62" RadiusY="0.62">
+      <GradientStop Color="#FFFFD180" Offset="0"/><GradientStop Color="#FFFF9100" Offset="0.55"/><GradientStop Color="#FF9A4600" Offset="1"/>
+    </RadialGradientBrush>
+    <RadialGradientBrush x:Key="LedRed" GradientOrigin="0.35,0.3" Center="0.42,0.38" RadiusX="0.62" RadiusY="0.62">
+      <GradientStop Color="#FFFF8A80" Offset="0"/><GradientStop Color="#FFFF1744" Offset="0.55"/><GradientStop Color="#FF7F0000" Offset="1"/>
+    </RadialGradientBrush>
+    <!-- Keeps only the left half of whatever it masks. -->
+    <LinearGradientBrush x:Key="LeftHalf" StartPoint="0,0.5" EndPoint="1,0.5">
+      <GradientStop Color="#FF000000" Offset="0.5"/><GradientStop Color="#00000000" Offset="0.5"/>
+    </LinearGradientBrush>
+    <RadialGradientBrush x:Key="LedGlint" GradientOrigin="0.34,0.28" Center="0.36,0.3" RadiusX="0.32" RadiusY="0.26">
+      <GradientStop Color="#D8FFFFFF" Offset="0"/><GradientStop Color="#00FFFFFF" Offset="1"/>
+    </RadialGradientBrush>
+  </UserControl.Resources>
+  <Grid VerticalAlignment="Center" HorizontalAlignment="Center"
+        Width="{Binding ActualHeight, ElementName=Root, Converter={x:Static v:LearningLedConverters.Size}}"
+        Height="{Binding ActualHeight, ElementName=Root, Converter={x:Static v:LearningLedConverters.Size}}">
+    <Ellipse Stroke="#80000000" StrokeThickness="0.75">
+      <Ellipse.Style>
+        <Style TargetType="Ellipse">
+          <Setter Property="Fill" Value="{StaticResource LedRed}"/>
+          <Style.Triggers>
+            <DataTrigger Binding="{Binding Level}" Value="Orange"><Setter Property="Fill" Value="{StaticResource LedOrange}"/></DataTrigger>
+            <DataTrigger Binding="{Binding Level}" Value="Yellow"><Setter Property="Fill" Value="{StaticResource LedYellow}"/></DataTrigger>
+            <DataTrigger Binding="{Binding Level}" Value="Blue"><Setter Property="Fill" Value="{StaticResource LedBlue}"/></DataTrigger>
+            <DataTrigger Binding="{Binding Level}" Value="Azure"><Setter Property="Fill" Value="{StaticResource LedAzure}"/></DataTrigger>
+            <DataTrigger Binding="{Binding Level}" Value="Green"><Setter Property="Fill" Value="{StaticResource LedGreen}"/></DataTrigger>
+          </Style.Triggers>
+        </Style>
+      </Ellipse.Style>
+    </Ellipse>
+    <!-- Borrowed: the left half the colour of this key's own confidence (Red while it has none) over the borrowed
+         level on the right (owner, 2026-11-22). -->
+    <Ellipse OpacityMask="{StaticResource LeftHalf}" Stroke="#80000000" StrokeThickness="0.75" IsHitTestVisible="False"
+             Visibility="{Binding IsBorrowed, Converter={x:Static v:LearningLedConverters.VisibleWhen}}">
+      <Ellipse.Style>
+        <Style TargetType="Ellipse">
+          <Setter Property="Fill" Value="{StaticResource LedRed}"/>
+          <Style.Triggers>
+            <DataTrigger Binding="{Binding OwnLevel}" Value="Orange"><Setter Property="Fill" Value="{StaticResource LedOrange}"/></DataTrigger>
+            <DataTrigger Binding="{Binding OwnLevel}" Value="Yellow"><Setter Property="Fill" Value="{StaticResource LedYellow}"/></DataTrigger>
+            <DataTrigger Binding="{Binding OwnLevel}" Value="Blue"><Setter Property="Fill" Value="{StaticResource LedBlue}"/></DataTrigger>
+            <DataTrigger Binding="{Binding OwnLevel}" Value="Azure"><Setter Property="Fill" Value="{StaticResource LedAzure}"/></DataTrigger>
+            <DataTrigger Binding="{Binding OwnLevel}" Value="Green"><Setter Property="Fill" Value="{StaticResource LedGreen}"/></DataTrigger>
+          </Style.Triggers>
+        </Style>
+      </Ellipse.Style>
+    </Ellipse>
+    <Ellipse Fill="{StaticResource LedGlint}" IsHitTestVisible="False"/>
+  </Grid>
+</UserControl>

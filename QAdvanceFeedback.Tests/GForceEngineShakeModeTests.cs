@@ -706,7 +706,7 @@ namespace QAdvanceFeedback.Tests
             // OWNER'S OWN TABLE, 2026-09-07, after seat time. Note this REVERSES 2026-09-06, when the
             // per-mode reset was removed on the grounds that a scale means the same thing in every mode -
             // seat time produced a different number per mode, and a table is only reachable if switching
-            // applies it. The dropdown handler (OnShakeApplyModeChanged) is what writes these through.
+            // applies it. The dropdown (GForceShakeViewModel.Mode) is what writes these through.
             // v1.0.9 revised the combined mode's scale 1.3 -> 1.2; the other three are unchanged.
             Assert.Equal(1.2, Settings.GForceSettings.DefaultShakeScaleFor(ShakeApplyMode.HigherOfGForceOrLockSlip), 9);
             Assert.Equal(1.5, Settings.GForceSettings.DefaultShakeScaleFor(ShakeApplyMode.PerChannel), 9);
@@ -853,6 +853,144 @@ namespace QAdvanceFeedback.Tests
             }
 
             Assert.True(max - min > 5.0, $"exactly at the threshold the shake must run, saw {min:F2}..{max:F2}");
+        }
+
+        // ------------------------------------------------------------------------------------
+        // "INTEGRATE SLIP ANGLE" (docs\slip-angle-design.md section 10). A second, independent way
+        // through the same gate and a third candidate for the same drive; everything downstream is
+        // the lock/slip shake unchanged.
+        // ------------------------------------------------------------------------------------
+
+        private static GForceEngine AngleEngine(ShakeApplyMode mode, bool lockSlip, bool angle,
+            double lockScale = 1.5, double slipScale = 1.5, double angleScale = 1.5) => new GForceEngine
+        {
+            IntegrateWheelLockAndSlip = lockSlip,
+            IntegrateSlipAngle = angle,
+            ShakeApplyMode = mode,
+            WheelLockShakeScale = lockScale,
+            WheelSlipShakeScale = slipScale,
+            WheelSlipAngleShakeScale = angleScale,
+            ShakeTriggerThreshold = 20.0,
+        };
+
+        /// <summary>A varied braking/accelerating/cornering run with lock and slip crossing the
+        /// threshold both ways, so the gate, the release tail and re-arm are all exercised. Every
+        /// frame is serialized, so equality is bit-for-bit on every published double.</summary>
+        private static string RunJson(GForceEngine engine, Func<int, double> angle, bool passAngle = true)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < 400; i++)
+            {
+                double longG = i < 200 ? -1.6 + 0.4 * Math.Sin(i * 0.05) : 0.5 + 0.2 * Math.Sin(i * 0.07);
+                double latG = 0.8 * Math.Sin(i * 0.03);
+                double lockV = 50.0 + 45.0 * Math.Sin(i * 0.11);
+                double slipV = 40.0 + 40.0 * Math.Cos(i * 0.09);
+                TelemetrySample s = Sample(longG, 0.016 + 0.004 * (i % 3), latG);
+                GForceOutput r = passAngle
+                    ? engine.Compute(s, AccelMax, DecelMax, lockV, slipV, null, null, 1.5, angle(i))
+                    : engine.Compute(s, AccelMax, DecelMax, lockV, slipV, null, null, 1.5);
+                sb.AppendLine(Newtonsoft.Json.JsonConvert.SerializeObject(r));
+            }
+            return sb.ToString();
+        }
+
+        [Theory]
+        [InlineData(ShakeApplyMode.PerChannel)]
+        [InlineData(ShakeApplyMode.AllChannelsGForce)]
+        [InlineData(ShakeApplyMode.AllChannelsLockSlip)]
+        [InlineData(ShakeApplyMode.HigherOfGForceOrLockSlip)]
+        public void Lock_slip_behaviour_identical_when_angle_zero(ShakeApplyMode mode)
+        {
+            // Reference: the lock/slip-only call exactly as every pre-Slip-Angle caller makes it (no
+            // angle argument, IntegrateSlipAngle at its bare-constructor default).
+            var reference = new GForceEngine
+            {
+                IntegrateWheelLockAndSlip = true, ShakeApplyMode = mode,
+                WheelLockShakeScale = 1.5, WheelSlipShakeScale = 1.5, ShakeTriggerThreshold = 20.0,
+            };
+            Assert.False(reference.IntegrateSlipAngle);   // bare-constructor default
+            string expected = RunJson(reference, _ => 0.0, passAngle: false);
+
+            // Angle ON at 0, and angle OFF however large - both BIT-identical.
+            Assert.Equal(expected, RunJson(AngleEngine(mode, lockSlip: true, angle: true), _ => 0.0));
+            Assert.Equal(expected, RunJson(AngleEngine(mode, lockSlip: true, angle: false),
+                i => 30.0 + 60.0 * Math.Abs(Math.Sin(i * 0.2))));
+
+            // ...and with lock/slip OFF, angle ON at 0 is exactly "both off".
+            var bothOff = new GForceEngine { ShakeApplyMode = mode, ShakeTriggerThreshold = 20.0 };
+            Assert.Equal(RunJson(bothOff, _ => 0.0, passAngle: false),
+                RunJson(AngleEngine(mode, lockSlip: false, angle: true), _ => 0.0));
+        }
+
+        [Theory]
+        [InlineData(ShakeApplyMode.PerChannel)]
+        [InlineData(ShakeApplyMode.AllChannelsGForce)]
+        [InlineData(ShakeApplyMode.AllChannelsLockSlip)]
+        [InlineData(ShakeApplyMode.HigherOfGForceOrLockSlip)]
+        public void Angle_alone_triggers_when_lock_slip_off(ShakeApplyMode mode)
+        {
+            // Lock/slip integration OFF (and their values huge, to prove they are ignored): an angle at
+            // or above the threshold shakes on its own; the same run with Slip Angle off does not.
+            double withAngle = MaxGapWithAngle(AngleEngine(mode, lockSlip: false, angle: true), 90.0, 90.0, 40.0);
+            double withoutAngle = MaxGapWithAngle(AngleEngine(mode, lockSlip: false, angle: false), 90.0, 90.0, 40.0);
+            double belowGate = MaxGapWithAngle(AngleEngine(mode, lockSlip: false, angle: true), 90.0, 90.0, 19.0);
+
+            Assert.True(withAngle > 0.5, $"{mode}: an angle of 40 (threshold 20) must shake alone, gap {withAngle:F3}");
+            Assert.Equal(0.0, withoutAngle, 9);
+            // The gate reads the UNSCALED angle: 19 x 1.5 = 28.5 must still stay below a threshold of 20.
+            Assert.Equal(0.0, belowGate, 9);
+        }
+
+        [Theory]
+        [InlineData(ShakeApplyMode.PerChannel)]
+        [InlineData(ShakeApplyMode.AllChannelsGForce)]
+        [InlineData(ShakeApplyMode.AllChannelsLockSlip)]
+        [InlineData(ShakeApplyMode.HigherOfGForceOrLockSlip)]
+        public void Drive_is_max_of_three_scaled(ShakeApplyMode mode)
+        {
+            // lock 60 x 0.5 = 0.30, slip 50 x 1.0 = 0.50, angle 40 x 2.0 = 0.80 -> the angle wins; the
+            // result must equal an engine fed ONLY that winning contribution (as slip 80 x 1.0).
+            string all3 = Steady(AngleEngine(mode, true, true, lockScale: 0.5, slipScale: 1.0, angleScale: 2.0), 60, 50, 40);
+            string winner = Steady(AngleEngine(mode, true, false, lockScale: 0.5, slipScale: 1.0), 0, 80, 0);
+            Assert.Equal(winner, all3);
+
+            // The angle loses when its scaled value is smaller: 40 x 0.5 = 0.20 < slip 0.50.
+            string slipWins = Steady(AngleEngine(mode, true, true, lockScale: 0.5, slipScale: 1.0, angleScale: 0.5), 60, 50, 40);
+            string slipOnly = Steady(AngleEngine(mode, true, false, lockScale: 0.5, slipScale: 1.0), 60, 50, 0);
+            Assert.Equal(slipOnly, slipWins);
+
+            // Not vacuous: the two drives really do differ.
+            Assert.NotEqual(all3, slipWins);
+
+            // With lock/slip integration OFF their contributions drop out of the drive even when larger.
+            string angleOnly = Steady(AngleEngine(mode, false, true, lockScale: 5.0, slipScale: 5.0, angleScale: 1.0), 90, 90, 40);
+            string asSlip40 = Steady(AngleEngine(mode, true, false, lockScale: 0.0, slipScale: 1.0), 0, 40, 0);
+            Assert.Equal(asSlip40, angleOnly);
+        }
+
+        private static string Steady(GForceEngine engine, double lockV, double slipV, double angleV)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < 80; i++)
+            {
+                GForceOutput r = engine.Compute(Sample(-1.4, 0.02), AccelMax, DecelMax, lockV, slipV, null, null, 1.5, angleV);
+                sb.AppendLine(Newtonsoft.Json.JsonConvert.SerializeObject(r));
+            }
+            return sb.ToString();
+        }
+
+        private static double MaxGapWithAngle(GForceEngine engine, double lockV, double slipV, double angleV)
+        {
+            double widest = 0.0;
+            for (int i = 0; i < 60; i++)
+            {
+                GForceOutput r = engine.Compute(Sample(-1.8, 0.02), AccelMax, DecelMax, lockV, slipV, null, null, 1.5, angleV);
+                widest = Math.Max(widest, Math.Abs(r.BottomFrontLeft.Value - r.BottomFrontRight.Value));
+                widest = Math.Max(widest, Math.Abs(r.BottomRearLeft.Value - r.BottomRearRight.Value));
+                widest = Math.Max(widest, Math.Abs(r.BackLowLeft.Value - r.BackLowRight.Value));
+                widest = Math.Max(widest, Math.Abs(r.BackTopLeft.Value - r.BackTopRight.Value));
+            }
+            return widest;
         }
     }
 }

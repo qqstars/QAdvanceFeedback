@@ -66,6 +66,11 @@ namespace QAdvanceFeedback
                 AttachSafe(plugin, gforceNames[index], () => (object)_gforce[index]);
             }
 
+            AttachSafe(plugin, AllPublishedProperties.ClutchBiteOutputName, () => (object)_clutchBiteOutput);
+
+            // Slip Angle (docs\slip-angle-design.md 9.8): product names always, diagnostics below.
+            AttachSlipAngle(plugin, Core.SlipAngle.SlipAnglePublishedNames.ProductNames, SlipAngleProductGetters);
+
             if (!diagnosticsEnabled) return;
 
             AttachSafe(plugin, "Diag.GameId", () => _gameId);
@@ -90,6 +95,21 @@ namespace QAdvanceFeedback
             // TIERED COLD-START REFERENCE SYSTEM (v1.0.7, docs\v107-tiered-coldstart-report.md).
             AttachSafe(plugin, "Diag.Lock.ColdStartTier", () => (object)_lockColdStartTier);
             AttachSafe(plugin, "Diag.Slip.ColdStartTier", () => (object)_slipColdStartTier);
+
+            AttachSafe(plugin, Core.ShakeItEffects.ShakeItTapPropertyNames.TapActiveName, () => (object)_shakeItTapActive);
+            for (int i = 0; i < 4; i++)
+            {
+                int index = i;
+                string wheel = Core.MotorsExport.MotorsExportPropertyNames.WheelSuffixes[index];
+                AttachSafe(plugin, Core.ShakeItEffects.ShakeItTapPropertyNames.GetPublishedName(true, wheel), () => (object)_shakeItTapLock[index]);
+                AttachSafe(plugin, Core.ShakeItEffects.ShakeItTapPropertyNames.GetPublishedName(false, wheel), () => (object)_shakeItTapSlip[index]);
+            }
+
+            AttachSafe(plugin, AllPublishedProperties.ClutchDiagnosticNames[0], () => _clutchSource);
+            AttachSafe(plugin, AllPublishedProperties.ClutchDiagnosticNames[1], () => (object)_clutchInput);
+            AttachSafe(plugin, AllPublishedProperties.ClutchDiagnosticNames[2], () => (object)_clutchBiteFinal);
+            AttachSafe(plugin, AllPublishedProperties.ClutchDiagnosticNames[3], () => (object)_clutchBiteLearned);
+            AttachSafe(plugin, AllPublishedProperties.ClutchDiagnosticNames[4], () => (object)_clutchBiteSamples);
 
             AttachSafe(plugin, "Diag.Telemetry.WheelOnLooseSurface.FrontLeft", () => (object)_wheelOnLooseSurfaceFrontLeft);
             AttachSafe(plugin, "Diag.Telemetry.WheelOnLooseSurface.FrontRight", () => (object)_wheelOnLooseSurfaceFrontRight);
@@ -147,6 +167,18 @@ namespace QAdvanceFeedback
             AttachSafe(plugin, "Diag.Capabilities.Rpm", () => (object)_capRpm);
             AttachSafe(plugin, "Diag.Capabilities.GameFamily", () => (object)_capGameFamily);
             AttachSafe(plugin, "Diag.Capabilities.WheelSlipCalibrationProviderSlipScale", () => (object)_capWheelSlipCalibrationProviderSlipScale);
+
+            AttachSlipAngle(plugin, Core.SlipAngle.SlipAnglePublishedNames.DiagnosticNames, SlipAngleDiagnosticGetters);
+        }
+
+        private void AttachSlipAngle<TPlugin>(TPlugin plugin, string[] names,
+            Func<Core.SlipAngle.SlipAngleFrameResult, object>[] getters) where TPlugin : IPlugin
+        {
+            for (int i = 0; i < names.Length; i++)
+            {
+                Func<Core.SlipAngle.SlipAngleFrameResult, object> getter = getters[i];
+                AttachSafe(plugin, names[i], () => getter(SlipAngleSnapshot));
+            }
         }
 
         /// <summary>

@@ -16,10 +16,10 @@ namespace QAdvanceFeedback.Tests
         private static string SimulatedGetName(string name) => "QAdvanceFeedback." + name;
 
         [Fact]
-        public void Product_names_total_exactly_62_and_are_all_distinct()
+        public void Product_names_total_exactly_66_and_are_all_distinct()
         {
             string[] names = AllPublishedProperties.ProductNames().ToArray();
-            Assert.Equal(62, names.Length);
+            Assert.Equal(66, names.Length);   // 63 + 3 Slip Angle (docs\slip-angle-design.md 9.8)
             Assert.Equal(names.Length, names.Distinct().Count());
         }
 
@@ -40,16 +40,16 @@ namespace QAdvanceFeedback.Tests
         }
 
         [Fact]
-        public void Diagnostics_off_publishes_only_the_62_product_names()
+        public void Diagnostics_off_publishes_only_the_66_product_names()
         {
             string[] names = AllPublishedProperties.AllNames(diagnosticsEnabled: false).ToArray();
 
-            Assert.Equal(62, names.Length);
+            Assert.Equal(66, names.Length);   // 63 + 3 Slip Angle (docs\slip-angle-design.md 9.8)
             foreach (string name in names) Assert.DoesNotContain("Diag.", name);
         }
 
         [Fact]
-        public void Diagnostics_on_adds_the_diagnostic_names_on_top_of_the_62_product_names()
+        public void Diagnostics_on_adds_the_diagnostic_names_on_top_of_the_product_names()
         {
             string[] namesOff = AllPublishedProperties.AllNames(diagnosticsEnabled: false).ToArray();
             string[] namesOn = AllPublishedProperties.AllNames(diagnosticsEnabled: true).ToArray();
@@ -272,8 +272,8 @@ namespace QAdvanceFeedback.Tests
             // The default published set (the 62 product names) must be completely unaffected by this
             // task - re-asserted here, alongside the new names' absence, as the single most direct
             // "default set unchanged" check this task's own brief asks for.
-            Assert.Equal(62, AllPublishedProperties.ProductNames().Count());
-            Assert.Equal(62, names.Length);
+            Assert.Equal(66, AllPublishedProperties.ProductNames().Count());
+            Assert.Equal(66, names.Length);   // 63 + 3 Slip Angle (docs\slip-angle-design.md 9.8)
         }
     }
 }

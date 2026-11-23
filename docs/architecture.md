@@ -29,7 +29,8 @@ subsystem links to its own "how it works and why" section further down this docu
 | [**Wheel Lock Raw / Wheel Slip Raw**](#wheel-lock-raw--wheel-slip-raw-how-it-works-and-why) | Reproduces SimHub's own legacy-iRacing RPM/speed-derived lock and slip formula exactly, dispatched per title across several branch-specific models selected by capability flags, then combined per wheel-group by a Max/Min axle blend plus a front/rear weighted blend. | The faithful, unnormalised reproduction of SimHub's own well-known algorithm — the common reference point everything else in this plugin builds on. |
 | [**Wheel Lock/Slip Normalizer**](#wheel-lockslip-normalizer-how-it-works-and-why) | Rescales Raw's per-wheel shape against a per-(game, car, source) learned physical-grip reference (a deliberately slow-converging EMA), cross-calibrated per source via a scale learner anchored to rare "at the physical limit" moments, blended between live and persisted evidence by a dispersion-weighted cold/warm mechanism. | Makes "80" mean the same thing — "at the measured grip limit" — in every car, instead of a number whose meaning drifts with how grippy that car happens to be. |
 | [**Wheel Lock/Slip Projector**](#wheel-lockslip-projector-how-it-works-and-why) | Pushes the normalized 0–100 value through a driver-editable five-anchor curve, smoothed with monotone cubic interpolation, plus an optional pulse-at-maximum stage. | Turns "how severe is this, numerically" into "exactly how this should feel" — the property tier meant to be bound to a shaker. |
-| [**G-Force**](#g-force-how-it-works-and-why) | A washout-style split between a sustained G level and a rate-driven transient, mapped onto a 3-stage pad chain via partition-of-unity piecewise-linear functions; per-game/per-car maxima learned via a trimmed-pool robust estimator over a real-time rolling window; an optional wheel lock/slip shake superimposed on top, spread across the pads by one of four selectable modes and shaped by one of three selectable feelings. | Gives a seat pad a continuous, directional sense of braking/accelerating/cornering load, independent of and complementary to the wheel channels. |
+| [**G-Force**](#g-force-how-it-works-and-why) | A washout-style split between a sustained G level and a rate-driven transient, mapped onto a 3-stage pad chain via partition-of-unity piecewise-linear functions; per-game/per-car maxima learned via a trimmed-pool robust estimator over a real-time rolling window; an optional wheel lock/slip/angle shake superimposed on top, spread across the pads by one of four selectable modes and shaped by one of three selectable feelings. | Gives a seat pad a continuous, directional sense of braking/accelerating/cornering load, independent of and complementary to the wheel channels. |
+| [**Slip Angle**](#slip-angle-how-it-works-and-why) | Native per-wheel tyre slip angle from a per-game raw-data table (auto-promoted, unit auto-detected by episode voting), else a body-slip fallback; one combined Raw.All with front/rear equalisation; a per-(game, car, source, axle, surface) grip-curve learner whose Max is taught only by corroborated traction crossings, guarded against crashes; three surface buckets; borrowing tiers; a monotone 15/30/60/80/100 normalizer (15 at the derived Start angle); a drift attenuator state machine. | Tells the driver when the tyres enter the ideal slip-angle window and when they pass it, without buzzing through a held drift - and feeds G-Force's shake. |
 
 ## The layer model
 
@@ -58,6 +59,12 @@ genuine zero is never confused with "does not support this channel" - see
 
 **Must NOT depend on:** nothing above it. It may reference SimHub/GameReaderCommon types (it is the
 one place allowed to), but Layer 3 and above never reference SimHub types back.
+
+**Slip Angle inputs:** `SlipAngleRawSources.cs` is the per-game raw-data table (paths, wheel
+order, unit, transform) and `SlipAngleRawSourceReader` reads it through a value-lookup delegate, so the
+table itself is SimHub-free and link-compiled into the tests. `SimHubTelemetryAdapter` adds the body
+inputs Slip Angle needs to `ITelemetryFrame` (forward local velocity, yaw rate, `IsAirborne` from
+`IsFlying`, `WheelsOnKerbs`, vertical G, a surface-grip hint).
 
 ### Layer 3 - Raw calculator
 
@@ -94,6 +101,12 @@ bands mean the same thing in an arcade car pulling 4g as in a sim car pulling 1.
 **Must NOT depend on:** SimHub types, or Layer 5/G-force. May depend on Layer 3's output shape
 (`Corners`, `LegacyWheelLockSlipResult`) and Layer 1 (`ITelemetrySample`).
 
+**Slip Angle** is a sibling stack, not a third channel inside this engine: `Core\SlipAngle\`
+holds its Raw calculator (Layer 3 role), its gate, its window learner, normalizer and surface classifier
+(Layer 4 role) and the per-frame processor that strings them together. It shares four cores with
+Lock/Slip that live here in `Core\Normalized\` - `CrossingGate`, `CorroboratedLevelEstimator`,
+`ColdStartTierResolver` and `ImpactGuard` - see "Shared cores" below.
+
 ### Layer 5 - Projected
 
 **What it does:** `QAdvanceFeedback.Core.Projection` - pushes Layer 4's output through a driver-
@@ -101,6 +114,9 @@ editable monotone curve (`MonotoneCubicCurve`/`OutputProjector`) and an optional
 stage (`PulseGenerator`). This is what a driver should bind a shaker to.
 
 **Must NOT depend on:** SimHub types. May depend on Layer 4's output shape.
+
+Slip Angle's Layer 5 is `SlipAngleProjectedEngine` (the same `OutputProjector`/`PulseGenerator` with
+the `ProjectionChannel.SlipAngle` preset, `ColdStartScale`) plus the `DriftAttenuator` state machine.
 
 ### G-Force
 
@@ -110,7 +126,8 @@ transient, plus per-game/per-car learned maxima (`GForceMaxLearner`).
 
 **Must NOT depend on:** Layers 3/4/5 or SimHub types. (The Wheel Lock/Slip "shake" integration reads
 Layer 5's output as an input to G-Force's own amplitude, which is the one deliberate exception -
-see `GForceEngine.Compute`'s own remarks.)
+see `GForceEngine.Compute`'s own remarks. Since the Slip Angle work the same exception covers the final projected
+Slip Angle, read only when "Integrate Slip Angle" is on.)
 
 ### Settings / persistence
 
@@ -119,9 +136,10 @@ see `GForceEngine.Compute`'s own remarks.)
 Reads/writes plain doubles, enums and strings - never a live SimHub reference baked into a
 persisted object.
 
-**Must NOT depend on:** SimHub types for anything that needs to be unit-tested (the WPF control
-itself is the one part of this subsystem that necessarily does, and is accordingly the one part not
-unit-tested - see `ApplyDirtyStateTests.cs`'s own remarks).
+**Must NOT depend on:** SimHub types for anything that needs to be unit-tested. The WPF views are the
+one part that necessarily does; since the full-MVVM page (2026-11-20) they hold no rules at all - every
+rule of the settings page lives in WPF-free view models under `Ui\ViewModels` (net8-tested), and
+`MvvmRuleTests` keeps the views wiring-only (see "UI: MVVM (standing rule)").
 
 ## Algorithm details — how each subsystem works and why
 
@@ -204,6 +222,17 @@ reaches, and using that learned peak as the reference a Raw reading is rescaled 
   sample-count or dispersion threshold at which the live blend jumps.
 - **`SurfaceLooseFraction`** blends the learned reference across sealed/loose surface conditions
   continuously rather than switching between two fixed references.
+- **What may teach SMax: the crossing gate, and the 95 hard limit (2026-11-19).** At-limit evidence
+  reaches `ObserveAtPhysicalLimit` only through the shared `CrossingGate`. A crossing is the source
+  rising while G falls. What it teaches is the snapshot at the grip peak of that one rise, and the
+  walk-back to that peak only steps onto frames that themselves rose from their predecessor, so the
+  flat frame a rise started from is never the snapshot. Every frame of the 1 s hold window teaches that
+  snapshot and never its own live value; a crossing with an unusable snapshot is rejected rather than
+  falling back to the live runaway. Every taught basis, every learned / published / persisted ceiling,
+  every imported value and every typed Manual SMax or Custom reference is at most
+  **95** (`KeyedScaleLearner.MaxLearnedCeiling`): a source at 100 is a locked or spinning wheel, never
+  the grip limit. The defect this closed (SMax 100/90/70 from the post-crossing runaway) and the corpus
+  numbers are in `docs/slip-smax-crossing-gate-design.md` §10.
 
 Measured directly against seven real telemetry logs (`docs/cold-start-convergence-report.md`), the
 current ramp already converges as fast as the data safely supports — shortening it measurably trades
@@ -226,7 +255,7 @@ global mode   ->  "global|src:<sourceIdentity>"
 per-game mode ->  "game:<gameId>|src:<sourceIdentity>"
 ```
 
-The source is always part of the key because a number that suits a ShakeIt export does not suit our own
+The source is always part of the key because a number that suits the ShakeIt source does not suit our own
 Raw — the two have different scales. The game is part of it only in per-game mode; omitting it is what
 "global" means. One dictionary holds both namespaces, so global -> per-game -> global returns the
 original global numbers untouched.
@@ -240,10 +269,41 @@ a pause, a breakpoint or an alt-tab cannot satisfy it.
 whether or not the page is open. When a slot first becomes eligible, the learned values are written in
 and `ConfigStore.Save` is called directly (not `ApplySettings`, which also rebuilds the projected engine
 - wrong thing to do mid-frame). Because the latch is per slot, a never-played game or a newly selected
-source seeds again on its own. The plugin bumps a revision counter so an open settings page reloads.
+source seeds again on its own. The plugin bumps a revision counter (`KeyDataRevision`) and raises
+`SettingsPageStateChanged`, so the settings page (and any ShakeIt panel) reloads the seeded slot.
+
+**What the page and the panels show - one display rule, also after a restart (2026-11-19).**
+`KeyDataPanelModel.LearnedKeyData` is the only source of "learned" key data for the settings page (its
+`KeyDataPageViewModel` reads it through the host on every `PluginStateChanged`, once a second while
+driving), both ShakeIt panels and the one-time seed: the ceiling the engine itself divides by,
+`KeyedScaleLearner.PublishedCeiling`, for the EXACT persist key that `KeyedGripLearner.MakeKey` builds
+(game, car, source, surface). Lock's S90/S75 come from its learned physical anchor ratios (seeded at
+0.90/0.70); Slip's are 0.90/0.70 of SMax. With SimHub on the menu after a restart there is no game
+running, so the plugin uses the last (game, car) it showed key data for
+(`RuntimeDocument.LastKeyDataGame/Car`). If `QAdvanceFeedback.Parameters.json` holds that exact key, its
+persisted SMax/S90/S75 are shown; if it does not, the cold-start default is shown. Never the value of
+another game or car. (The former "best value for this source across every game and car" lookup was
+removed for exactly that reason.) The learned anchor ratios themselves now persist: the runtime cache
+used to copy only the legacy anchor fields, so S90/S75 fell back to 0.90/0.70 after every restart.
+The page's Lock Auto S90/S75 come from the same rule (physical ratios) as the panel's, and what the page
+shows in Manual with nothing stored is the source's default (`KeyDataPanelModel.Resolve`), as on the
+panel.
+
+**Slip Angle follows the same rule (2026-11-20, `docs\slip-angle-design.md` §9.4).**
+`Core\SlipAngle\SlipAngleKeyDataModel` is the Slip Angle twin: `LearnedWindow` = the exact (game, car,
+source identity for the current identity tier, surface) key's published window capped for the source
+(20° native / Custom, 30° car angle), null when the learner holds no such key - never a borrowed window;
+`Shown` = Auto: learned else default, Manual: stored slot else default; the one-time Manual seed writes
+exactly the learned window shown (`SlipAngleDisplayRuleKeyData`). The tab, the ShakeIt panel and the seed
+all use it. For the menu after a restart the plugin persists the last Slip Angle context in
+`RuntimeDocument` - `LastSlipAngleGame`, `LastSlipAngleCar`, `LastSlipAngleTier` (the identity tier's
+`SourceNativeness` name), next to `LastKeyDataGame/Car` - and restores it at Init after importing the
+learners (`SlipAngleKeyDataContext`), so the exact key is formed with no game running. Older files have
+none of these fields: the default is shown until the first drive.
 
 **Defaults are per source type**, resolved through `KnownSourceColdStartReference.Classify`: Lock
-85/75/60 and Slip 75 for our Raw and for a ShakeIt export. An UNKNOWN source (a script, an NCalc
+85/75/60 and Slip 75 for our Raw and for the ShakeIt source (looked up by source TYPE: a ShakeIt
+identity carrying an algorithm fingerprint gets the same shipped defaults). An UNKNOWN source (a script, an NCalc
 expression) deliberately gets no default at all - there is no honest guess for a signal whose scale has
 never been measured, so such a channel keeps publishing learned values until a slot is seeded.
 
@@ -251,22 +311,21 @@ never been measured, so such a channel keeps publishing learned values until a s
 the top one, so switching to the three-point mapping never finds them stale or out of order. Slip
 derives them always - it has no native 90%/75% grip measurement - which is why it ships Best Point Only.
 
-**The manual-mode reset** (`ResetKeyDataPoints`) writes the shipped defaults for a source
+**The manual-mode reset** (`KeyDataPageViewModel.ResetCommand` on the page) writes the shipped defaults for a source
 `KnownSourceColdStartReference.Classify` recognises, marking the slot seeded so the one-time learned
 seed cannot immediately overwrite what the driver just asked for. For an UNKNOWN source there is no
 default to write, so it calls `KeyDataPointSettings.ClearSlot` instead - values and seeded latch both -
 which re-arms the one-time seed and leaves the boxes empty until real evidence arrives. Persists
 immediately, like the other reset actions on the page.
 
-**Slip is forced to Max-Grip-Only under Auto** (`EnforceSlipPatternForAutoMode`), and its selector is
-disabled while Auto is on. Slip has no native 90%/75% measurement, so its two lower anchors are always
-derived; offering the three-point mapping while the plugin generates the numbers itself would present
-derived values as measured ones. Manual mode re-enables the choice, because the driver is then supplying
-all three. Lock measures all three and is untouched.
+**Slip is no longer forced to Max-Grip-Only under Auto** (owner's change of mind, v1.0.8): Auto derives
+S90/S75 from the learned SMax by a fixed percentage, so the three-point mapping is honest on either
+channel, the selector is enabled in both modes, and both channels ship the three-point mapping. (The
+former `EnforceSlipPatternForAutoMode` had become a no-op and went with the old page.)
 
-**The two curve graphs** (`RenderGraphDecorations`, `RenderKeyPointMarkers`,
-`RenderSourceToProjectedGraph`) are drawn in code rather than declared, so they track live settings. The
-left one is normalized -> projected, with dashed markers at the canonical normalized positions of the key
+**The two curve graphs** (`CurveEditorViewModel` supplies the data - curve, markers, source graph
+points; `Ui\Views\NormalizedCurveGraph` / `GraphFurniture` draw them) follow the page's draft values, so
+they track unapplied edits. The left one is normalized -> projected, with dashed markers at the canonical normalized positions of the key
 data points (S75 -> 30, S90 -> 60, SMax -> 80 - the four-range curve's own knot table), or SMax alone
 under Max-Grip-Only. The right one is source -> projected end to end; it has no closed form because the
 key data points and the projector compose, so it is sampled every 5 and joined. Both share the same grid:
@@ -276,6 +335,98 @@ width.
 **Restore never discards them.** `QAdvanceFeedbackSettings.RestoreDefaults` carries both channels'
 `KeyDataPoints` (all slots, plus the Auto/Per-Game switches) across the reset; the three channel-level
 source resets only ever touch source fields.
+
+### Wheel Lock/Slip sources: ShakeIt Built-in, the per-channel Raw fallback, internal learning (2026-11-19)
+
+Design: `docs/shakeit-source-design.md` (ShakeIt source) and `docs/internal-source-learning-design.md`;
+summary of what shipped: `docs/shakeit-source-report.md`.
+
+**ShakeIt Built-in reads ShakeIt's algorithm only through our native effect.** There is no export-property
+path any more (the ShakeIt Motors export profile, `MotorsExportAvailabilityProvider` and
+`MotorsExportAvailabilityResolver` are gone; `docs/shakeit-export-guide.md` is retired). Every
+QAdvanceFeedback ShakeIt effect (WheelLock, WheelSlip, the four G-Force effects, Clutch Bite, Slip Angle)
+calls `ShakeItBuiltInTap.Sample` when ShakeIt processes it. The tap stamps a heartbeat on every call (in
+game or not) and, in game, evaluates hidden copies of ShakeIt's `WheelsLockContainer` /
+`WheelsSlipContainer` with the game data ShakeIt hands it, publishing per-channel values plus ShakeIt's
+own `GetIsSupportedOnCurrentGame(caps)` answer for lock and for slip.
+
+**Detection** (`Core\ShakeItEffects\ShakeItSourceAvailability.cs`, `Integration\ShakeIt\ShakeItProfileInspector.cs`):
+- *Set up* = at least one of our effects is effectively enabled (its own switch and every parent group)
+  in the current profile of either ShakeIt plugin (Bass Shakers, Motors), read through SimHub's public API
+  by a 1 Hz UI-thread `DispatcherTimer` (each plugin guarded on its own; health `ShakeItProfile`), AND
+  the heartbeat is ≤ 2 s old.
+- *Driving* = game running, not paused, not in a menu, and ShakeIt's own FeedbackData gate.
+- One state machine per channel: **NotSetUp / SetUpIdle / Supported / NotSupported**. Supported needs
+  fresh tap values while driving. NotSupported comes from ShakeIt reporting the game unsupported (sticky
+  until a game switch) or from 3 s of continuous stale driving (recovers on the first fresh values —
+  ruling R41). A 0.5 s-debounced pair (`ShakeItSourceStateBroadcaster`) is published as
+  `QAdvanceFeedback.ShakeItSourceState` and raises `SettingField.SourceAvailability`.
+
+**Per-channel resolution** (`Core\ShakeItEffects\ShakeItSourceResolution.cs`, from the live state each
+frame): Supported + fresh tap → the tap's values under the **canonical ShakeIt identity**
+(`ShakeItSourceResolution.ShakeItIdentity`: the legacy export property names as four Plain sources,
+byte-identical to the pre-2026-11-19 key, plus the algorithm fingerprint). Anything else (not set up, idle
+in game, not supported, stale) → Raw's values under **`RawSourceFallback.RawIdentity`** for all four wheels
+of that channel — never per wheel, and never Raw values under the ShakeIt key. Viper's blocked route is
+the same Raw route. `QAdvanceFeedback.ShakeItSourceBlocked(channel, isLock)` (published state; true only
+on a NotSetUp / NotSupported verdict, never while idle) is the page's shadow input, alongside
+`ViperSourceBlocked`. A preset source (ShakeIt or Viper) applied while its channel is shadowed stores its
+own preset rows (`WheelChannelSettings.KeepPresetSourcesWhileShadowed`).
+
+**UI.** The ShakeIt option is listed when the state is not NotSetUp, or it is the shown or saved
+source (marked "ShakeIt Built-in (not set up)" while not set up; a hidden option is also disabled).
+Notes: "Not set up — add a QAdvanceFeedback effect to the active ShakeIt profile. Using Raw." and "Not
+supported in this game — using Raw.", only while ShakeIt is the shown source. Rules in
+`Ui\ViewModels\ShakeItSourceViewModels.cs` (`ShakeItSourceUi`, `ShakeItSourceStatusViewModel`); the
+panels read the state through the optional host capability `IShakeItSourceStateHost`; the page re-samples
+on the Runtime `SourceAvailability` broadcast, so it follows changes at the menu.
+
+**ShakeIt algorithm block** (`Settings\ShakeItAlgorithmSettings.cs` on `WheelChannelSettings.ShakeItAlgorithm`,
+rules in `Core\ShakeItEffects\ShakeItAlgorithm.cs`, VM `ShakeItAlgorithmViewModel`; shown only while the
+source is ShakeIt Built-in, on the tab and the panel, synced through five `SettingsHub` fields):
+- Lock: legacy iRacing algorithm (on), ShakeIt lock sensibility (50, 0–100, step 5, snapped everywhere),
+  lock-only (on). Slip: legacy iRacing algorithm (on), mute slip while lock is active (off).
+- Hidden filters follow our thresholds: Lock brake filter = round(Lock brake threshold); Slip
+  UseBrakeFilter = brake threshold < 100 AND throttle threshold > 0; Slip UseThrottleFilter = throttle
+  threshold > 0 (at throttle 0 our OR gate is always open, so both filters are off).
+- Mute is emulated: all four Slip wheels read 0 on a frame where any wheel of our hidden Lock value is > 0
+  (no 100 ms hold).
+- Fingerprint appended to the ShakeIt identity: `#alg=legacy:X,sens:N,lockOnly:X` (Lock),
+  `#alg=legacy:X,mute:X` (Slip); empty at the defaults. Shipped key-data defaults are looked up by
+  source type (`ShakeItAlgorithmFingerprint.BaseIdentity` strips it); manual slots, Auto and learning
+  are keyed with it. The data thread builds an immutable `ShakeItAlgorithmSnapshot` each frame (reused
+  when unchanged) and hands it to the tap (`ShakeItBuiltInTap.Configure`). This happens every frame
+  BEFORE the in-session gate, so a change made at the menu reaches ShakeIt's thread before the first
+  in-game frame.
+- **Tap snapshot stamping.** The tap stamps each frame's values with the snapshot they were computed under
+  (`ShakeItTapValues.Algorithm`). The snapshot holds the algorithm settings and the threshold filters.
+  `ShakeItSourceResolution.TapComputedUnder` (a reference compare) is part of "tap fresh". So a tap from
+  an older snapshot counts as not fresh, and the channel reads Raw under the Raw key until ShakeIt
+  produces values under the new settings. After a pedal-threshold change this lasts a frame or so.
+  Old-settings values therefore never reach the new fingerprinted key.
+
+**Internal-source learning rule** (`NormalizedWheelLockSlipEngine`, `docs/internal-source-learning-design.md`):
+- Every source learns only under its own key. **Plugin Internal (`PluginInternalSourceIdentity.For(isLock)`,
+  equal to `RawSourceFallback.RawIdentity`) learns every frame**, selected or not: when another source is
+  active, an internal mirror repeats every learning step for the internal key from Layer 3 Raw with its own
+  crossing gate and at-limit basis. When the internal key is the active one it is fed once.
+- The "configured source went quiet" relative fallback compares against the internal key. The former
+  always-fed hidden key `__layer3_raw_fallback__` is retired; `InternalSourceKeyMigration` merges it into
+  the internal key once on load (internal empty → adopt, both present → keep internal, hidden dropped).
+- Shared, non-source-keyed state (physical g reference, surface support, Slip Angle surface classifier)
+  follows car motion and the internal source, observed once per frame.
+- On a change of a channel's active identity the shared crossing gate, the shared at-limit basis and the
+  fallback divergence are cleared, and the previous source's Lock-anchor run is closed under its own
+  game/car (not when that previous source is the internal key).
+- Slip's cross-channel cold-start borrow from Lock pairs only the same source type
+  (`CrossChannelSourcePairing`): internal ↔ internal always, ShakeIt ↔ ShakeIt and Viper ↔ Viper by
+  type, Custom / mixed none. The pairing inputs are an immutable, Volatile-published snapshot.
+- A Custom channel whose four plain rows are our Raw properties (`RawSourceFallback.MatchesRaw`) is Plugin
+  Internal. One whose rows are the legacy ShakeIt export names produces the ShakeIt identity string and so
+  shares the ShakeIt key. A Custom channel that reproduces any shipped preset never applies the Custom
+  cold-start reference. `ApplyCustomColdStart` skips it when `RawSourceFallback.MatchesShippedPreset`
+  matches the Raw identity, the canonical ShakeIt identity (fingerprint stripped) or the shipped Viper NCalc
+  preset. So a Custom cold-start SMax never reaches the Raw, ShakeIt or Viper key.
 
 ### Wheel Lock/Slip Projector: how it works and why
 
@@ -409,9 +560,9 @@ choice, not a downgrade). Full detail and the acceptance-replay evidence live in
   itself as enforced "at the call site" but no call site actually checked it — `KeyedScaleLearner`'s own
   `ObserveAtPhysicalLimit`/`ObserveGeneral` fed it unconditionally, so its internal histogram had no real
   ceiling. Fixed by wiring the gate into both call sites.
-- **General tab now shows the running assembly's own file version** (`SettingsControl`'s
-  `GetRunningAssemblyFileVersion`, reading `FileVersionInfo` — never a hand-typed literal), so it can
-  never drift from the DLL actually loaded.
+- **General tab now shows the running assembly's own file version** (read from `FileVersionInfo` —
+  never a hand-typed literal; since 2026-11-20 `PluginPageHost.PluginVersion`, shown by
+  `GeneralViewModel`), so it can never drift from the DLL actually loaded.
 - **`tools/screenshot-harness` had two real bugs fixed**: it computed `docs/images` as the output
   directory but then wrote every PNG to a bin-directory-local `screenshot-out` folder instead, so
   re-running it never actually updated the committed screenshots; and it named the G-Force capture
@@ -571,14 +722,25 @@ getting there, because a rig cueing acceleration needs both — the current g, a
   configured value; `Blending` takes no default at all — it *pins* `BlendingHoldFraction` (0.5) and the
   UI hides the spinner, so there is no per-feeling hold value to hand the driver.
 
-  **Switching `ShakeApplyMode` does NOT rewrite the two scales** (owner, 2026-09-06). It used to, on the
-  reasoning that a scale meant a different thing in each mode. It does not:
-  `contribution = scale × wheel/100` is computed identically in all four modes, and the Lock and Slip
-  scales are applied to their own channels individually before the engine takes the larger. Only what
-  that contribution *multiplies* differs — the pad's own level in the two G-force modes, the full 0–100
-  range in the two wheel-driven ones — so at 1.5 a wheel-driven mode reaches a full-width band from
-  wheel 67 up. That is a saturation point worth knowing, not a change of meaning, and not grounds for
-  overwriting a hand-tuned value. Both scales ship at **1.5** in every mode.
+  **Picking a `ShakeApplyMode` on the G-Force tab RESETS the shake scales and the trigger** to that
+  mode's own defaults (owner, **2026-09-07**, as `GForceShakeViewModel.Mode` and
+  `GForceSettings.DefaultShakeScaleFor` cite it). The `Mode` setter of `Ui\ViewModels\GForceShakeViewModel`
+  writes `DefaultShakeScaleFor(mode)` into the Wheel Lock, Wheel Slip **and Slip Angle** scales and
+  `DefaultShakeTriggerFor(mode)` into "Start shaking above" on a driver's pick only - never on `Load`, so a
+  driver's persisted values show as saved. A feeling pick likewise rewrites the frequency
+  (`DefaultShakeFrequencyFor`) and hides the hold for Blending. The `GForceSettings.ShakeApplyMode`
+  property itself does not touch the scales; only the tab's mode pick does (the ShakeIt G-Force panels
+  have no mode control). The per-mode scales are **1.2** (`HigherOfGForceOrLockSlip`, the shipped
+  default), **1.5** (`PerChannel`), **1.3** (`AllChannelsGForce`), **1.0** (`AllChannelsLockSlip`); the
+  triggers are 60 / 5 / 60 / 30.
+
+  History, kept because the reasoning is still true: on 2026-09-06 the owner had this reset REMOVED,
+  since `contribution = scale × wheel/100` is computed identically in all four modes (only what it
+  *multiplies* differs - the pad's level in the G-force modes, the full 0–100 range in the wheel-driven
+  ones, so at 1.5 a wheel-driven mode saturates from wheel 67 up). On 2026-09-07 seat time produced a
+  different scale and trigger per mode, and a per-mode table is only reachable if picking the mode
+  applies it - so a hand-tuned value IS overwritten again, deliberately. (An earlier revision of this
+  document still described the 2026-09-06 state; the code has followed 2026-09-07 throughout.)
 
   **`PadRange` no longer applies a `PeakExcursionFactor`.** The sine+hold wave spans a full 0..1 for
   every feeling and every hold, so a pad's travel *is* the band. The old factor existed because the
@@ -753,9 +915,10 @@ getting there, because a rig cueing acceleration needs both — the current g, a
   back, so a persisted blend silently did nothing. Both are now removed; an old config file simply
   carries an ignored key.
 
-- **The Test Effect panel (1.0.8, `SettingsControl.GForceTest.cs`).** A drag-a-ball G-force pad and a
-  Lock/Slip bar that push synthesised frames through a **private `GForceEngine` instance** owned by the
-  settings page, so a driver can set ShakeIt levels without provoking a real lock-up on track.
+- **The Test Effect panel (1.0.8; since 2026-11-20 the shared `GForceTestViewModel` hosted by
+  `GForcePageViewModel`).** A drag-a-ball G-force pad and a Lock/Slip bar that push synthesised frames
+  through a **private `GForceEngine` instance** owned by the settings page, so a driver can set ShakeIt
+  levels without provoking a real lock-up on track.
 
   **It publishes to the real properties.** Driving only its private engine moved the on-screen readout
   and nothing else: with no game running `DataUpdate` returns before publishing anything, so
@@ -763,25 +926,22 @@ getting there, because a rig cueing acceleration needs both — the current g, a
   `QAdvanceFeedback.PublishTestEffect` writes through the same `PropertyPublisher.UpdateGForce` the live
   path uses (its properties are pull-delegates over that array, so a write lands with or without a
   running game) and sets a flag that makes `DataUpdate` skip its own publish. Passing null clears the
-  override; both the toggle going off and the page unloading must do that, or a closed page would pin
-  the outputs forever.
+  override; the toggle going off, the 10 s auto-off and hiding the G-Force tab (`GForcePageViewModel`'s
+  `Deactivate`) all do that, or a closed page would pin the outputs forever.
 
   **Pad orientation** (owner, 2026-09-06): the ball marks where the load is thrown, so **up is braking,
   down is accelerating, and dragging left means turning right**. Both pad axes are negated on the way
   into the telemetry frame.
 
   Two further properties are the whole point of it, and both are guarded:
-  - **Every G-Force setting on the page applies, live — into a SCRATCH object.** Each simulated frame
-    calls `SaveGForceToSettings` into a throwaway `GForceSettings` and then `ApplyTo(_testEngine)`, so
-    the panel is fed from the page's *current* state (Wheel Lock and Slip scales included) without
-    touching the plugin's live settings. It used to call the whole of `SaveToSettings()`, which writes
-    straight into `_plugin.Settings` — so merely switching the panel on pushed every uncommitted edit
-    on the page into the running plugin: an Apply nobody asked for. Extracting the G-Force half into a
-    method that takes a target is what made a scratch object possible.
-  - **Nothing about it is ever saved** (owner). Its controls are read by neither `SaveToSettings` nor
-    `LoadFromSettings`, and `WireDirtyTracking` skips them by the `GForceTest` name prefix — by prefix,
-    not a list, for the same reason the sweep itself is reflective. `SettingsControlDirtyTrackingTests`
-    guards all three.
+  - **Every G-Force setting on the page applies, live — into a SCRATCH object.** The test runs on a
+    throwaway copy of the page DRAFT's G-Force settings (unapplied edits included, Wheel Lock and Slip
+    scales too) and applies it to its own engine, never to the plugin's live settings. (The original
+    page once called its whole save-to-settings method here, which pushed every uncommitted edit into
+    the running plugin: an Apply nobody asked for.) An edit made while the test runs reaches it.
+  - **Nothing about it is ever saved** (owner). Its state lives only in `GForceTestViewModel`, which is
+    not part of the draft, so it can neither mark the page dirty nor be written by Apply
+    (`GForcePageViewModelTests.The_test_effect_runs_on_the_unapplied_page_values_and_never_marks_dirty`).
   - **Off means nothing at all.** With the toggle off the controls are collapsed, no labels render, and
     no simulated frame is produced — the panel must not be able to drive a driver's motors while it is
     switched off.
@@ -821,8 +981,557 @@ getting there, because a rig cueing acceleration needs both — the current g, a
   a one-shot snapshot, so a driver who opened the panel before driving (correctly seeing "no data yet")
   and left it open never saw it update even after real evidence existed — **purely cosmetic**, never a
   key/channel/learner mismatch, and never anything the live behavioural path read. Fixed with a
-  lightweight one-second `DispatcherTimer` in `SettingsControl`, started in the constructor and stopped
-  on `Unloaded`.
+  one-second refresh - since 2026-11-20 the `ITicker` timer of `GForcePageViewModel`, running only while
+  the G-Force tab is shown (hiding it stops the timer, showing it restarts it and refreshes at once).
+
+### Slip Angle: how it works and why
+
+Design: `docs\slip-angle-design.md` (with its post-spike revisions). Telemetry survey:
+`docs\slip-angle-spike-report.md`. Build record, rulings and deviations: `docs\slip-angle-report.md`.
+
+**What it is for.** In tarmac racing the fastest technique keeps the tyres' slip angle just under the
+angle of peak lateral grip. SimHub's built-in "Traction loss" effect is car-level body sideslip with no
+threshold and no learning, so it only reports a slide that has already happened. Slip Angle is a third
+wheel channel built on the same pattern as Wheel Lock / Wheel Slip (Raw -> Normalized -> Projected, a
+settings tab, a native ShakeIt effect, a Test Effect). It rises as the tyres enter their ideal window,
+peaks once the car goes past the limit, and eases off while the driver holds a deliberate drift, so a
+WRC stage or a drift run does not buzz at full strength all the way through. It is ONE output channel
+(`SlipAngle.Projected.All`). It has no per-wheel or per-axle routing.
+
+**Pipeline, one frame** (`Core\SlipAngle\SlipAngleFrameProcessor.Process`, called from
+`QAdvanceFeedback.SlipAngle.cs` after Lock/Slip Projected and before G-Force, so G-Force reads this
+frame's angle). The order is pinned by tests:
+
+1. yaw-sign observe (`YawSignDetector`);
+2. gate (`SlipAngleGate.Step`);
+3. source (native, fallback or custom);
+4. `SlipAngleRawCalculator.Compute` with the PREVIOUS frame's k (k comes from the learner that this
+   frame's Raw.All then feeds);
+5. `ImpactGuard`;
+6. surface classifier on Raw.All;
+7. `KeyedSlipAngleLearner.Observe`;
+8. learned window, maturity and tier;
+9. manual key data gate and one-time seed;
+10. `SlipAngleNormalizer`;
+11. `SlipAngleProjectedEngine`;
+12. `SaveIfDue`.
+
+The processor and its learner belong to the data thread: the learner's getters can re-prior a key, so
+they mutate. Everything the UI, the CSV and the ShakeIt effect read is an immutable
+`SlipAngleFrameResult` / `SlipAngleStatus` captured once per frame. The plugin file has its own
+try/catch, which reports `HealthSubsystems.SlipAngle` and publishes the empty result, so a Slip Angle
+fault never stops Lock/Slip/G-Force. After 300 consecutive good running frames the entry is cleared
+again (`Core\Health\HealthRecoveryTracker`), so a one-off fault does not leave a permanent message.
+
+#### Sources: native, computed, fallback, custom
+
+- **Plugin Internal, native tier.** `SlipAngleRawSources.cs` (project root, Layer 2 but SimHub-free and
+  link-compiled into the tests) is a per-game table: four raw-data paths under
+  `DataCorePlugin.GameRawData.`, the wheel-order remap, the unit and the transform. It lists only games
+  where the spike found the field:
+  - **Native (direct)**, a per-wheel slip angle field: ACC, Assetto Corsa Rally, Assetto Corsa EVO,
+    F1 23/24/25, Forza (FM7, FM8, FH4, FH5, FH6), Live For Speed (a tangent, converted with atan),
+    Wreckfest 2, Project Motor Racing, Drift21 (radians), KartKraft, Bus Bound, Rennsport.
+  - **Native (computed)**: `atan2(lateral patch velocity, |longitudinal ground velocity|)`. This covers
+    rFactor 2 and Le Mans Ultimate, and provisionally the NASCAR Heat 4/5 / Tony Stewart / SRX reader
+    family (its terrain-speed semantics are unproven).
+
+  `SlipAngleRawSourceReader` reads the table through a delegate, so the paths are never resolved from
+  SimHub types in Core. A path that is missing for the session gets a "path missing" verdict and is not
+  read again.
+- **Native promotion** (`SlipAngleNativeSupport`). It uses the same promotion pattern as
+  `KeyedTelemetrySupport`: evidence promotes, nothing demotes within a session. A game counts as native
+  only after 5 s of moving frames (≥ 30 km/h) whose four values are finite, plausible (≤ 45°) and not
+  constant. **The 45° block (R14):**
+  - on a row with a pinned unit, a frame above 45° is neutral;
+  - on a row whose unit is unverified, a frame above 45° counts toward a 1 s block only while the unit
+    is still undetermined and |lat G| < 0.3 g (garbage, not a drift).
+- **Unit auto-detection by episode voting (R6 → R16).** Only Drift21 (radians), LFS (tangent) and the
+  computed rows have a known unit. For every other native field the unit is detected per game:
+  - An episode is a contiguous run of ≥ 0.3 s at |lat G| ≥ 0.8 g that ends when |lat G| < 0.5 g.
+  - An episode votes "degrees" if at least 70% of its frames show a magnitude ≥ 1.0, else "radians".
+  - The unit is decided after at least 3 episodes with at least 2/3 agreement.
+  - An undetermined unit means no promotion. So an unverified game needs three hard corners before it
+    goes native.
+
+  Accepted residual risk (R17): two spins plus one corner in the first three episodes can vote the
+  wrong unit for one session. The unit, the vote counts and the block state are published as
+  diagnostics.
+- **Fallback tier.** This is the rear axle only:
+  `α_rear = |atan2(Vlat, max(Vfwd, 1 m/s))|`, from `LocalVelocity`. The design's `− b·r` yaw term was
+  DROPPED after the spike (R12): `YawChangeVelocity`'s sign is not uniform across readers, so the term
+  could add instead of subtract. The learned window absorbs the scale difference. Every game outside
+  the native table uses it: Assetto Corsa, AMS2, iRacing (unverified), RaceRoom, the Codemasters
+  rally/F1 ≤ 22 titles, EA WRC, GT7 and the rest.
+- **Custom.** Four per-wheel source fields in degrees (plain / NCalc / JavaScript), learned under their
+  own `SourceIdentity`. ShakeIt Built-in and Viper are not offered, because neither provides a slip
+  angle.
+- **Plugin Internal always learns (2026-11-19, `docs/internal-source-learning-design.md`).** Plugin
+  Internal's raw angle (native or fallback) is computed and learned under its own key **every frame**,
+  also while Custom is selected. The shared surface classifier is stepped once per frame from Plugin
+  Internal's angle and the internal key's curves, whatever is selected; Custom learns only while it is
+  selected, into that same blend, under its own key. Only the selected source publishes.
+- Native and fallback are **different source identities** (`NativeIdentity` / `FallbackIdentity`).
+  Their scales differ, so they never share a learned window.
+- **The orange fallback warning** is driven by `SlipAngleStatus` (R19). It shows on the tab and the
+  ShakeIt panel when the source is Plugin Internal and the debounced tier is Fallback. Tier Unknown
+  with no Raw.All is a plain status ("No slip-angle data from this game") and shows no warning.
+- **Key-data identity tier (`SlipAngleIdentityTier`).** No game / pause / menu clears the debounced
+  tier to Unknown at once - right for the warning, but Unknown maps to the Native slot. The key data
+  the hub, the tab and the ShakeIt panel read and write is therefore chosen by a separate value,
+  `CurrentSlipAngleIdentityTier`: the last in-session CONFIRMED tier for the current game. It is kept
+  across pause / menu / a fault, follows a confirmed (debounced) tier change while running, and resets
+  on a game switch. So an edit made while paused on a fallback game lands in the Fallback slot.
+
+#### Yaw sign learning (`YawSignDetector`, R12)
+
+In a steady corner `lat G ≈ k · V · r / g`. Each game's yaw-rate sign and lateral-axis sign are their
+own conventions, so only their RELATIVE sign `k ∈ {+1, −1}` can be learned:
+
+- A frame votes when the car is grounded, |V| ≥ 30 km/h, |lat G| ≥ 0.3 g and |V·r| ≥ 0.1 g.
+- Votes are collected in 3 s windows of voting time. A window decides k at a 70% share.
+- Once k is decided, flipping it needs 80%.
+- Until k is known, and on frames with |dVlat/dt| > 0.15 g (transients the steady-state relation does
+  not cover), the processor passes a null yaw to `ImpactGuard`. The yaw-consistency check is then
+  skipped.
+
+#### Four wheels → one Raw.All (`SlipAngleRawCalculator`)
+
+1. **Axle α** = the mean of the axle's two |α| values. A wheel on a kerb (`WheelsOnKerbs`), an
+   unreadable Custom wheel, or a lifted wheel (≤ 0.05° while its partner reads ≥ 2°; owner, 2026-11-22) is
+   left out, and the other wheel stands alone.
+2. **Equalisation:** `α_F′ = α_F × k` (k below). Front and rear tyres peak at
+   different angles, so a plain blend would judge one axle against the other's window. Rescaling the
+   front onto the rear's scale lets the single window learned on Raw.All act as the rear window, and
+   each axle is effectively judged against its own peak.
+3. **Blend:** `Raw.All = Max(α_F′, α_R) × W_Max + Min(α_F′, α_R) × W_Min`. The defaults are 0.85 /
+   0.15, editable under "Wheel combination". The weights are not forced to sum to 1.
+4. **One axle only (R18):** if only one axle is available in native mode, Raw.All is that axle (front
+   scaled by k). In fallback mode Raw.All is α_R.
+
+How k is formed:
+
+- k is the median rear / front axle angle over the frames where the car is near its limit (owner, 2026-11-22;
+  `SlipAngleBalanceEstimator`): speed-band-scaled lateral G at or above 85% of the cornering 98th percentile (trusted
+  after 120 cornering frames; spikes above 6 g ignored), pulled toward 1 until 120 such frames
+  (`k = exp(w ln median)`, `w = n / 120`). Never taught by a frame the learners refuse (pit, replay, restart,
+  airborne, landing wobble, bad frame time), by contact (the impact verdict, light or heavy), by a slide (the body
+  angle), by an axle beyond the source's angle cap (a spin) or a front under 0.3 deg. Per game, car, source and
+  surface. A surface with no k evidence of its own STARTS from the same game, car and source's k on another surface,
+  else from exactly 1 - at once, not eased over (owner, 2026-11-22; `SlipAngleBorrowRules.KScope`); its own evidence
+  then takes over (`k = exp(w ln median + (1 - w) ln start)`); never another car or game. Saved with the bucket's All
+  key (single values), so a restart carries on. Clamped to **0.3**-2.0 (was 0.5; F1 measures 0.29-0.46) and slewed at
+  0.2 per second once the surface has evidence of its own. A source
+  without both axles (fallback, a one-axle Custom source) never feeds or uses it. Replayed on the owner's logs it
+  reached F1's 0.43 within the first hard corner (26.3 -> 27.1 s) and held 0.39-0.49, and held 1.00-1.10 on FH6. It
+  replaces `Best_rear / Best_front` of the confirmed windows, which needed both axles' peaks confirmed: on F1 the rear
+  crossed once in eight minutes, so k stayed 1 all session.
+- With surface weights, the buckets' k values are blended in the log domain.
+
+#### Gating and the landing wobble (`SlipAngleGate`)
+
+- **Trigger By:** Brake, Throttle or Any (default Any), with thresholds brake ≥ 5%, throttle ≥ 10%.
+  While the gate is closed the published value is 0, but the drift state machine keeps stepping, so
+  re-opening mid-slide is consistent.
+- **Speed:** the output fades in linearly from 10 to 20 km/h. Learning needs ≥ 30 km/h, a plausible
+  `dt`, and `TelemetryLearningGate` (no pit, replay or restart). Pedals are NOT required for learning.
+- **Airborne = `IsFlying > 0` only (R5).** `FlightIsOnGround` is never written for car games, so
+  "`FlightIsOnGround == false` means airborne" would gate every car title. While airborne the output
+  is 0, nothing is learned, and the drift attenuator is reset.
+- **Landing wobble:** `wobble = min(1, flight / MaxFlight) × MaxWobble` (defaults **MaxFlight 1000 ms /
+  MaxWobble 500 ms**, swapped 2026-11-19 — `docs/slip-angle-design.md` §9.7; a 200 ms flight now gives a
+  100 ms wobble).
+  During the wobble learning is frozen, the output is multiplied by a smoothstep fade from 0 to 1, and
+  the drift timers are held at reset.
+- **Small hops (R7):** a frame with |vertical G − 1 g| > 0.5 g, plus the 200 ms after it, is excluded
+  from learning. This works only where `VerticalAcceleration` is populated (iRacing, Rennsport).
+  Elsewhere hops are covered by `IsFlying` and by `ImpactGuard`'s vertical-jump check.
+
+#### The window learner: grip curve, crossing-taught Max, confirmation
+
+There is one `SlipAngleWindowLearner` per key, with three targets per context:
+
+- **front** and **rear** (internal; only their Best is used, for k);
+- **all** (its window IS the published key data).
+
+The learners are fed after equalisation, so Raw.All learns in the "rear-equivalent" degrees it is
+applied in.
+
+**The grip curve (`GripCurveBins`).** Bins are 0.25° wide over 0–30° (120 bins). Each bin keeps a
+decaying P90 of |lat G| (a quantile step scaled by the bin's own spread, memory ≈ 500 of that bin's
+observations).
+
+- The first 20 samples of a bin go to a seed buffer, and the bin's P90 is seeded EXACTLY from them.
+  This removes first-sample bias.
+- A bin updates **only when visited**, so later cautious driving never erodes a confirmed peak.
+- A bin counts toward the curve from 20 samples. Smoothing is a 3-bin max of median.
+- `peakG` for Best and Min is the highest bin **below Max** (R20; the spec's step 3 said "over all
+  bins").
+- **Best** is the midpoint of the contiguous plateau where P90 ≥ 97% of the peak.
+- **Min** is where the rising side first reaches 90% of the peak. If the rising side is not yet
+  populated, Min = Best × 5/8.
+- The shape check calls the curve "still rising at its top" when the top bin is within 99% of the peak
+  and ≥ 2% of the peak above the curve 1° lower.
+
+**Max is taught only by traction crossings** (like Lock/Slip SMax), through a `CrossingGate` with
+`CrossingGateParameters.SlipAngle`: ceiling 45°, rise 0.5°, lateral-G fall −0.05 g, 1 s hold,
+collapse test off, no saturated-wheel guard (R2), walk-back 0.10, non-crossing weight 0. The walk-back
+stays inside the rise and a crossing with an unusable snapshot is rejected, exactly as for Lock/Slip.
+**Learned-Max cap (2026-11-19):** 20° for a native tyre slip angle, 30° for the car-angle fallback
+(Custom: 20°), applied to every taught α, snapshot, prior scale and published / persisted / borrowed
+window, and to a typed Max (`SlipAngleWindowLearner.MaxCapDegFor`, `SlipAngleWindow.CappedAt`). The 45°
+gate ceiling and plausibility bound are unchanged: only α within 45° teaches, but every α is mapped, and
+anything above End (1.5 × Max) is 100.
+
+- **Candidate:** a frame is a candidate when |lat G| ≥ 85% of the curve's `peakG` and the
+  curve-plausibility check has held on every frame of the gate's trend. That check requires G ≤ 115% of
+  the curve's expected G at that α (skipped where the curve is empty) and ≤ 115% of `peakG`. Nothing is
+  a candidate while the curve is cold.
+- **Event lifecycle:**
+  - Detection opens a PENDING event.
+  - After 5 more qualified frames its corroboration is DECIDED.
+  - A corroborated event teaches its onset snapshot (never the live α) on every remaining frame of the
+    hold.
+  - The event COMPLETES only when the hold expires naturally. Only then is it counted, put in the
+    recent-snapshot ring, and eligible for confirmation and as a corroborator.
+  - Any excluded frame during the hold (impact, wobble, yaw residual, gating) DISCARDS the event, and
+    whatever it taught is **rolled back** to the state saved at the decision.
+- **Corroboration with a level epoch (R21, R22, R23).** The Max level is a
+  `CorroboratedLevelEstimator` in degrees: cap 45, jump 15, tolerance 0.30 / 0.15, floor 0.2°, cooldown
+  3 / 40, base 0.10, level floor 0.5°. One 1 s hold is about 60 observations, so an event may teach only
+  when an earlier, SEPARATE completed event corroborates it. The corroborator must:
+  - lie within the band (30% when raising, 15% when lowering, never narrower than 0.2°);
+  - lie on the **same side** of the current level by more than the floor;
+  - have completed **after the level last moved** by more than the floor. This is the "level epoch",
+    and it is persisted.
+
+  The cluster that set Max, scatter included, can therefore never corroborate a move away from it. A
+  single fake crossing can neither raise nor lower Max; two separate new crossings on the same side can.
+  With no level yet, any earlier in-band event counts. So the first crossing alone never teaches Max.
+- **Peak confirmation, latched.** Confirmation is checked only when an event completes. The peak is
+  confirmed when all of these hold:
+  - ≥ 3 recent completed events lie pairwise within 15% (lowest ≥ 85% of highest);
+  - the curve is not still rising at its top;
+  - a Max level exists.
+
+  Once confirmed it stays confirmed, and the flag is persisted.
+  - **Unconfirmed:** the published window is the prior (borrowed, else shipped 5 / 8 / 10°) times a
+    raise-only `PriorScale`. When grip is still rising at an α above the published Best, the window is
+    scaled up so Best equals that α. A driver who stops at 5° therefore never gets Max = 5°.
+  - **Confirmed:** Max is the corroborated level, and Best and Min come from the curve.
+- **Crossing gate off (R29, R30).** `SlipAngle.CrossingGateEnabled` (default on) works exactly like the
+  Lock/Slip switches. With it off, runs past the threshold are taught through the same snapshot,
+  rollback and 5-frame delay line. The ring and epoch are committed only on a natural end, and a
+  shape-only confirmation needs ≥ 2 runs.
+
+**Crash and contact protection** (owner: "the same or similar pattern as Lock/Slip"). These checks gate
+every learner input: crossings and Max, the curve, `peakG`, maturity and the surface inference. They
+NEVER touch the output, so a crash that really throws the car into a slide is still felt.
+
+1. `ImpactGuard` (`ImpactGuardParameters.SlipAngle`):
+   - a frame with |G| > 8 g on any axis, or a non-finite G, teaches nothing;
+   - a frame-to-frame jump > 3 g on lateral, longitudinal or vertical G is an impact. It invalidates
+     the previous 5 frames (`RetroInvalidate`), blocks learning for 1.5 s, resets the gate and
+     discards a live hold;
+   - the yaw-consistency residual `|lat G − k·V·r/g|` must stay ≤ 0.3 g.
+2. **The 5-frame retro delay line.** Learnable frames reach the curve, the maturity counts, the prior
+   raise and the Best history only 5 frames late. `RetroInvalidate` drops what is still in the line, so
+   the frames just before an impact never teach. `Export` is side-effect-free and omits those frames.
+3. **Rollback** of a discarded crossing event (above).
+4. The curve-plausibility check (above).
+5. Corroboration (above).
+
+The owner's named scenario is a pinned regression test: true Max 8°, the car is hit at 4°, then α keeps
+rising while G ramps down.
+
+**Maturity, which drives output scale and handover.** It does not depend on confirmation, so a driver
+who stays under the limit still matures and their manual triple still kicks in. It is
+`clamp01(min(observations / 50, corners / 3))`:
+
+- an observation is a learnable frame with |lat G| ≥ 70% of `peakG`, counted at most 10 per second;
+- a corner is a rise above 70% followed by a fall below 40%.
+
+A car matures within its first two to three near-limit corners. Maturity feeds `ColdStartScale` with
+`ColdStartTierFloors` exactly as Lock/Slip, so a cold car with nothing to borrow caps a full reading at
+50 until it matures. **Window quality** is coverage × stability, capped at 0.6 (a min, not a multiplier)
+while unconfirmed. It is used for display and the cold/warm weight only.
+
+**Learning never stops**, as for Lock/Slip. Every learnable frame keeps feeding all three learners, in
+Auto and Manual, after maturity and confirmation. Counters saturate at the shared overflow cap.
+
+#### Surface buckets (`SurfaceBucketClassifier`, `SurfaceBucketMap`)
+
+There are three buckets: **sealed**, **loose** (gravel, dirt, grass, sand) and **low-grip** (snow,
+ice). Each has its own front/rear/all learners and its own maturity, because WRC runs one car on
+several surfaces in one stage.
+
+- **Game-reported surface (R13).** It is used only where the spike documents what the values mean:
+  - **rFactor 2** `mSurfaceType`: Dry → sealed, Grass/Dirt/Gravel → loose, Kerb → sealed. Wet and
+    Special are Unknown.
+  - **GT7** `surfaceType`, by NAME only (the spike documents the names, not their numbers; a numeric
+    value is not mapped): tarmac → sealed, dirt/sand/grass → loose, snow → low-grip, kerb → sealed.
+
+  The four wheels are a majority vote. Every other raw surface (LMU, F1, AMS2, PCars, rF1 family, ETS2,
+  BeamNG, ...) is read and exposed, but not mapped.
+- **Otherwise the surface is UNKNOWN and never guessed (owner, 2026-11-22: "If you cannot get the surface
+  information, then assume the surface as unknown. NO NEED TO GUESS").** The bucket is not switched: a game that
+  reports no surface (FH6, F1, AC, ...) keeps all its learning in the starting (sealed) bucket; the diagnostic
+  source reads `Unknown`. The inference from grip it replaces (lateral G against the sealed curve at the same angle)
+  flipped FH6 between sealed and loose every 2-5 s on tarmac and ended on low-grip - turn-in, trail-braking and exits
+  read below the steady-state curve - so the learning was scattered over three buckets: the LED dropped to red as
+  each new bucket started, its value kept moving, and the tarmac window stayed low. On load, the Loose / Low-grip
+  buckets of such a game (windows, k, speed groups) are dropped - only the guessing could have made them - and the
+  next save writes the file without them (`SurfaceBucketMap.IsGuessedBucket`).
+- **Switching:** a 1 s hysteresis on the reported surface (an Unknown frame restarts it), then the weights blend
+  linearly over 1.5 s.
+  Learning goes to the active bucket. Publishing blends the buckets' windows component-wise.
+- **Lateral G per speed group** (`SlipAngleSpeedBands`) is kept per game, car, source and surface and learned on
+  every surface (owner, 2026-11-22; was per game and car, sealed only), never borrowed: gravel's lateral G is
+  typically 60-80% of tarmac's, so tarmac's groups would keep gravel from ever reaching 85% of the band peak, and
+  replaying the owner's F1 / FH6 logs with fully learned groups from the start did not shorten the learning at all.
+  Groups saved per game and car move to that car's Sealed key for the Plugin Internal source on first use.
+- **A car switch starts the classifier again (owner, 2026-11-22),** as a game switch always did
+  (`SlipAngleFrameProcessor.Process` resets its frame state when the game or the car changes): the new car
+  starts on sealed. (With the guessing then in place, a new car had no curve to be judged against and never left the
+  previous car's last verdict - on FH6 a second car learned only into low-grip. Learned data is not touched.)
+
+#### Borrowing tiers, the cold-reference latch, the persisted published window (`KeyedSlipAngleLearner`)
+
+- **Keys** are built only through `ColdStartTierResolver.Key`, with the target folded into the source
+  segment: `game|#|car|#|source/target|#|surface`. So "same source" means "same source and target", and
+  a rear window is never borrowed for a front key.
+- **THE BORROWING RULES ARE IN ONE PLACE (owner, 2026-11-22): `SlipAngleBorrowRules`.** Each parameter has one
+  scope there; to change a rule, change its scope:
+
+  | Parameter | May borrow from |
+  |---|---|
+  | Starting window, slip-ratio source (0-1 / 0-100) | same game and source: any car, any surface |
+  | Starting window, angle source (degrees, radians, car angle, Custom) | same game, car and source - another surface only |
+  | k | same game, car and source - another surface only |
+  | Lateral G per speed group | never |
+
+  Never across games. The tyre compound is read by no game reader, so it is not part of any rule. A key's own
+  saved learning (a restart) is not borrowing. A file saved before the rules has any unconfirmed key whose prior
+  was borrowed re-resolved under them on load.
+- **Cold reference, latched per key.** When a key's learner is created, its borrowing tier is resolved among the
+  keys the rule allows:
+  - Tier 4: same game and car, other surface;
+  - Tier 3: same game, other car (slip-ratio sources only);
+  - Tier 1: shipped default.
+
+  **A lender needs learning of its own and some confidence, not a confirmed peak (owner, 2026-11-22; FH6 never
+  confirms one, so it never lent).** Within a tier the most confident lender wins. What it lends is weighted by
+  that confidence: start = shipped + confidence x (lender's window - shipped), per component - 30% confident moves
+  the start 30% of the way, 100% takes the lender's window. That start becomes BOTH this key's prior (so the
+  raise-only rule works against it) and its cold reference. Until the key learns anything of its own it follows
+  the lender on every read (the start moves as the lender's confidence grows); a key restored from the file keeps
+  its saved window. The LED is half-and-half meanwhile (right half the lender's confidence, left half red). Until this key confirms, a strictly better tier appearing
+  re-priors it (`SetPrior`, with the raise expressed in absolute degrees). On the frame the key itself
+  confirms, the cold reference is latched to the window it was publishing just before, and it is never
+  swapped again in that session.
+- **Hot weight.** A confirmed key publishes `ColdWarmBlend.Blend(cold, learned, w)` per component.
+  `w` starts at 0 and is slewed toward `ConcaveCountConfidence(sessionCrossings, 10) ×
+  clamp01(quality / 0.5)`. The window is therefore continuous across the confirmation frame, and it
+  reaches the pure learned window after 10 session crossings at quality ≥ 0.5.
+- **Restart.** `QAdvanceFeedback.Parameters.json` gains `SlipAngleLearners` (`RuntimeDocument`
+  version 12). It stores each key's learner state, its LAST PUBLISHED window and its cold tier. Import
+  makes the published window the cold reference with `w = 0`, so a restart with no new driving
+  publishes exactly what was last published. `SaveIfDue` exports on the data thread at most once per
+  interval and hands fresh objects to `RuntimeStore`, whose timer thread never touches the learner.
+
+#### Key data and the normalizer (`SlipAngleKeyDataSettings`, `SlipAngleNormalizer`)
+
+- **One Min / Best / Max triple, on Raw.All.** It uses the `KeyDataPointSettings` slot model
+  (mode, game, source) with Auto / Manual and Global / Per-Game. The Auto / PerGame flags are
+  **per source**, like `KeyDataPointSettings` (R24; the spec described a single pair).
+- Values are in degrees, step 0.1, range 0.5–45. Validation: `0 < Min < Best < Max`, gaps ≥ 0.2°.
+- The shipped cold default is **5 / 8 / 10°** (End 15°), for native and fallback alike.
+- Under Auto the editors are read-only on the tab AND the ShakeIt panel (the same VM state), and show
+  the learned, borrowed or default window.
+- A Manual triple applies only once `ManualOverrideGate` is satisfied (30 s moving AND handover
+  confidence ≥ 0.95, R28). The manual slot is seeded once from the learned window, as Lock does.
+- **N(α):** a monotone cubic through (0,0), (Start,15), (Min,30), (Best,60), (Max,80), (End,100),
+  End = 1.5 × Max, clamped to 100 for published values.
+- **Start value (2026-11-19, `docs/slip-angle-design.md` §8).** `SlipAngleWindow.Start` = ⌊0.5 × Min⌋
+  whole degrees, derived (never persisted or edited). When it is 0 (Min < 2°) the Start knot is
+  **omitted** and the curve runs (0,0) → (Min,30) as before. `SlipAngleNormalizer.SourceFor` (the
+  inverse) bisects through the same knots. The tab and the ShakeIt panel show a read-only line
+  "Start: 2° (50% of Min)" (`SlipAngleStartText`), or "Start: — (Min below 2°)"; the tab's left graph
+  gets a dashed Start marker at 15 only while the window has a Start.
+- **Nᵤ(α):** the same below End. Beyond End it extends the Max→End segment linearly, +20 points per
+  0.5 × Max. Only the drift state machine uses it, so a trend above End (250% → 180% of Max) is still
+  visible.
+
+#### Projection and drift (`SlipAngleProjectedEngine`, `DriftAttenuator`)
+
+- **Preset (`ProjectionChannel.SlipAngle`):**
+  - anchor inputs 30 / 60 / 80, smooth ranges 3 / 6 / 3 (owner, 2026-11-22; was 30 / 62 / 78, 3 / 2 / 2);
+  - outputs 10 / 20 / 60 (Min → 10%, Best → 20%, Max → 60%; Best was 30%);
+  - Start **15** → 0 (2026-11-19: the projector's Start input sits on the normalizer's Start knot, so
+    an angle below Start projects to 0), End 100 → 100. The "Linear" preset keeps the current Start, so it
+    draws a 15 → 100 line.
+
+  The anchors sit exactly where the learned Best and Max map (60 and 80), so Best and Max read exactly 20 and
+  60, each in the middle of its own plateau. "Restore all defaults" and choosing the Curve preset give this
+  curve; a saved config still holding the previous shipped curve, unedited, moves to it on load, and any
+  curve the driver changed is kept. Pulse-at-max is available and off by default.
+- **Order:** project → cold-start maturity scale → drift attenuation → × landing fade × speed fade →
+  pedal gate → pulse.
+- **The drift attenuator** (pure, allocation-free, dt-correct):
+
+  ```
+  Normal ──(sNᵤ > DriftStart for Hold, rise in the hold window ≤ StabilityRange)──▶ Drifting
+  Drifting:   factor = 1 − (1 − To)·S(t),  S(t) = t^γ/(t^γ+(1−t)^γ);  out = Min(factor × calcPeak, calc)
+  Drifting ──(sNᵤ ≤ peak − SwingMargin for TrendConfirm)──▶ Recovering (locked = factor × calcPeak)
+  Recovering: out = Min(locked, calc)
+  Recovering ──(sNᵤ ≥ trough + SwingMargin for TrendConfirm)──▶ Normal
+  Recovering ──(sNᵤ < 30)──▶ Normal
+  Drifting / Recovering ──(sNᵤ ≤ 80 and throttle > ref + Rise, or throttle ≥ Level)──▶ Normal
+  ```
+
+  Owner rules of 2026-11-20 (`docs/slip-angle-design.md` §9.7):
+  - **Drift start** (`SlipAngleDriftStart`): the angle `Max(1.2 × Max, Min(30°, 1.5 × Max))` as its Nᵤ,
+    never below 80 (Max 15° → 22.5° = End).
+  - **Locked output:** `calcPeak` is the highest calc since the drift began, so a falling angle is
+    never scaled again: the eased value is held until calc drops below it.
+  - **Throttle clear:** at or below Max, `ref = Min(ref, throttle)`; the flag clears on
+    `throttle > ref + ThrottleRiseClear` (20) or `throttle ≥ ThrottleLevelClear` (90). The frame
+    processor passes the frame's throttle; the Test Effect passes none.
+
+  sNᵤ is Nᵤ through an EMA (`SmoothingTime`). The first sample after construction or Reset seeds the
+  EMA directly. The defaults are:
+
+  | Hold | Stability | To | Duration | γ | Smoothing | Swing | Confirm | Throttle rise | Throttle level |
+  |---|---|---|---|---|---|---|---|---|---|
+  | 250 ms | 20 pts | 40% | 120 ms | 2.0 | 50 ms | 8 pts | 80 ms | 20 pts | 90% |
+
+  - **The raw/smoothed escalation rule (R25, final review).** The rise inside the hold window is
+    `max(young raw rise, smoothed rise)`, each being the largest upward excursion in the window. The
+    young raw rise only STARTS from samples taken while the EMA is young (< 3τ since it was seeded at
+    construction / Reset / landing): a freshly seeded EMA lags a spin's onset and would under-read it.
+    Once the EMA is warm only the smoothed rise counts, so raw frame-to-frame noise (washboard, rumble
+    strips) cannot block a held drift. With τ = 0 raw and smoothed are the same series. Smoothing
+    still governs entering (> 80) and both trend confirmations. A rise above `StabilityRange` is an
+    escalation (a spin): the attenuator stays Normal at full output. The window slides, so a slide
+    that stabilises later is still caught.
+  - **No escalation exit from Drifting (R26).** Once drifting, only the confirmed-decrease path leaves.
+  - **Robustness:** `dt` is clamped to `min(0.1 s, HoldSeconds / 2)` (so even the 0.05 s minimum hold
+    needs two frames), and a bad dt ages timers by 1/60 s.
+  - **Gaps:** `SlipAngleFrameProcessor.NoteGap` (no game / pause / menu) resets the attenuator, like
+    `Configure` and a game switch.
+  - **Caller contract:** airborne and the landing wobble call `Reset()`.
+
+  The owner's worked example is pinned: a drift at 80 eases to 32; released 100 ms into the ramp with
+  factor 0.8 and calc 80, the output is 64.
+
+  One known consequence, recorded as an owner follow-up in the report: with the defaults, a spin
+  slower than about 80 pts/s is classed as a drift.
+
+#### Published properties, ShakeIt effect, Test Effect
+
+- **Product properties** (appended after every earlier name):
+  - `SlipAngle.Raw.All` (degrees, null when unavailable, never a fake 0);
+  - `SlipAngle.Normalized.All`;
+  - `SlipAngle.Projected.All` (final: attenuated, faded, pulsed).
+- **33 `Diag.SlipAngle.*` diagnostics** are appended at the end of the diagnostics and CSV columns:
+  - per-wheel α, per-axle α, k and the per-axle learned Best;
+  - the source tier, the drift state and factor, and the Min/Best/Max window;
+  - maturity, window quality, borrowing tier, wobble remaining and pedal gate;
+  - the impact flag, exclusion remaining and yaw residual;
+  - the surface bucket, its weights and its source;
+  - the unit, the unit-undetermined flag, the unit votes and the native block.
+- **`QAdvanceFeedbackSlipAngleContainer`**:
+  - the type name is frozen; the display name is "Slip Angle" (R37: no QAdvanceFeedback prefix on
+    effect names);
+  - category QAdvanceFeedback, ONE placement;
+  - default gain 75%, the same as Lock/Slip (R38); tone 40 Hz low, 25 Hz high, no noise;
+  - it plays the data-thread `SlipAngle.Projected.All` and returns 0 once that frame is older than
+    500 ms (`SlipAngleEffectOutput`).
+
+  Its curve slot is the read-only Raw.All degrees → Projected graph (`SlipAngleGraphView`). The panel
+  has Trigger By and its thresholds, Auto/Manual, the Min/Best/Max editors, the fallback warning, a
+  status line and the Test Effect. It is synced two-way with the tab through `SettingsHub`.
+- **Test Effect** (`SlipAngleTestViewModel` / `SlipAngleTestEngine`):
+  - one slider for Raw.All in degrees, 264 px wide (fits the ShakeIt panel), 0 → 3 × Max;
+  - a "100%" tick at its middle (End);
+  - it runs the real normalization, projector and `DriftAttenuator` (no learner, no pedal gate, no
+    landing logic, full confidence) and publishes through `TestEffectSession`, with the 10 s auto-off.
+
+  The dot sits at x = `Min(slider, End)`, y = the actual pulse-free output. While drifting it eases
+  from Max toward To, which is the owner's own "slight drift" rule (80 → 32, R39). During the test,
+  Raw and Normalized read 0 or null, as they do for the Lock/Slip test.
+
+#### G-Force integration ("Integrate Slip Angle")
+
+- **Settings:** `GForceSettings.IntegrateSlipAngle` defaults **on**, for fresh installs AND for
+  upgrades: a settings file without the field loads true (R31). `WheelSlipAngleShakeScale` defaults to
+  `DefaultShakeScaleFor(mode)`, like the Lock and Slip scales. Both are on the G-Force tab and the
+  G-Force ShakeIt panels (hub field `IntegrateSlipAngle`). The engine's own property defaults to false;
+  `ApplyTo` sets it.
+- **Per frame**, on unscaled values:
+
+  ```
+  gate  = (IntegrateWheelLockAndSlip && Max(lock, slip) ≥ T) || (IntegrateSlipAngle && angle ≥ T)
+  drive = Max over the enabled contributions of lock × sL, slip × sS, angle × sA
+  ```
+
+  The input is `SlipAngle.Projected.All` (already drift-attenuated) from the same frame. Everything
+  downstream is unchanged: modes, wave, feeling, tail and re-arm. The mode strings read
+  "lock/slip/angle", and the `ShakeApplyMode` enum names stay (they are persisted).
+- **The G-Force Test Effect** gains a Slip Angle bar.
+
+### Shared cores (extracted behaviour-preservingly)
+
+Four pieces are shared between Lock/Slip and Slip Angle, so the protection logic exists only once.
+Each of the three extractions is proven **bit-identical** against a verbatim frozen copy of the
+pre-extraction code in `QAdvanceFeedback.Tests\Frozen\`. Those copies are deliberate test oracles
+(R1), not duplication to remove.
+
+| Core | Extracted from | Lock/Slip use | Slip Angle use | Proof |
+|---|---|---|---|---|
+| `Core\Normalized\CrossingGate` + `CrossingGateParameters` (`TeachingWeightMode`: Fixed / MultiplyConfidence) | `SlipCrossingGate`, `LockCrossingGate` (now thin named wrappers with the shipped parameters; their call sites, settings and tests are unchanged) | `.Slip` / `.Lock` shipped sets | `.SlipAngle` (45° ceiling, 0.5° rise, no collapse test, no saturated-wheel guard) | `CrossingGateEquivalenceTests`: 200 seeds × 3000 frames per wrapper (spikes, NaN/zero dt, saturated wheels, back-to-back crossings, hold edges) plus exact-threshold boundary streams, against `FrozenSlipCrossingGate` / `FrozenLockCrossingGate` |
+| `Core\Normalized\CorroboratedLevelEstimator` + `CorroborationParameters` | `GripLearner`'s adaptive-peak state and `ApplyEvidenceWeightedObservation` (persisted hit-field JSON names unchanged) | `CorroborationParameters.GripLearnerDefaults` (8 g, 3 g, 0.30 / 0.15, floor 0.05, cooldown 3 / 40, base 0.10) | Max estimator in degrees (cap 45, jump 15, floor 0.2°, level floor 0.5°) | `CorroboratedLevelEstimatorEquivalenceTests`: 200 seeds × 5000 values at the defaults, non-default caps, confidence schedules, and `GripLearner` public state, against `FrozenGripLearnerCorroboration` |
+| `Core\Normalized\ColdStartTierResolver` | `KeyedScaleLearner`'s borrowing-tier scan | `KeyedScaleLearner.ResolveTier` | `KeyedSlipAngleLearner` (target folded into the source segment) | `ColdStartTierResolverEquivalenceTests`: 300 seeds × 600 operations, the shipped learner and the bare resolver, against `FrozenColdStartTierResolution` |
+| `Core\Normalized\ImpactGuard` + `ImpactGuardParameters` | new | not wired (`ImpactGuardParameters.Disabled` exists, so turning it on later is a one-parameter decision) | `.SlipAngle` (8 g, 3 g jump, 5 retro frames, 1.5 s, 0.3 g yaw) | `ImpactGuardTests`. No frozen copy exists because there was no earlier code |
+
+Every pre-existing Lock/Slip, `GripLearner` and `KeyedScaleLearner` test passes unedited. The Phase 3
+checkpoint recorded Lock/Slip as bit-identical, with the suite green.
+
+### Lock/Slip additions: Test Effect group sliders, fallback warning
+
+- **Group sliders (`Settings\TestGroupSliders`, `KeyDataNormalizationInverse`).** The Lock/Slip Test
+  Effect used to place its dot at `x = Aggregate(sources)`, `y = Project(Aggregate(Normalize(wheels)))`.
+  Normalization is non-linear, so the dot left the curve whenever the wheels differed. The panel now
+  shows group sliders by routing:
+  - Mono: **Single Channel**;
+  - FrontRear: **Front / Rear Channel**;
+  - LeftRight: **Left / Right Channel**;
+  - Corners: none.
+
+  The four wheel sliders stay in every routing.
+  - A group value is computed, never stored: `N⁻¹(Aggregate(N(FL..RR), weights).<group>)`. `N` is
+    exactly `KeyDataNormalization.Normalize` with the key data the graph shows. `N⁻¹` bisects for the
+    SMALLEST source reaching the target; a target ≥ N(100) returns 100.
+  - Dragging a group sets its member wheels through the VM setters, and the group values are
+    recomputed once afterwards.
+  - The dot is x = the group value, y = the projection from the four wheels. A property test asserts
+    that it lies on the curve over random spreads, weights and key data.
+  - If the combination weights do not sum to 1, a group slider can settle slightly off where it was
+    released. The help text says so.
+- **Fallback warning (`Core\BranchNativeness`, `Core\NativenessBroadcaster`,
+  `Ui\ViewModels\FallbackWarningViewModel`).**
+  - `BranchNativeness` classifies the Raw engine's selected Lock/Slip branch:
+    - Native: WheelSpeedLock / RPS / RPSandDummyRadius for Lock; Precalibrated slip / Slip data /
+      Wheels speed for Slip.
+    - Fallback: Braking vs speed, the RPM-vs-speed variants, and the no-capabilities defaults.
+    - Unknown: Direct slip feedback, No branch matched.
+  - `NativenessBroadcaster` publishes a new pair only after it has been stable for 0.5 s of data-thread
+    time, so a flickering branch never broadcasts. It clears immediately when no game is running.
+    `SettingField.SourceAvailability` stays notification-only. The VMs read nativeness from plugin
+    properties through `IPanelHost` (R9).
+  - The orange label ("Not natively supported by this game — using the fallback estimate") shows on the
+    Wheel Lock / Wheel Slip tab and the matching ShakeIt panel, ONLY when the source is Plugin Internal.
+    It is hidden with no game running, so no screenshot taken offscreen shows it.
 
 ## SimHub-dependent vs. pure/testable
 
@@ -831,12 +1540,17 @@ process:
 
 - **SimHub-dependent** (references `SimHub.Plugins`/`GameReaderCommon`, cannot be constructed
   outside a live SimHub host): `QAdvanceFeedback.cs` (the plugin composition root),
-  `SimHubTelemetryAdapter.cs`, `MotorsExportAvailabilityProvider.cs`, `PropertyPickerLauncher.cs`,
+  `SimHubTelemetryAdapter.cs`, `PropertyPickerLauncher.cs`,
   `SimHubScriptEditor.cs`, `SimHubExpressionEvaluator.cs`, `WheelSourceResolver.cs`,
-  `Settings/SettingsControl.xaml(.cs)`.
+  `QAdvanceFeedback.SlipAngle.cs` / `QAdvanceFeedback.Clutch.cs` (partials of the composition root),
+  `ViperAvailabilityProvider.cs`, everything under `Integration\ShakeIt\`; the WPF views in
+  `Ui\Views\` are not SimHub-typed but are WPF, so the net8 tests do not compile them either;
+  `Settings/SettingsControl.xaml(.cs)` (the thin page host), `QAdvanceFeedback.SettingsPage.cs` and
+  `Settings/NumericEditor.xaml(.cs)`.
 - **Pure/testable** (plain C#, no SimHub reference at all): everything under `Core\` (Layers 1/3/4/5,
-  G-Force), plus the settings POCOs and `ConfigStore`/`RuntimeStore` (which take logging as plain
-  `Action<string>` delegates rather than a direct SimHub logger reference).
+  G-Force, Slip Angle, Clutch), `Ui\Mvvm\` and `Ui\ViewModels\`, `SlipAngleRawSources.cs`, plus the
+  settings POCOs and `ConfigStore`/`RuntimeStore` (which take logging as plain `Action<string>`
+  delegates rather than a direct SimHub logger reference).
 
 The test project (`QAdvanceFeedback.Tests`) enforces this by link-compiling the pure files directly
 as source into a net8.0 assembly with zero SimHub package references, rather than referencing the
@@ -845,26 +1559,35 @@ the test build immediately, not just a runtime assumption nobody checks.
 
 ## File-by-file map
 
+Verified against the directory listing on 2026-11-20 (branch `feature/slip-angle`). Every `.cs` /
+`.xaml` file under `QAdvanceFeedback\` appears below.
+
 ### `QAdvanceFeedback\` (composition root, Layer 2, SimHub-facing helpers)
 
 | File | Layer | Purpose |
 |---|---|---|
 | `QAdvanceFeedback.cs` | composition root | The `IPlugin`/`IDataPlugin`/`IWPFSettingsV2` entry point - wires every layer together each frame. |
-| `SimHubTelemetryAdapter.cs` | 2 | Maps SimHub's `GameData` onto Layer 1's `TelemetrySample`; captures the raw diagnostics snapshot. |
+| `QAdvanceFeedback.SlipAngle.cs` | composition root (partial) | Slip Angle composition: reads the Layer 2 inputs, calls `SlipAngleFrameProcessor` once per running frame (after Lock/Slip Projected, before G-Force), publishes the plain result, keeps the UI snapshots, the debounced tier (warning) and the identity tier (key-data slot), persists the learners; own try/catch (`HealthSubsystems.SlipAngle`). |
+| `QAdvanceFeedback.Clutch.cs` | composition root (partial) | Clutch Bite: resolves the clutch, computes/publishes `Clutch.Bite.Output`, learns the bite point. |
+| `QAdvanceFeedback.SettingsPage.cs` | composition root (partial) | The settings page: ONE `SettingsPageViewModel`, created on the first `GetWPFSettingsControl` and disposed in `End()`; each view SimHub asks for is a thin `SettingsControl` over it. `SettingsPageStateChanged` replaces every push into the page; `ManualGateReadyForDisplay`. |
+| `SimHubTelemetryAdapter.cs` | 2 | Maps SimHub's `GameData` onto Layer 1's `TelemetrySample`; captures the raw diagnostics snapshot; supplies the Slip Angle body inputs. |
 | `ITelemetryAdapter.cs` | 2 (contract) | The interface `SimHubTelemetryAdapter` implements. |
-| `MotorsExportAvailabilityProvider.cs` | Settings-adjacent | Adapts a live `PluginManager` to `MotorsExportAvailabilityResolver` for the settings UI's inline note. |
-| `WheelSourceResolver.cs` | Layer 4 input | Resolves one of `WheelChannelSettings`'s source fields (plain property, JavaScript or NCalc) to a live 0-100 reading. |
+| `SlipAngleRawSources.cs` | 2 (pure) | The per-game Slip Angle raw-data table (paths, wheel order remap, unit, transform; native direct/computed rows and the raw surface paths) and `SlipAngleRawSourceReader`, which reads it through a lookup delegate into `SlipAngleInput`. SimHub-free, link-compiled into the tests. |
+| `KnownSourceColdStartReference.cs` | Layer 4 support | Which of the two input sources this plugin has measured cold-start evidence for, from a channel's composite `SourceIdentity`. |
+| `ViperAvailabilityProvider.cs` / `ViperStore.cs` | Settings-adjacent / persistence | Live check for viper4gh's CalcLngWheelSlip plugin (faults under health `ViperAvailability`); read/write of `QAdvanceFeedback.Viper.json`. |
+| `WheelSourceResolver.cs` | Layer 4 input | Resolves one of `WheelChannelSettings`'s source fields (plain property, JavaScript or NCalc) to a live 0-100 reading. The ShakeIt Built-in source never goes through it (it reads the tap, or falls back to Raw per channel). |
 | `PropertyPickerLauncher.cs` / `SimHubScriptEditor.cs` / `SimHubExpressionEvaluator.cs` | Settings-adjacent | SimHub-reflection helpers for the settings UI's picker/script-editor buttons and expression evaluation. |
 | `PropertyPublisher.cs` | publish boundary | Registers every published SimHub property (`Register`/`AttachTier`/`AttachTierNullable`) - the SimHub-`IPlugin`/`AttachDelegate`-dependent half of the class; net48-only. |
-| `PropertyPublisher.State.cs` | publish boundary | The SimHub-free half of the same `partial class`: every backing field, every `Update*` setter, every `*Snapshot` accessor, and `SnapshotAllValuesForCsv` - split out so this half (where a CSV header/row column-count mismatch could be introduced) can be link-compiled into the test project and exercised directly. |
+| `PropertyPublisher.State.cs` | publish boundary | The SimHub-free half of the same `partial class`: every backing field, every `Update*` setter (incl. `UpdateSlipAngle`), every `*Snapshot` accessor, and `SnapshotAllValuesForCsv` - link-compiled into the test project so a CSV header/row mismatch is caught. |
 | `CsvExportWriter.cs` | diagnostics | Writes every published property to a CSV file when "Export session to CSV" is on. |
-| `ConfigStore.cs` / `RuntimeStore.cs` | persistence | JSON load/save for settings and for learned runtime state. |
+| `ConfigStore.cs` / `RuntimeStore.cs` | persistence | JSON load/save for settings and for learned runtime state (incl. `SaveSlipAngleLearners`, an in-memory cache the timer thread only snapshots). |
+| `ShakeItCalibrationJson.cs` / `ShakeItPrecalibrationConverter.cs` | persistence | Short-name serialisation rules for Layer 3's ShakeIt calibration types; the one-shot SimHub precalibration import. |
 
 ### `QAdvanceFeedback\Core\` (Layer 1 + shared primitives)
 
 | File | Layer | Purpose |
 |---|---|---|
-| `ITelemetryFrame.cs` / `TelemetryFrame.cs` | 1 | One frame of game-agnostic telemetry. |
+| `ITelemetryFrame.cs` / `TelemetryFrame.cs` | 1 | One frame of game-agnostic telemetry (the Slip Angle work adds the Slip Angle body inputs: forward local velocity, yaw rate, airborne, kerbs, vertical G, surface-grip hint). |
 | `ITelemetrySample.cs` / `TelemetrySample.cs` | 1 | Current + previous frame + elapsed time. |
 | `Corners.cs` | shared | Four-wheel value struct, fixed FL/FR/RL/RR index order. |
 | `ClampMath.cs` | shared | Publish-boundary clamping (`To0100`/`To01`) and safe-conversion helpers. |
@@ -872,15 +1595,17 @@ the test build immediately, not just a runtime assumption nobody checks.
 | `AggregationWeights.cs` / `Aggregator.cs` / `WheelAggregate.cs` | shared (Layers 3/4/5) | The physically-motivated axle/side blend that turns four per-wheel values into Front/Rear/Left/Right/All. |
 | `ILegacyWheelLockSlipEngine.cs` / `LegacyWheelLockSlipResult.cs` / `WheelLegacyResult.cs` / `LegacyThresholds.cs` | 3 (contract) | The public contract `RawCalculatorEngine` implements, and the driver-configurable pedal thresholds that gate it. |
 | `WheelSlipBranchNames.cs` / `WheelSlipBranchSelector.cs` | 3 (selection) | The diagnostic branch-name constants and the pure capability-priority selector. |
+| `BranchNativeness.cs` | 3 (classification) | Pure: is the selected Lock/Slip branch a native game signal, a speed/RPM fallback estimate, or unknown - drives the orange fallback warning. |
+| `NativenessBroadcaster.cs` | publish boundary | Holds the published Lock/Slip nativeness pair, notifying only after 0.5 s of stability (data-thread time); clears at once with no game. |
 | `RawWheelTelemetrySnapshot.cs` / `RawWheelTelemetryBuilder.cs` | 2/3 boundary | The per-wheel raw telemetry + capability snapshot Layer 3's dispatch reads, and its null-vs-zero gating logic. |
 | `IValueDistributionLearner.cs` | 3 (contract) | The learner contract `StreamingPercentileLearner` implements. |
 | `OnlineDistributionLearner.cs` | 4 (KeyedScaleLearner support) | A separate streaming mean/variance learner used by the per-source scale calibration mechanism. |
-| `PublishedPropertyNames.cs` / `AllPublishedProperties.cs` | publish boundary | Every published property name, product and diagnostic. |
-| `TelemetryLearningGate.cs` | 4/G-Force | Shared "is this frame valid evidence for a cross-frame learner" gate (pit/replay/session-restart). |
+| `PublishedPropertyNames.cs` / `AllPublishedProperties.cs` | publish boundary | Every published property name, product and diagnostic (Slip Angle's appended at the end). |
+| `TelemetryLearningGate.cs` | 4/G-Force/Slip Angle | Shared "is this frame valid evidence for a cross-frame learner" gate (pit/replay/session-restart). |
 | `AccelerationUnits.cs` | 2 | m/s² <-> G conversion, used once at the SimHub-facing edge. |
-| `RobustBandEstimator.cs` | shared (G-Force) | Index-based pool estimator (exclude the top outliers, take a band of what remains, blend the band's own max/mean) used by `GForceMaxLearner` for the auto max-G reference - see docs\robust-auto-gforce-report.md. Evaluated for the Normalized-layer `GripLearner`/`KeyedScaleLearner` too; not adopted there (see that report for the measured reason). |
-| `ColdWarmBlend.cs` | shared (Layer 4 support) | The dispersion-weighted cold/warm persistence mechanism shared by `GripLearner` and `KeyedScaleLearner` - weights this session's own live evidence against a persisted prior value by the live evidence's coefficient of variation, not sample count alone, so a noisy session converges toward trusting the persisted value instead of overwriting it by volume. |
-| `KeyedTelemetrySupport.cs` | 2/3 boundary | Per-GAME-only (not per-car) detection of whether a title genuinely supports the one telemetry field with no matching SimHub capability flag (`WheelOnLooseSurfaceFrontLeft`) - promotes a game to "supported" only after sustained `true` evidence, and never demotes it once promoted, within a session or across a restart. |
+| `RobustBandEstimator.cs` | shared (G-Force) | Index-based pool estimator used by `GForceMaxLearner` - see docs\robust-auto-gforce-report.md. |
+| `ColdWarmBlend.cs` | shared (Layer 4 / Slip Angle) | The dispersion-weighted cold/warm persistence blend shared by `GripLearner`, `KeyedScaleLearner` and the Slip Angle published window. |
+| `KeyedTelemetrySupport.cs` | 2/3 boundary | Per-game sustained-evidence promotion of `WheelOnLooseSurfaceFrontLeft` support; never demotes. |
 
 ### `QAdvanceFeedback\Core\RawCalculator\` (Layer 3 concrete engine)
 
@@ -888,85 +1613,150 @@ the test build immediately, not just a runtime assumption nobody checks.
 |---|---|
 | `RawCalculatorEngine.cs` | The `ILegacyWheelLockSlipEngine` implementation - dispatches per frame, owns every stateful learner/filter. |
 | `BrakeSpeedSlipModel.cs` | Pedal+speed+RPM-derived per-wheel Lock/Slip model (the branch used when no wheel-level telemetry exists). |
-| `BrakingVsSpeedModel.cs` | Car-level pedal+speed-only Lock/Slip model. A faithful port of SimHub's `GetSimpleBraking`; the former "low-speed fix" was removed in 1.0.7.0 (see that file's own remarks and the measured divergence table). |
+| `BrakingVsSpeedModel.cs` | Car-level pedal+speed-only Lock/Slip model. A faithful port of SimHub's `GetSimpleBraking`; the former "low-speed fix" was removed in 1.0.7.0. |
 | `DispatchBranchFormulas.cs` | The remaining per-branch formulas (wheel rotation, wheel speed, precalibrated slip, calibrated distributions, wheel-speed delta). |
-| `WheelRotationLockFilter.cs` | Per-wheel EMA-smoothed lock estimate from wheel rotation rate vs. ground speed - SimHub's `SimpleLock01`, with dt-corrected smoothing. |
-| `StreamingPercentileLearner.cs` | A bucketed running histogram (mean + nearest-rank percentile). No longer on the Raw hot path since 1.0.7.0 - superseded by `Calibration\CalibrationData`. |
+| `WheelRotationLockFilter.cs` | Per-wheel EMA-smoothed lock estimate from wheel rotation rate vs. ground speed, dt-corrected. |
+| `StreamingPercentileLearner.cs` | A bucketed running histogram. No longer on the Raw hot path since 1.0.7.0. |
 
 ### `QAdvanceFeedback\Core\RawCalculator\Calibration\` (the ShakeIt calibration port, 1.0.7.0)
 
-Every type here is a port of the SimHub type of the same name, decompiled from the shipped
-`SimHub.Plugins.dll`. They exist so Layer 3 and ShakeIt produce the same numbers from the same inputs,
-rather than merely the same formulas.
+Every type here is a port of the SimHub type of the same name. They exist so Layer 3 and ShakeIt
+produce the same numbers from the same inputs.
 
 | File | Purpose |
 |---|---|
-| `ICalibrationData.cs` | The contract shared by a live calibration and a shipped preset. Note `GetPercentile` returns a plain `double` and never null - that is the whole point. |
-| `CalibrationData.cs` | The live, accumulating histogram: adaptive bucket ladder, positives-only point counter, memoised percentiles, and the running-maximum fallback that keeps it answering from the first sample. |
-| `PreloadedCalibrationData.cs` | A shipped per-game preset: `MeasuredMaximum x CorrectionFactor x pct/100`, blended with live evidence at a fixed 0.25 - permanently, not as a ramp. `GetAverage` deliberately throws. |
-| `CalibrationDataProvider.cs` | Owns every calibration, keyed `track;car;metric`. Pools all four wheels into ONE `Slip` calibration while splitting `RPSToSpeed` by axle - SimHub's own scoping, and the reason the earlier per-wheel Lock learners were retired. |
-| `GameCalibrationBounds.cs` | The three per-game wheel-speed-delta bounds that sit alongside the presets in SimHub's own file. |
-| `TimeMovingAverage.cs` | The per-gear wheel-speed-delta reference. The ONE type here reconstructed from usage rather than decompiled - it lives in `WoteverCommon`, which this project does not ship; see its own remarks for why that cannot matter at this call site. |
+| `ICalibrationData.cs` | The contract shared by a live calibration and a shipped preset; `GetPercentile` never returns null. |
+| `CalibrationData.cs` | The live histogram: adaptive bucket ladder, positives-only counter, memoised percentiles, running-maximum fallback. |
+| `PreloadedCalibrationData.cs` | A shipped per-game preset, blended with live evidence at a fixed 0.25. |
+| `CalibrationDataProvider.cs` | Owns every calibration, keyed `track;car;metric`. |
+| `GameCalibrationBounds.cs` | The three per-game wheel-speed-delta bounds. |
+| `TimeMovingAverage.cs` | The per-gear wheel-speed-delta reference (reconstructed from usage). |
 
-### `QAdvanceFeedback\Core\Normalized\` (Layer 4)
+### `QAdvanceFeedback\Core\Normalized\` (Layer 4, and the shared cores)
 
 | File | Purpose |
 |---|---|
 | `NormalizedWheelLockSlipEngine.cs` / `NormalizedWheelLockSlipResult.cs` | The Layer 4 engine and its published result shape. |
-| `SlipCrossingGate.cs` / `LockCrossingGate.cs` | The crossing gate that decides which at-the-limit moments are allowed to teach SMax (1.0.8). DELIBERATELY TWO CLASSES, not one shared one: the owner asked for the same mechanism on both channels with separate implementations, so either side can be disabled alone. Full specification in `docs\slip-smax-crossing-gate-design.md`. |
+| `CrossingGate.cs` | **Shared core (Slip Angle work):** the parameterised crossing gate (`CrossingGateParameters` `.Lock` / `.Slip` / `.SlipAngle`, `TeachingWeightMode`). Window opening is proven bit-identical to the pre-extraction gates; the taught basis deliberately differs since 2026-11-19 (walk-back stays inside the rise, no live fallback, `LearnCeiling` 95 for Lock/Slip) - see `docs\slip-smax-crossing-gate-design.md` §10. |
+| `SlipCrossingGate.cs` / `LockCrossingGate.cs` | Thin named wrappers over `CrossingGate`; their public constants are authoritative (`CrossingGateParameters.LockShipped` / `SlipShipped` are built from them) - still two classes so either side can be disabled alone (`docs\slip-smax-crossing-gate-design.md`). |
+| `CorroboratedLevelEstimator.cs` | **Shared core (Slip Angle work):** the evidence-weighted, corroborated level estimator (`CorroborationParameters`, `GripLearnerDefaults`) extracted from `GripLearner`; used in g by Lock/Slip and in degrees by the Slip Angle Max. |
+| `ColdStartTierResolver.cs` / `ColdStartTier.cs` | **Shared core (Slip Angle work):** the borrowing-tier resolver extracted from `KeyedScaleLearner` (Tier 4 other surface / 3 other car / 2 other game / 1 none), and the tier enum + `ColdStartTierFloors`. |
+| `ImpactGuard.cs` | **Shared core (Slip Angle work, new):** crash/contact protection (plausibility cap, jump detector with retro invalidation and a timed exclusion, yaw-consistency residual); on for Slip Angle, not wired for Lock/Slip (`ImpactGuardParameters.Disabled`). |
 | `GripLearner.cs` / `KeyedGripLearner.cs` / `GripLearnerKeyMigration.cs` | The car-relative learned-peak reference, keyed per game+car+source(+surface), with migration for older persisted key shapes. |
-| `KeyedScaleLearner.cs` | Per-source scale calibration, anchored to a shared physical reference. |
+| `KeyedScaleLearner.cs` | Per-source scale calibration, anchored to a shared physical reference; Slip's cross-channel borrow goes through a resolver (`SetCrossChannelLockIdentityResolver`). |
+| `PluginInternalSourceIdentity.cs` | The internal (Plugin Internal) key per channel, equal to `RawSourceFallback.RawIdentity`; the engine feeds it every frame. |
+| `InternalSourceKeyMigration.cs` | Pure one-time load migration of the retired `__layer3_raw_fallback__` key into the internal key (scale, anchors, grip). |
+| `CrossChannelSourcePairing.cs` | Pure: which Lock key a Slip key may borrow cold-start evidence from (same source type only). |
+| `LockAnchorLearner.cs` | Wheel Lock only: learns the source-space S75/S90 reference points of the four-range mapping. |
+| `ManualOverrideGate.cs` | The kick-in gate for a manual key data set (30 s moving + handover confidence ≥ 0.95); reused as-is by Slip Angle. |
 | `SourceIdentity.cs` | Computes a stable composite key from a channel's four Source/ScriptType fields. |
-| `SurfaceLooseFraction.cs` | Continuous sealed/loose surface blend weight. |
+| `SurfaceLooseFraction.cs` | Continuous sealed/loose surface blend weight (Lock/Slip). |
 | `LongitudinalDirectionResolver.cs` | Resolves Slowing/SpeedingUp/Unknown from differentiated ground speed. |
 | `AchievedMotion.cs` | Degradation-tier G-magnitude resolution used by diagnostics. |
+
+### `QAdvanceFeedback\Core\SlipAngle\` (the Slip Angle stack)
+
+| File | Purpose |
+|---|---|
+| `SlipAngleInput.cs` | One frame's raw-data inputs (native per-wheel angles, kerbs, raw surface values); null = unavailable, never zero. |
+| `SlipAngleUnit.cs` | Degrees / radians / tangent / unverified. |
+| `SlipAngleNativeSupport.cs` | Per-game native promotion (5 s of finite, plausible, non-constant moving frames), the 45° block, and unit detection by episode voting; diagnostics for unit/votes/block. |
+| `YawSignDetector.cs` | Learns the per-game relative yaw sign k ∈ {+1, −1} from lateral G vs V·r, with hysteresis. |
+| `SlipAngleGate.cs` | Trigger By (brake/throttle/any) and thresholds, speed fade 10→20 km/h, learn ≥ 30 km/h, airborne (`IsFlying`), landing wobble S-curve, 200 ms hop exclusion; `SlipAngleGateSettings`, `SlipAngleGateVerdict`. |
+| `SlipAngleRawCalculator.cs` / `SlipAngleRawResult.cs` | Per-wheel → axle mean (kerb excluded) → front × k → Max/Min blend into Raw.All; fallback body slip. |
+| `GripCurveBins.cs` | 0.25° bins over 0–30° with a decaying per-bin P90 of lateral G (seeded exactly from the first 20), plateau/Best/Min and the still-rising shape check; persisted state. |
+| `SlipAngleWindow.cs` | A Min/Best/Max window in degrees (End = 1.5 × Max), the derived Start (⌊0.5 × Min⌋, null when Min < 2°), validation, shipped 5/8/10. |
+| `SlipAngleStartText.cs` | The read-only "Start: N° (50% of Min)" / "Start: — (Min below 2°)" line for the tab and the panel. |
+| `SlipAngleWindowLearner.cs` | One key's learner: candidate filter, crossing-taught Max with corroboration and the level epoch, retro delay line and rollback, latched peak confirmation, raise-only prior, maturity, window quality, Export/Import. |
+| `KeyedSlipAngleLearner.cs` | One learner per (game, car, source/target, surface); borrowing through `ColdStartTierResolver`, the per-key cold-reference latch, the hot-weight blend, k, maturity/tier, the persisted published window, `SaveIfDue`. |
+| `SurfaceBucketClassifier.cs` | Sealed / loose / low-grip from the game's own surface only (`SurfaceBucketMap`: rF2 and GT7); otherwise Unknown, never switched or guessed; 1 s hysteresis, 1.5 s blend. |
+| `SlipAngleNormalizer.cs` | N(α) (clamped) and Nᵤ(α) (unclamped past End), with the (Start, 15) knot; the inverse `SourceFor`. |
+| `SlipAngleDriftStart.cs` | The drift start angle `Max(1.2 × Max, Min(30°, 1.5 × Max))` and its Nᵤ (never below 80). |
+| `ISlipAngleKeyData.cs` | What the processor needs from the persisted key data (Core keeps no dependency on Settings). |
+| `SlipAngleFrameProcessor.cs` | The pure per-frame pipeline in its pinned order. |
+| `SlipAngleIdentityTier.cs` | The tier that picks the key-data identity (Native / Fallback slot): last in-session confirmed tier for the current game, kept across pause / menu, reset on a game switch. |
+| `SlipAngleKeyDataModel.cs` | THE Slip Angle key-data display rule (Lock/Slip's): the exact key's capped window (`LearnedWindow`), the default, what the boxes show (`Shown`), the seed of what is shown (`TrySeed`, `SlipAngleDisplayRuleKeyData`), and the display context (`SlipAngleKeyDataContext`, persisted last game/car/tier for the restart display). |
+| `SlipAngleFrameResult.cs` / `SlipAngleStatus.cs` | Immutable per-frame values for the publisher/CSV/UI, and the UI status (tier, warning, texts). |
+| `SlipAnglePublishedNames.cs` | The three product names and the 33 appended diagnostics, in CSV order. |
 
 ### `QAdvanceFeedback\Core\Projection\` (Layer 5)
 
 | File | Purpose |
 |---|---|
 | `ProjectedWheelLockSlipEngine.cs` / `ProjectedWheelLockSlipResult.cs` | The Layer 5 engine and result shape. |
-| `OutputProjector.cs` / `MonotoneCubicCurve.cs` / `PiecewiseCurve.cs` / `ProjectorSettings.cs` / `ProjectorAnchorEditor.cs` | The driver-editable curve and its settings/UI-editing helper. |
+| `OutputProjector.cs` / `MonotoneCubicCurve.cs` / `PiecewiseCurve.cs` / `ProjectorSettings.cs` / `ProjectorAnchorEditor.cs` | The driver-editable curve and its settings/UI-editing helper (`ProjectionChannel.SlipAngle` preset added for Slip Angle). |
 | `PulseGenerator.cs` / `PulseSettings.cs` | The optional pulse-at-maximum stage. |
+| `ColdStartScale.cs` | The cold-start device-feel amplitude scale (seven-anchor curve, tier floors), shared by Lock/Slip and Slip Angle. |
+| `SlipAngleProjectedEngine.cs` | Slip Angle Layer 5: project → maturity scale → drift → landing/speed fade → pedal gate → pulse. |
+| `DriftAttenuator.cs` / `DriftSettings.cs` | The Normal/Drifting/Recovering state machine and its tunables (ranges, sanitise). |
 
 ### `QAdvanceFeedback\Core\GForce\`
 
 | File | Purpose |
 |---|---|
-| `GForceEngine.cs` / `GForceOutput.cs` / `GForcePublishedNames.cs` | The washout-style G-force engine and its published 8-channel output. |
-| `GForceMaxLearner.cs` | Per-game/per-car learned acceleration/braking maxima via `RobustBandEstimator` over a 2-minute real-time window, no minimum-sample gate. |
-| `GForceShake.cs` | The "Integrate Wheel Lock and Slip" shake modulation: band placement (shift-not-squash) and the 1.0.8 `SineHoldWave` - one sine with a hold at each extreme, period always 1/f. |
-| `ShakeFeeling.cs` | How the two pads of a pair relate while shaking (1.0.8) - opposite phase (shipped default), same phase, or blending. Replaces the retired "Both-sides blend (%)" spinner; `Blending` pins its own 50% hold and the UI hides the hold control for it. |
-| `ShakeApplyMode.cs` | How that shake is spread across the eight pads (1.0.8) - per-channel, all-channels-following-G-force, all-channels-lock/slip-only, or **higher-of-G-force-or-lock/slip** (the shipped default): each pad travels from zero up to whichever cue is louder, so neither can mask the other. The two wheel-driven modes use a ZERO FLOOR (the wheel value is the whole travel); the two G-force-centred ones keep shaking around the pad's current level. |
+| `GForceEngine.cs` / `GForceOutput.cs` / `GForcePublishedNames.cs` | The washout-style G-force engine and its published 8-channel output (Slip Angle work: `IntegrateSlipAngle`, `WheelSlipAngleShakeScale`, `slipAngleAll0100`). |
+| `GForceMaxLearner.cs` | Per-game/per-car learned maxima via `RobustBandEstimator` over a 2-minute real-time window. |
+| `GForceShake.cs` | The shake modulation: band placement (shift-not-squash) and `SineHoldWave`. |
+| `ShakeFeeling.cs` | Opposite phase (shipped default), same phase, or blending. |
+| `ShakeApplyMode.cs` | How the shake is spread across the eight pads (see the mode table above). |
+
+### `QAdvanceFeedback\Core\Clutch\`
+
+| File | Purpose |
+|---|---|
+| `ClutchBiteEngine.cs` / `ClutchBiteCurve.cs` / `ClutchBiteDetector.cs` / `ClutchBiteLearner.cs` / `ClutchLearningParameters.cs` | Clutch Bite (docs\clutch-bite-design.md): clutch resolution, the bite S-curve, the bite detector, the per-key learner and its tunables. |
+
+### `QAdvanceFeedback\Core\ShakeItEffects\` (native ShakeIt effects, SimHub-free half)
+
+| File | Purpose |
+|---|---|
+| `NativeEffects.cs` | The native effect list and per-effect defaults (gain 75% for Lock/Slip/Slip Angle, 100% otherwise). |
+| `ToneDefaults.cs` | Starting tone values per effect (Slip Angle 40 / 25 Hz). |
+| `EffectRouting.cs` | WheelLock/WheelSlip routing (Mono / FrontRear / LeftRight / Corners). |
+| `FrameSnapshot.cs` / `SlipAngleEffectOutput.cs` | The data-thread frame snapshot with its 500 ms staleness rule; what the Slip Angle effect plays. |
+| `GraphPoint.cs` | A graph canvas point. |
+| `TestAwareOutputGate.cs` / `TestEffectSession.cs` | When an effect may output (in game, or while its own test runs); one test at a time, 10 s auto-off. |
+| `ShakeItTapPropertyNames.cs` / `ShakeItTapValues.cs` | SimHub's own built-in lock/slip values read through a native effect (diagnostics + the ShakeIt source), with per-channel game support and the game id. |
+| `ShakeItSourceAvailability.cs` | The per-channel ShakeIt source state machine (NotSetUp / SetUpIdle / Supported / NotSupported), its 0.5 s broadcaster, and the testable profile-inspection logic (`IShakeItProfileReader`, `ShakeItProfileInspection`). |
+| `ShakeItSourceResolution.cs` | Pure per-channel routing (Configured / ShakeIt built-in / Raw fallback), a frame's values + identity, and the canonical ShakeIt identity. |
+| `ShakeItAlgorithm.cs` | ShakeIt algorithm defaults, threshold → filter mapping, fingerprint (`#alg=`), mute emulation, immutable inputs/snapshot. |
+
+### `QAdvanceFeedback\Core\Viper\`
+
+| File | Purpose |
+|---|---|
+| `ViperAvailabilityResolver.cs` / `ViperDocument.cs` / `ViperPropertyNames.cs` / `ViperSupportedGames.cs` | viper4gh CalcLngWheelSlip as a Lock/Slip source: availability, persisted notes, property names, supported games. |
 
 ### `QAdvanceFeedback\Core\Health\` (resilience model support)
 
 | File | Purpose |
 |---|---|
-| `HealthRegistry.cs` | The small, pure, SimHub-free registry every guarded boundary reports into from inside its own catch block - never proactively, never "I'm fine" on every frame. |
-| `HealthEntry.cs` | One registry entry: subsystem name, severity, a localization key, raw exception detail, first-occurred time, occurrence count, and whether the likely cause is a SimHub compatibility issue. |
-| `HealthSeverity.cs` | The `Degraded`/`Failed` severity enum. |
-| `HealthSubsystems.cs` | The fixed set of subsystem name constants every reporting site uses, so the same subsystem reporting again mutates one entry instead of growing the registry. |
-| `SafeCall.cs` | The `SafeCall.Value` wrapper `PropertyPublisher.AttachSafe` routes every published property's value provider through, so one provider throwing degrades to "no value" for that property only. |
+| `HealthRegistry.cs` | The pure registry every guarded boundary reports into from inside its own catch block. |
+| `HealthEntry.cs` | One registry entry: subsystem, severity, localization key, detail, first time, count, SimHub-compatibility flag. |
+| `HealthSeverity.cs` | `Degraded`/`Failed`. |
+| `HealthSubsystems.cs` | The fixed subsystem names: `ScriptEditor`, `PropertyPicker`, `ExpressionEvaluator`, `ViperAvailability` (renamed from `ShakeItExport` 2026-11-19), `ShakeItEffects`, `ShakeItProfile` (new 2026-11-19), `ClutchBite`, `CapabilityDetection`, `ConfigPersistence`, `RuntimePersistence`, `CsvExport`, `BackgroundFlush`, `TelemetryAdapter`, `PropertyPublish`, `Init`, `Shutdown`, `SettingsUi`, `SlipAngleSource`, `SlipAngle`. |
+| `HealthRecoveryTracker.cs` | Clears one subsystem's entry after N consecutive good frames (Slip Angle: 300). |
+| `SafeCall.cs` | The wrapper every published property's value provider runs through. |
 
 ### `QAdvanceFeedback\Core\MotorsExport\`
 
 | File | Purpose |
 |---|---|
-| `MotorsExportPropertyNames.cs` | SimHub's own ShakeIt Motors export property-name shape (must match SimHub's real API - see the clean-room restructure report's ShakeIt-purge section). |
-| `MotorsExportAvailabilityResolver.cs` | Pure "are all four wheels' exported properties usable right now" check. |
+| `MotorsExportPropertyNames.cs` | The legacy ShakeIt Motors export property-name shape. Never read any more: it builds the canonical ShakeIt source identity and supplies `WheelSuffixes`. (`MotorsExportAvailabilityResolver.cs` was removed 2026-11-19 with the export path.) |
 
 ### `QAdvanceFeedback\Core\Localization\`
 
 | File | Purpose |
 |---|---|
-| `Strings.cs` / `StringTableEn.cs` / `StringTableZhHans.cs` | The settings UI's own string table (English/Simplified Chinese). |
+| `Strings.cs` / `StringTableEn.cs` / `StringTableZhHans.cs` | The UI string table (English/Simplified Chinese); parity enforced by `LocalizationTests`. |
+| `StringTable{En,ZhHans}.Areas.cs` + `.Page` / `.LockSlip` / `.Curve` / `.GForce` / `.General` / `.Panels` / `.SlipAngle.cs` | Per-area partial string files (each area's keys in its own file, the same area in both languages); `.Areas.cs` adds them all. |
 
 ### `QAdvanceFeedback\Core\Runtime\`
 
 | File | Purpose |
 |---|---|
-| `RuntimeDocument.cs` / `RuntimeCache.cs` | The persisted-learned-state document shape and its in-memory dirty-tracked cache. Version 11 (1.0.7.0) added Layer 3's own ShakeIt calibration, the converted shipped presets and per-game bounds, and the source-file timestamps that make the start-up re-import cheap - all in the SAME `QAdvanceFeedback.Parameters.json` as the Normalizer's learned state. |
+| `RuntimeDocument.cs` / `RuntimeCache.cs` | The persisted-learned-state document and its in-memory dirty-tracked cache. Version 11 (1.0.7.0) added Layer 3's ShakeIt calibration; **version 12 (Slip Angle) adds `SlipAngleLearners`** (per key: learner state, last published window, cold tier). Older files load cleanly. Since 2026-11-19 the save snapshot also keeps the grip learners' `RaiseCandidateG/Hits`, `LowerCandidateG/Hits` and `QuietStreak`. Restart display context (additive): `LastKeyDataGame/Car` (Lock/Slip) and `LastSlipAngleGame/Car/Tier` (Slip Angle). |
+| `AtomicFile.cs` | The single shared atomic-replace write path for every file this plugin owns. |
 
 Layer 3's calibration is written with **short JSON names** (`mx`, `v`, `s`, `c`, `p`, `mm`, `cf`,
 `lo`, `hi`, `ll`) because it is the largest section of that file and is rewritten on a timer while
@@ -980,16 +1770,162 @@ Version bump.
 
 | File | Purpose |
 |---|---|
-| `QAdvanceFeedbackSettings.cs` | The root settings object (Lock/Slip/GForce/General). |
-| `WheelChannelSettings.cs` | One channel's (Lock or Slip) sources, aggregation weights, thresholds, curve, pulse. |
-| `GForceSettings.cs` | G-Force tab's settings + learned-maxima import/export. |
+| `QAdvanceFeedbackSettings.cs` | The root settings object (Lock/Slip/SlipAngle/GForce/Clutch/General); `RestoreDefaults` carries key data across. |
+| `WheelChannelSettings.cs` / `WheelSourceSet.cs` | One Lock/Slip channel's sources (archived per source mode), weights, thresholds, curve, pulse, `ShakeItAlgorithm`; `KeepPresetSourcesWhileShadowed`. |
+| `ShakeItAlgorithmSettings.cs` | The ShakeIt algorithm block's persisted settings (Lock: legacy, sensibility, lock-only; Slip: legacy, mute) and `Snapshot`. |
+| `SlipAngleChannelSettings.cs` | The Slip Angle channel: source (Plugin Internal / Custom), gate, weights, key data, curve, pulse, drift, crossing-gate switch. |
+| `SlipAngleKeyDataSettings.cs` | Slip Angle Min/Best/Max per slot (mode, game, source), per-source Auto/PerGame flags, one-time seed latch, validation. |
+| `GForceSettings.cs` | G-Force settings + learned-maxima import/export (Slip Angle work: `IntegrateSlipAngle`, `WheelSlipAngleShakeScale`; per-mode `DefaultShakeScaleFor`/`DefaultShakeTriggerFor`). |
+| `GForceReadout.cs` / `GForceTestFrame.cs` | The max-G readout label; one G-Force Test Effect frame through the real engine (with the Slip Angle bar). |
+| `ClutchBiteSettings.cs` | Clutch Bite settings. |
 | `GeneralSettings.cs` | Diagnostics/CSV-export toggles. |
-| `SourceMode.cs` / `ScriptType.cs` / `SourceButtonMode.cs` | Small enums backing the Sources section. |
-| `DefaultWheelSources.cs` | Builds the shipped default source text for Plugin Internal mode (a plain reference to Layer 3's own Raw property). |
-| `KeyDataPointSettings.cs` | Manual SMax/S90/S75 (Perfect/Great/Good for Slip), stored per slot = (mode, game, source); shipped per-source-type defaults; validation. |
-| `ApplyDirtyState.cs` | Tracks whether the settings UI has unsaved edits, for the Apply button's enabled state. |
-| `SettingsControl.xaml` / `SettingsControl.xaml.cs` | The one WPF settings control (four tabs). Its dirty tracking is a REFLECTIVE sweep over the generated `x:Name` fields, not an enumerated list - the enumerated list had fallen 52 controls behind the XAML, leaving Apply greyed out after editing any of them. |
-| `SettingsControl.GForceTest.cs` | The shake preview graph and the Test Effect panel (1.0.8): a drag-a-ball G-force pad and Lock/Slip bar feeding a private `GForceEngine`, re-fed from the page's live state each frame so every G-Force setting (the Lock/Slip scales included) applies. Produces nothing at all while its toggle is off. |
+| `SourceMode.cs` / `ScriptType.cs` / `SourceButtonMode.cs` / `ShakeItSourceOptions.cs` / `RawSourceFallback.cs` | Source enums, which sources the ShakeIt panel offers (ShakeIt only while set up or selected), the Raw fallback when a source cannot work (`RawIdentity`), `MatchesRaw` (Custom rows equal to Raw's) and `MatchesShippedPreset` (an identity equal to the Raw, ShakeIt (fingerprint stripped) or shipped Viper preset; such a Custom channel gets no Custom cold start). |
+| `DefaultWheelSources.cs` | The shipped default source text for Plugin Internal mode. |
+| `KeyDataPointSettings.cs` / `KeyDataPointDefaults.cs` / `KeyDataPanelModel.cs` | Lock/Slip manual SMax/S90/S75 per slot, shipped defaults, the panel rules. |
+| `KeyDataNormalization.cs` / `KeyDataNormalizationInverse.cs` | A source value normalized by key data; its bisection inverse (`N⁻¹`, smallest source reaching a target) for the group sliders. |
+| `LockSlipTestEngine.cs` / `TestBalls.cs` / `TestGroupSliders.cs` | The Lock/Slip Test Effect calculation, its ball placement, and the group slider maths (dot always on the curve). |
+| `SlipAngleTestEngine.cs` | The Slip Angle Test Effect calculation (real normalizer, projector and drift attenuator). |
+| `SourceToProjectedGraph.cs` / `SlipAngleSourceToProjectedGraph.cs` | The "Source → Projected" graphs (Slip Angle: Raw.All degrees 0 → End). |
+| `SettingsHub.cs` / `ConfigFileWatcher.cs` | Two-way settings sync between the page and the ShakeIt panels (Slip Angle fields: Slip Angle trigger/thresholds/key data/projector, `IntegrateSlipAngle`; the five ShakeIt algorithm fields; nativeness and ShakeIt state in `SourceAvailability`, which the wheel tabs re-sample on); `SwitchSource`, THE one source switch used by the hub and the page's Source combo alike; the backup on-disk watcher. |
+| `NumericEditor.xaml` / `NumericEditor.xaml.cs` | The text box + −/+ editor used everywhere on the page. |
+| `SettingsControl.xaml` / `SettingsControl.xaml.cs` | The control `GetWPFSettingsControl` returns: a thin host whose content is `Ui\Views\SettingsPageView` (`x:Name="Page"`), code-behind exactly `InitializeComponent(); DataContext = viewModel;` (MvvmRuleTests). The old 3,651-line code-behind, its partials (`.Sync`, `.GForceTest`, `.GForceShake`, `.SlipAngle`, `.Clutch`, `.ShakeItSource`), `ApplyDirtyState.cs` and `PageFieldRefreshPlan.cs` were deleted on 2026-11-20 (`docs\full-mvvm-report.md`). |
+
+### `QAdvanceFeedback\Ui\` (MVVM, see "UI: MVVM" below)
+
+| File | Purpose |
+|---|---|
+| `Mvvm\ObservableObject.cs` / `RelayCommand.cs` / `IUiDispatcher.cs` / `ITicker.cs` / `LeadingColumns.cs` / `IActivatable.cs` | Building blocks; WPF-free label-column maths; `Activate`/`Deactivate` for a view model whose view comes and goes. |
+| `ViewModels\SettingsDraft.cs` | The page's draft / baseline / live model, merged at JSON-leaf level (`IsDirty`, `AdoptExternal` - ShakeIt wins -, `Apply` - edited leaves only, in place -, `ReplaceDraft`, `Reloaded` with the changed paths). |
+| `ViewModels\SettingsPageViewModel.cs` / `SettingsPageContext.cs` / `PageSectionViewModel.cs` | The page: draft, hub subscription for its whole life, Apply / Restore all defaults, dirty + banner, the tab view models; the context every section shares (draft, host, dispatcher, ticker, dialogs, clipboard, `Guard` / `ReportFailure`); the section base (`Edit<T>` writes the draft, a reload re-reads every property). |
+| `ViewModels\ISettingsPageHost.cs` / `IWheelChannelPageHost.cs` / `IKeyDataPageHost.cs` / `IGeneralPageHost.cs` / `PageServices.cs` | What the page needs from the plugin: `ISettingsPageHost` (`ApplySettings`, `CreateDefaultSettings`, `PluginStateChanged`, `LogError`), the optional area hosts, and the composite `IPluginSettingsPageHost`; `IDialogService`, `IClipboard` (and the unused `IPropertyPicker` / `IScriptEditor`). |
+| `ViewModels\WheelChannelPageViewModel.cs` / `TriggerThresholdViewModel.cs` / `SourcesViewModel.cs` / `SourceRowViewModel.cs` / `CustomReferenceViewModel.cs` / `AggregationViewModel.cs` | The Wheel Lock / Wheel Slip tab (one class, `IsLock`): trigger thresholds, sources (one switch path, shadow, Viper game button, ShakeIt state and algorithm block), the four source rows, Custom's cold-start reference, wheel combination. |
+| `ViewModels\KeyDataPageViewModel.cs` / `CurveEditorViewModel.cs` / `PulseViewModel.cs` | The tab's key data (panel rules, immediate save with the 700 ms debounce, never Apply), curve editor + both graphs' data, pulse. |
+| `ViewModels\GForcePageViewModel.cs` / `GForcePageAxisViewModel.cs` / `GForcePageShakePreview.cs` | The G-Force tab: maximum-G rows and readouts (1 s while shown), splits, feel, direction, the hosted `GForceShakeViewModel`, the preview data, the hosted Test Effect. |
+| `ViewModels\GeneralViewModel.cs` / `HealthListViewModel.cs` | The General tab (diagnostics / CSV switches, ShakeIt import, version) and its health list. |
+| `ViewModels\IPanelHost.cs` / `ITestEffectHost.cs` / `PanelViewModelBase.cs` | What panel/test VMs need from the plugin (Slip Angle work: nativeness, Slip Angle snapshots, `PublishSlipAngleTest`); the counted activate/deactivate base. |
+| `ViewModels\FallbackWarningViewModel.cs` | The orange Lock/Slip fallback warning (Plugin Internal + fallback branch only). |
+| `ViewModels\ShakeItSourceViewModels.cs` | `IShakeItSourceStateHost` (optional host capability), `ShakeItSourceUi` (pure list/label/note rules), `ShakeItSourceStatusViewModel`, `ShakeItAlgorithmViewModel`. |
+| `ViewModels\WheelChannelEffectViewModel.cs` / `KeyDataViewModel.cs` / `LockSlipTestViewModel.cs` | Wheel Lock/Slip panel, its key data, its Test Effect (group sliders). |
+| `ViewModels\SlipAngleTabViewModel.cs` / `ProjectorEditorViewModel.cs` | The Slip Angle settings tab; one projection-anchor row (Lock tab rules). |
+| `ViewModels\SlipAngleEffectViewModel.cs` / `SlipAngleTestViewModel.cs` | The Slip Angle ShakeIt panel; its Test Effect (one 0 → 3 × Max slider, "100%" tick). |
+| `ViewModels\GForceEffectViewModel.cs` / `GForceTestViewModel.cs` | G-Force panel; G-Force Test Effect (with the Slip Angle bar). |
+| `ViewModels\ClutchViewModels.cs` | Clutch Bite tab/panel and its test. |
+| `ViewModels\GForceShakeViewModel.cs` | The G-Force tab's shake block: both Integrate switches, the shared settings and their enabled state, the three scales, the mode-pick scale/trigger reset and the feeling-pick frequency rewrite; load/save into `GForceSettings`. |
+| `Views\WheelChannelEffectView.xaml(.cs)` / `GraphView.xaml(.cs)` | Wheel Lock/Slip panel and curve-slot graph. |
+| `Views\SlipAngleTabView.xaml(.cs)` | The Slip Angle settings tab, laid out like the Wheel Lock tab. |
+| `Views\SlipAngleEffectView.xaml(.cs)` / `SlipAngleGraphView.xaml(.cs)` | The Slip Angle ShakeIt panel and its curve-slot graph (with the Test Effect). |
+| `Views\GForceEffectView.xaml(.cs)` / `GForceTestView.xaml(.cs)` | G-Force panel and Test Effect view. |
+| `Views\ClutchBiteView.xaml(.cs)` / `ClutchGraph.cs` | Clutch Bite view and graph. |
+| `Views\NormalizedCurveGraph.cs` / `GraphFurniture.cs` | The bindable Normalized → Projected curve plot; the shared gridlines/ticks/dashed key-point markers. |
+| `Views\TestControls.cs` / `TrackAlignment.cs` / `LabelColumnSync.cs` / `WpfInfrastructure.cs` | Test drag targets; pure-layout attached behaviours; the WPF `IUiDispatcher`/`ITicker`. |
+| `Views\ViewBehaviors.cs` / `WpfPageServices.cs` | The attached behaviours `ViewModelLifetime.Activate` and `EventCommand.Loaded` / `DropDownOpened`; the WPF `IDialogService` (MessageBox) and `IClipboard` (a locked clipboard swallowed). |
+| `Views\SettingsPageView.xaml(.cs)` | The page shell: `MainTabs` (the old tab names, one ScrollViewer per tab), the unapplied banner, Apply / Restore all defaults, the old page's implicit styles. |
+| `Views\WheelChannelPageView.xaml(.cs)` / `WheelChannelKeyDataView.xaml(.cs)` / `WheelChannelCurveView.xaml(.cs)` / `WheelChannelPulseView.xaml(.cs)` | The Wheel Lock / Wheel Slip tab (one view, used twice; one SharedSizeGroup pair at tab level) and its key data, curve and pulse parts. |
+| `Views\GForcePageView.xaml(.cs)` / `GForcePageShakePreviewGraph.cs` / `GeneralPageView.xaml(.cs)` | The G-Force tab and its shake preview graph; the General tab. |
+
+### `QAdvanceFeedback\Integration\ShakeIt\` (native ShakeIt effects, SimHub-facing half)
+
+| File | Purpose |
+|---|---|
+| `QAdvanceFeedbackWheelChannelContainers.cs` / `QAdvanceProjectionFilter.cs` | WheelLock/WheelSlip effects (own routing) and their pass-through filter with the read-only graph. |
+| `QAdvanceFeedbackSlipAngleContainer.cs` | The Slip Angle effect (frozen type name, display "Slip Angle", one placement, gain 75%). |
+| `QAdvanceFeedbackGForceContainers.cs` / `QAdvanceFeedbackClutchBiteContainer.cs` | G-Force pad-pair effects; Clutch Bite effect. |
+| `PluginPageHost.cs` | The running plugin as the settings page sees it (`IPluginSettingsPageHost`): forwards to the plugin's own members (source blocking, Viper document, learned display rules, manual gate, Apply, ShakeIt import, health, version) and owns the SimHub picker / script editor / evaluator. |
+| `QAdvanceFeedbackEffect.cs` / `ShakeItEffectSupport.cs` / `ShakeItBuiltInTap.cs` / `PluginPanelHost.cs` | One effect output; shared helpers; SimHub's own lock/slip tap (heartbeat, game support, hidden containers configured from the algorithm snapshot, mute emulation); the live plugin as the panels see it (implements `IShakeItSourceStateHost`). |
+| `ShakeItProfileInspector.cs` | Reads both ShakeIt plugins' current profiles at 1 Hz on the UI thread (`SimHubShakeItProfileReader<T>`) for the "set up" check. |
+
+### `QAdvanceFeedback.Tests\Frozen\` (test oracles)
+
+| File | Purpose |
+|---|---|
+| `FrozenSlipCrossingGate.cs` / `FrozenLockCrossingGate.cs` / `FrozenGripLearnerCorroboration.cs` / `FrozenColdStartTierResolution.cs` | Verbatim copies of the pre-extraction shipped code. The equivalence tests run identical randomised streams through these and the shared cores and require bit-identical results. Never edit them to make a test pass. |
+
+## UI: MVVM (standing rule)
+
+Owner's project-wide rule (2026-11-17). It applies to all UI: the plugin settings page and the native
+ShakeIt effect panels.
+
+- **View models hold the state and the rules.** They implement `INotifyPropertyChanged` (base:
+  `Ui\Mvvm\ObservableObject`). Actions are commands (`Ui\Mvvm\RelayCommand`).
+- **Views bind to them:** one-way, two-way and command bindings, with dependency properties where a
+  control needs them.
+- **Code-behind is wiring only:** exactly `InitializeComponent(); DataContext = viewModel;`. Lifetime
+  and the few events with no bindable property are attached behaviours declared in XAML
+  (`Ui\Views\ViewBehaviors.cs`): `v:ViewModelLifetime.Activate="True"` (Loaded -> `Activate`,
+  Unloaded -> `Deactivate` on an `IActivatable` DataContext), `v:EventCommand.Loaded="{Binding X}"`,
+  `v:EventCommand.DropDownOpened="{Binding X}"`. No XAML event-handler attributes. `MvvmRuleTests`
+  enforces this over every view, the page host `Settings\SettingsControl.xaml(.cs)` included (and that
+  the old `SettingsControl.*.cs` partials stay gone).
+- **Forbidden:** handling an event and then setting another control's property (visibility, enabled
+  state, text, selection) from it. Expose a view-model property and bind to it instead.
+- **Allowed view-side code:**
+  - a custom control's own rendering and input handling (the graph, the G-ball pad), exposed through its
+    dependency properties;
+  - small attached behaviours for pure layout (aligning a toggle's switch track to a column).
+- **Threading and time:**
+  - View models change bound state only on the UI thread, through `Ui\Mvvm\IUiDispatcher`.
+  - Timers and the current time come from `Ui\Mvvm\ITicker`, so debounces, refreshes and auto-off are
+    unit-testable.
+
+Folders:
+- `Ui\Mvvm` (building blocks) and `Ui\ViewModels` are WPF- and SimHub-free, so the net8 test project
+  compiles and tests them.
+- `Ui\Views` holds the XAML views, the custom controls and the WPF implementations of `IUiDispatcher` and
+  `ITicker`.
+
+**The plugin settings page follows it in full (2026-11-20, `docs\full-mvvm-plan.md`, report
+`docs\full-mvvm-report.md`).** Every tab and every native ShakeIt panel is MVVM; new or touched UI
+follows the rule from the start.
+
+View-model tree (all in `Ui\ViewModels`, WPF-free):
+
+```
+SettingsPageViewModel          one per plugin: created on the first GetWPFSettingsControl, disposed in End()
+ |                             owns SettingsDraft, the hub subscription, Apply / Restore, dirty + banner
+ |- LockTab, SlipTab           WheelChannelPageViewModel (isLock): Trigger, Sources (+ 4 SourceRows),
+ |                             CustomReference, KeyData (KeyDataPageViewModel), Aggregation, Curve, Pulse
+ |- SlipAngleTab               SlipAngleTabViewModel (null without an ISlipAngleTabHost)
+ |- GForceTab                  GForcePageViewModel: axes, shake (GForceShakeViewModel), preview, Test Effect
+ |- ClutchTab                  ClutchBiteViewModel with the learning parameters (null without an IClutchHost)
+ `- GeneralTab                 GeneralViewModel + HealthListViewModel
+```
+
+**Draft / apply model (`SettingsDraft`).** Live = the plugin's settings object; Draft = a deep copy the
+page edits; Baseline = the live state the draft was last synchronised with. Compared at JSON-leaf level,
+so a new setting needs no table entry:
+- dirty = any leaf where Draft differs from Baseline (one fact behind the Apply button and the banner);
+- every hub event from any origin, and showing the page, adopts each leaf where Live differs from
+  Baseline into Draft and Baseline - **the ShakeIt side wins and shows at once**, even over an unapplied
+  page edit of the same field; other unapplied edits stay;
+- Apply writes only the leaves edited on the page into Live, in place (so it can never revert a change
+  made elsewhere), then `ApplySettings()` - the plugin applies, saves and broadcasts once;
+- Restore all defaults = `QAdvanceFeedbackSettings.RestoreDefaults` on a copy of live (key data and Custom
+  sources carried across), applied at once;
+- what applies immediately (key data, Viper game list, the ShakeIt import, the clutch learning
+  parameters, the Slip Angle key data) writes Live directly; the draft adopts it, the page stays clean.
+
+The subscription lives as long as the page view model, so a change made before the page was ever shown,
+or while it was hidden, is on the page when it opens (the owner-reported defect of the old page, which
+listened only while loaded).
+
+**Hosts and services.** View models never touch SimHub or WPF: they reach the plugin through
+`ISettingsPageHost` (`ApplySettings`, `CreateDefaultSettings`, `PluginStateChanged`, `LogError`, plus
+`IPanelHost`) and cast to the optional area interfaces they need (`IWheelChannelPageHost`,
+`IKeyDataPageHost`, `IGeneralPageHost`, `ISlipAngleTabHost`, `IClutchHost`, `IShakeItSourceStateHost`) -
+a test fake implements only its area. The plugin implements all of them at once through
+`IPluginSettingsPageHost` (`Integration\ShakeIt\PluginPageHost`). The plugin never pushes into the page:
+it raises `SettingsPageStateChanged` (game change, the 1 Hz learned readout, a key data seed, ShakeIt /
+nativeness changes) and the view models re-read through the same display rules as the ShakeIt panels.
+Modal questions and the clipboard are `IDialogService` / `IClipboard` (WPF implementations in
+`Ui\Views\WpfPageServices.cs`); a failed page action is logged to SimHub, recorded in the health
+registry and shown on the General tab at once (`SettingsPageContext.Guard`).
+
+**Per-tab lifetime.** A tab's subscriptions and timers run only while it is shown (`IActivatable`), and
+showing it catches up: the wheel tabs' plugin-state / availability listening and 1 s fallback warning,
+the G-Force readout timer (hiding the tab also stops its Test Effect), the General tab's health re-read.
+
+**Strings.** Each area's UI strings live in its own partial string file
+(`Core\Localization\StringTable{En,ZhHans}.<Area>.cs`), so parallel work never edits the same table.
 
 ## Settings screenshot capture rule (standing rule)
 
@@ -1000,18 +1936,33 @@ It is deliberately NOT part of `QAdvanceFeedback.sln` (keeps the shipped single-
 untouched), but it is a real, committed project now, not a throwaway/out-of-repo scratch harness -
 see `docs\screenshot-styling-report.md` for why that changed and how the harness merges MahApps'
 real resource dictionaries so the rendered PNGs match SimHub's actual dark theme instead of default
-WPF/Aero chrome. It loads the built `QAdvanceFeedback.dll` (via a `ProjectReference`), instantiates
-`Settings\SettingsControl.xaml(.cs)` standalone, and renders it to PNG per tab. The Apply/Restore
-button row is a `DockPanel.Dock="Bottom"` sibling of `MainTabs` in `SettingsControl.xaml` - it sits
+WPF/Aero chrome. It loads the built `QAdvanceFeedback.dll` (via a `ProjectReference`), asks the plugin
+for its page exactly as SimHub does (`GetWPFSettingsControl`: the thin `SettingsControl` over
+`Ui\Views\SettingsPageView`, `x:Name="Page"`), and renders it to PNG per tab. The Apply/Restore
+button row is a `DockPanel.Dock="Bottom"` sibling of `MainTabs` in `SettingsPageView.xaml` - it sits
 OUTSIDE the `TabControl`, so a per-tab capture never includes it no matter which tab is selected.
+After selecting a tab the harness runs the dispatcher for 600 ms before capturing, so MahApps'
+ToggleSwitch thumbs (set by binding after load) are at rest. `--out <dir>` writes a comparison set
+elsewhere instead of `docs\images`.
 
 The capture rule, by tab (apply this to every future regeneration without needing to be told again):
 
-- **Wheel Lock, Wheel Slip, G-Force** - these three are tall. Capture ONLY the selected `TabItem`'s
+- **Wheel Lock, Wheel Slip, Slip Angle, G-Force, Clutch** - these are tall. Capture ONLY the selected `TabItem`'s
   content (its `ScrollViewer`'s content element), excluding the tab strip above and the button row
   below, so the whole tab's settings fit in one image with nothing clipped.
 - **General** - short enough that nothing is lost by including the chrome. Capture the FULL
   `SettingsControl` instead: tab strip, the General tab's content, AND the Apply/Restore row.
+- **Native ShakeIt effects (1.2.0)** - `docs\images\shakeit-wheellock|wheelslip|gforce|clutch|slipangle.png`
+  (plus `shakeit-wheellock-test` - the Lock Test Effect on Front/Rear routing, showing the group
+  sliders - and `shakeit-clutch-test`) and their
+  `.zh-Hans.png` twins (rendered with `Strings.Culture` = zh-Hans; `README.zh-Hans.md` links the
+  twins, `README.md` the English ones), by `tools\screenshot-harness\ShakeItEffectCaptures.cs`. Each is
+  exactly what QAdvanceFeedback adds to ShakeIt's effect editor: the effect's settings panel, plus
+  for WheelLock/WheelSlip/Slip Angle the read-only projection graph from ShakeIt's response-curve slot, with
+  12 px padding. ShakeIt's own surrounding editor (gain, frequencies, channel mapping) cannot be
+  rendered offscreen: SimHub's `EffectsContainerBase` constructor needs `WoteverLocalization.dll`,
+  which only a SimHub install has. So the panels get an unconstructed container whose routing
+  field is set to the default (one channel).
 
 In both cases, measure/arrange the render target at its own full natural extent (height =
 `PositiveInfinity` on `Measure`, then an explicit `Arrange` at the resulting `DesiredSize`) rather
@@ -1021,7 +1972,8 @@ window, leaving a dead gap above the button row, if you skip the explicit re-Arr
 
 Output filenames (note `settings-gforce.png`, NOT `settings-g-force.png` - the harness derives the
 name from the tab header text and needs a rename on the G-Force one to match the README links):
-`settings-wheel-lock.png`, `settings-wheel-slip.png`, `settings-gforce.png`, `settings-general.png`.
+`settings-wheel-lock.png`, `settings-wheel-slip.png`, `settings-slip-angle.png`, `settings-gforce.png`,
+`settings-clutch.png`, `settings-general.png`.
 
 Full rationale, verification evidence and pixel dimensions from the pass that established this rule:
 `docs\screenshot-capture-rule.md`.
@@ -1059,10 +2011,12 @@ health-registry design that surfaces a degrade to the driver instead of leaving 
   here: an unhandled exception directly on that raw ThreadPool thread can terminate the whole SimHub
   process in .NET Framework. It (and `WriteAtomic`, which now also runs detached inside `Task.Run` off
   that thread) is fully guarded with a broad trailing `catch (Exception)`.
-- The settings UI's constructor is covered by `GetWPFSettingsControl`'s own guard; its top-level
-  `Button.Click` handlers (Apply, Restore all defaults, per-source reset, the script-editor/property-
-  picker action button) are each wrapped in `SettingsControl.SafeUiAction`/`SafeUiActionAsync` - nothing
-  upstream of a WPF event handler invoked well after construction would otherwise catch a throw.
+- The settings UI's construction is covered by `GetWPFSettingsControl`'s own guard; every page action
+  after that (Apply, Restore all defaults, the key data reset, the script-editor/property-picker action
+  button, a hub-driven reload) runs inside `SettingsPageContext.Guard` - the old page's `SafeUiAction`
+  kept whole: a SimHub log line (`ISettingsPageHost.LogError`), a Degraded `SettingsUi` health entry and a
+  health-list refresh; nothing upstream of a WPF binding or command invoked well after construction would
+  otherwise catch a throw. The attached behaviours run their commands inside the views' own guard.
 - Pathological telemetry (NaN/infinity/negative or enormous `dt`/null `GameData`/`NewData`/`OldData`/
   missing car or game ids) is guarded at both ends: `DataUpdate`'s own null/state checks short-circuit
   before Core is ever reached, and every Core engine independently finite-checks its own inputs (see
@@ -1089,11 +2043,10 @@ its impact text, in orange for `Degraded` and firebrick for `Failed` - and, for 
 SimHub-compatibility issue, an appended plain-language "this feature needs an update for your SimHub
 version" rather than a raw exception. A "Copy details for a bug report" button (shown only when there is
 something to report) copies every entry's technical detail (subsystem, severity, timestamps, occurrence
-count, exception text) to the clipboard for the owner to paste into an issue. Refreshed exactly once, at
-the end of the settings control's constructor (`SettingsControl.RefreshHealthUi`, called after every
-reflection wrapper this control uses has already been force-resolved by the constructor's own earlier
-wiring), and again after any `SafeUiAction`/`SafeUiActionAsync` catch so a fault during a click is
-reflected immediately without needing to reopen the tab.
+count, exception text) to the clipboard for the owner to paste into an issue. Read when the page view
+model is built, each time the General tab is shown, and again after any failed page action
+(`SettingsPageContext.ActionFailed`), so a fault during a click is reflected immediately without
+needing to reopen the tab (`GeneralViewModel` / `HealthListViewModel`).
 
 **Known unguarded path, stated plainly:** SimHub's own `PluginManager.GetPropertyValue` and the
 NCalc/formula-engine call chain that reaches `PropertyEntryWrapper.GetValue()` are themselves confirmed

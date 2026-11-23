@@ -3,6 +3,7 @@ using GameReaderCommon;
 using GameReaderCommon.Feedback;
 using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.Health;
+using QAdvanceFeedback.Core.SlipAngle;
 using SimHub.Plugins;
 
 namespace QAdvanceFeedback
@@ -39,10 +40,27 @@ namespace QAdvanceFeedback
     /// names - every consumer of those two fields is calibrated in G, so the conversion belongs here,
     /// once, at this SimHub-specific edge, rather than downstream where every consumer would otherwise
     /// need to know the raw units.
+    /// <para/>
+    /// SLIP ANGLE INPUTS (docs\slip-angle-design.md 9.1/9.2, docs\slip-angle-spike-report.md):
+    /// <c>FeedbackData.YawChangeVelocity</c> is deg/s and is converted to rad/s here with its raw,
+    /// per-game sign; <c>VerticalAcceleration</c> is mapped only for the titles that write it (else
+    /// null, never a fake 0); airborne is <c>IsFlying &gt; 0</c> only (ruling R5). The per-game native
+    /// slip angle comes from <see cref="ReadSlipAngleInput"/>, which reads the
+    /// <see cref="SlipAngleRawSourceTable"/> paths through <see cref="PluginManager.GetPropertyValue"/>.
     /// </summary>
     internal sealed class SimHubTelemetryAdapter : ITelemetryAdapter
     {
         private DateTime? _lastFrameTime;
+        private readonly SlipAngleRawSourceReader _slipAngleReader = new SlipAngleRawSourceReader(new SlipAngleNativeSupport());
+        private PluginManager _propertyLookupOwner;
+        private Func<string, object> _propertyLookup;
+
+        /// <summary>The per-game native promotion / unit detection state behind <see cref="ReadSlipAngleInput"/>
+        /// (Slip Angle diagnostics read it on the data thread).</summary>
+        public SlipAngleNativeSupport SlipAngleNativeSupport => _slipAngleReader.NativeSupport;
+
+        /// <summary>The Slip Angle native reader (its unit lists and their change event are wired by the plugin).</summary>
+        public SlipAngleRawSourceReader SlipAngleReader => _slipAngleReader;
 
         /// <summary>Resets the previous-FrameTime bookkeeping - call this on a game switch/session
         /// restart so the first frame of a new session doesn't report a huge Dt spanning the gap.</summary>
@@ -50,14 +68,41 @@ namespace QAdvanceFeedback
 
         public TelemetrySample Read(GameData data)
         {
-            TelemetryFrame newFrame = ToFrame(data?.NewData);
-            TelemetryFrame oldFrame = ToFrame(data?.OldData);
+            string gameId = data?.GameName;
+            TelemetryFrame newFrame = ToFrame(data?.NewData, gameId);
+            TelemetryFrame oldFrame = ToFrame(data?.OldData, gameId);
             DateTime frameTime = data?.FrameTime ?? DateTime.UtcNow;
 
             TimeSpan? dt = _lastFrameTime.HasValue ? frameTime - _lastFrameTime.Value : (TimeSpan?)null;
             _lastFrameTime = frameTime;
 
             return new TelemetrySample(newFrame, oldFrame, frameTime, dt);
+        }
+
+        /// <summary>
+        /// See <see cref="ITelemetryAdapter.ReadSlipAngleInput"/>. The table/transform/promotion logic
+        /// lives in the SimHub-free <see cref="SlipAngleRawSourceReader"/>; this only supplies the game
+        /// id and the SimHub property lookup. Never throws (the reader guards itself; this guards the
+        /// lookup delegate's construction too).
+        /// </summary>
+        public SlipAngleInput ReadSlipAngleInput(GameData data, PluginManager pluginManager, ITelemetrySample sample)
+        {
+            try
+            {
+                double dt = sample?.Dt?.TotalSeconds ?? 0.0;
+                if (!ReferenceEquals(pluginManager, _propertyLookupOwner))
+                {
+                    _propertyLookupOwner = pluginManager;
+                    _propertyLookup = pluginManager == null ? null : (Func<string, object>)pluginManager.GetPropertyValue;
+                }
+                return _slipAngleReader.Read(data?.GameName, _propertyLookup, sample?.New, dt);
+            }
+            catch (Exception e)
+            {
+                HealthRegistry.Report(HealthSubsystems.SlipAngleSource, HealthSeverity.Degraded,
+                    "Health.Impact.SlipAngleSource", e.ToString(), isSimHubCompatibilityIssue: true);
+                return SlipAngleInput.Empty;
+            }
         }
 
         /// <summary>
@@ -129,7 +174,7 @@ namespace QAdvanceFeedback
             }
         }
 
-        private static TelemetryFrame ToFrame(StatusDataBase d)
+        private static TelemetryFrame ToFrame(StatusDataBase d, string gameId)
         {
             if (d == null) return TelemetryFrame.Empty;
 
@@ -156,7 +201,16 @@ namespace QAdvanceFeedback
                 wheelOnLooseSurfaceFrontLeft: WheelOnLooseSurface(fb, 0),
                 wheelOnLooseSurfaceFrontRight: WheelOnLooseSurface(fb, 1),
                 wheelOnLooseSurfaceRearLeft: WheelOnLooseSurface(fb, 2),
-                wheelOnLooseSurfaceRearRight: WheelOnLooseSurface(fb, 3));
+                wheelOnLooseSurfaceRearRight: WheelOnLooseSurface(fb, 3),
+                forwardLocalVelocity: lv?.Forward,
+                yawRateRadPerSec: fb?.YawChangeVelocity is double yawDegPerSec ? Core.AccelerationUnits.DegToRad(yawDegPerSec) : (double?)null,
+                // Spike: only iRacing and Rennsport write VerticalAcceleration; elsewhere it is a default
+                // 0, not a reading. Unit assumed m/s2 (iRacing VertAccel); unverified for Rennsport.
+                verticalG: fb != null && SlipAngleRawSourceTable.ReportsVerticalAcceleration(gameId)
+                    ? Core.AccelerationUnits.Ms2ToG(fb.VerticalAcceleration) : (double?)null,
+                // Ruling R5: IsFlying only - FlightIsOnGround is never written for car games.
+                isAirborne: fb != null && fb.IsFlying > 0,
+                wheelsOnKerbs: fb?.WheelsOnKerbs);
         }
 
         /// <summary>See <see cref="ITelemetryFrame.WheelOnLooseSurfaceFrontLeft"/>'s own remarks on why

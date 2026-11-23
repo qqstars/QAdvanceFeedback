@@ -29,9 +29,26 @@ namespace QAdvanceFeedback.Settings
 
         public WheelChannelSettings Slip { get; set; } = WheelChannelSettings.CreateSlipDefaults();
 
+        /// <summary>Slip Angle channel (docs\slip-angle-design.md section 9). Never null after load.</summary>
+        public SlipAngleChannelSettings SlipAngle { get; set; } = new SlipAngleChannelSettings();
+
         public GForceSettings GForce { get; set; } = new GForceSettings();
 
+        /// <summary>Clutch Bite (docs\clutch-bite-design.md).</summary>
+        public ClutchBiteSettings Clutch { get; set; } = new ClutchBiteSettings();
+
         public GeneralSettings General { get; set; } = new GeneralSettings();
+
+        /// <summary>Repairs a freshly deserialised object: a null SlipAngle (older config) becomes defaults
+        /// and its sub-objects are normalised; a null Lock/Slip ShakeIt algorithm block becomes defaults
+        /// (its values are clamped by their own setters as they load).</summary>
+        public void Normalise()
+        {
+            if (SlipAngle == null) SlipAngle = new SlipAngleChannelSettings();
+            SlipAngle.Normalise();
+            if (Lock != null && Lock.ShakeItAlgorithm == null) Lock.ShakeItAlgorithm = new ShakeItAlgorithmSettings();
+            if (Slip != null && Slip.ShakeItAlgorithm == null) Slip.ShakeItAlgorithm = new ShakeItAlgorithmSettings();
+        }
 
         /// <summary>
         /// The single internally-defined default settings object every "restore defaults" path derives
@@ -84,19 +101,28 @@ namespace QAdvanceFeedback.Settings
             // than either outcome.
             WheelSourceSet lockCustom = Lock?.CustomSources;
             WheelSourceSet slipCustom = Slip?.CustomSources;
+            WheelSourceSet slipAngleCustom = SlipAngle?.CustomSources;   // same rule for Slip Angle (R36)
+
+            SlipAngleKeyDataSettings slipAngleKeyData = SlipAngle?.KeyData;
+            Core.SlipAngle.SlipAngleSourceUnits slipAngleUnits = SlipAngle?.SourceUnits;   // per-game units: learned, not a setting
 
             QAdvanceFeedbackSettings fresh = CreateDefault();
             Version = fresh.Version;
+            SlipAngle = fresh.SlipAngle;
             Lock = fresh.Lock;
             Slip = fresh.Slip;
             GForce = fresh.GForce;
             General = fresh.General;
+            Clutch = fresh.Clutch;      // owner: "Restore all defaults" restores the Clutch settings too
 
+            if (slipAngleKeyData != null) SlipAngle.KeyData = slipAngleKeyData;
+            if (slipAngleUnits != null) SlipAngle.SourceUnits = slipAngleUnits;
             if (lockKeyData != null) Lock.KeyDataPoints = lockKeyData;
             if (slipKeyData != null) Slip.KeyDataPoints = slipKeyData;
             if (defaults != null) KeyDataPointDefaults = defaults;
             if (lockCustom != null) Lock.CustomSources = lockCustom;
             if (slipCustom != null) Slip.CustomSources = slipCustom;
+            if (slipAngleCustom != null) SlipAngle.CustomSources = slipAngleCustom;
         }
     }
 }

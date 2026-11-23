@@ -118,26 +118,6 @@ namespace QAdvanceFeedback.Tests
             Assert.False(ViperSupportedGames.IsSupported("FH6", shipped.SupportedGames));
         }
 
-        [Fact]
-        public void Plugin_availability_is_re_sampled_while_driving_not_once_at_construction()
-        {
-            // The other half of "Viper Detection incorrect": _viperAvailable was readonly, sampled once
-            // in the settings control's constructor. viper4gh publishes nothing until a supported game
-            // is running, and the page is normally opened BEFORE that - so "Plugin not detected" stuck
-            // on for the whole session however long the driver drove.
-            string code = File.ReadAllText(Path.Combine(
-                RepoRoot(), "QAdvanceFeedback", "Settings", "SettingsControl.xaml.cs"));
-
-            Assert.DoesNotContain("private readonly bool _viperAvailable", code);
-            Assert.DoesNotContain("private readonly bool _lockMotorsExportAvailable", code);
-            Assert.Contains("private void RefreshSourceAvailability()", code);
-
-            // Wired into the 1 Hz push, which is the only thing that runs while actually driving.
-            int push = code.IndexOf("public void UpdateLearnedKeyDataPoints", System.StringComparison.Ordinal);
-            int pushEnd = code.IndexOf("\n        /// <summary>", push, System.StringComparison.Ordinal);
-            Assert.Contains("RefreshSourceAvailability()", code.Substring(push, pushEnd - push));
-        }
-
         private static string RepoRoot()
         {
             var dir = new DirectoryInfo(Directory.GetCurrentDirectory());

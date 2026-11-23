@@ -20,6 +20,10 @@ namespace QAdvanceFeedback
     /// computed Raw value for that wheel, so a broken custom source degrades to "something sane"
     /// rather than a zero or a thrown exception, exactly the same philosophy as every other
     /// degradation ladder in this plugin.
+    /// <para/>
+    /// Used for the Manual, Viper and Custom sources (and for the Raw fallback route). The ShakeIt
+    /// Built-in source never comes through here: it reads our native effect's tap, or Raw for the whole
+    /// channel under Raw's identity (docs\shakeit-source-design.md), never the retired export properties.
     /// </summary>
     public sealed class WheelSourceResolver
     {

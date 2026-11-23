@@ -24,7 +24,7 @@ namespace ScreenshotHarness
     /// SimHub's UI is built on MahApps) into a live WPF Application, hosts the real
     /// QAdvanceFeedback.Settings.SettingsControl inside a MahApps MetroWindow, and renders each tab
     /// to PNG per the standing capture rule in docs\architecture.md ("Settings screenshot capture
-    /// rule"): Wheel Lock/Wheel Slip/G-Force capture ONLY the selected tab's own content (no tab
+    /// rule"): Wheel Lock/Wheel Slip/Slip Angle/G-Force/Clutch capture ONLY the selected tab's own content (no tab
     /// strip, no Apply/Restore row); General captures the whole control (tab strip + content +
     /// button row).
     /// </summary>
@@ -41,7 +41,9 @@ namespace ScreenshotHarness
                     return 0;
                 }
 
-                Run();
+                // --out <dir>: write the PNGs there instead of docs\images (a comparison run).
+                int outAt = Array.IndexOf(args, "--out");
+                Run(outAt >= 0 && outAt + 1 < args.Length ? args[outAt + 1] : null);
                 return 0;
             }
             catch (Exception ex)
@@ -85,9 +87,11 @@ namespace ScreenshotHarness
         }
 
         // ------------------------------------------------------------------------------------
-        // Resource merging - MahApps.Metro 1.5.0.23 (the version in lib\, matching SimHub
-        // 9.11.22's own copy - see ..\fetch-simhub-refs.sh). Order matches the standard MahApps 1.x
-        // App.xaml setup of that era (Controls, Fonts, then the base theme, then the accent).
+        // Resource merging - MahApps.Metro 1.5.0.23 (the version in lib\, which SimHub ships
+        // unchanged: the DLL is byte-identical in 9.11.22 and 9.13.2, so the 2026-10-09 reference
+        // bump did not move any of these paths - see ..\fetch-simhub-refs.sh). Order matches the
+        // standard MahApps 1.x App.xaml setup of that era (Controls, Fonts, then the base theme,
+        // then the accent).
         //
         // IMPORTANT, verified by direct BAML enumeration of lib\SimHub.Plugins.dll (see
         // docs\screenshot-styling-report.md): that assembly's own g.resources contain NO
@@ -132,7 +136,7 @@ namespace ScreenshotHarness
         // ------------------------------------------------------------------------------------
         // Main capture run
         // ------------------------------------------------------------------------------------
-        private static void Run()
+        private static void Run(string outDirOverride)
         {
             string repoRoot = FindRepoRoot();
             string imagesDir = Path.Combine(repoRoot, "docs", "images");
@@ -145,6 +149,11 @@ namespace ScreenshotHarness
             // go directly to docs\images now, which is what a caller diffing/hash-checking that folder
             // actually needs.
             string outDir = imagesDir;
+            if (!string.IsNullOrEmpty(outDirOverride))
+            {
+                outDir = Path.GetFullPath(outDirOverride);
+                Directory.CreateDirectory(outDir);
+            }
 
             var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
             MergeMahAppsResources(app.Resources);
@@ -166,12 +175,24 @@ namespace ScreenshotHarness
             // (`new PluginManager()`) throws FileNotFoundException standalone. Bypassing the
             // constructor with GetUninitializedObject gives SettingsControl a real, correctly-typed
             // PluginManager reference with default/zeroed fields - every call this control makes
-            // through it (MotorsExportAvailabilityProvider.SafeGet) is already wrapped in try/catch
-            // and degrades to "not available" on failure (see MotorsExportAvailabilityProvider's own
+            // through it (ViperAvailabilityProvider.SafeGet) is already wrapped in try/catch
+            // and degrades to "not available" on failure (see ViperAvailabilityProvider's own
             // remarks), which is the same "no live SimHub telemetry" state any offscreen harness is
             // in anyway.
             var pluginManager = (PluginManager)FormatterServices.GetUninitializedObject(typeof(PluginManager));
-            var control = new QAdvanceFeedback.Settings.SettingsControl(plugin, pluginManager);
+            // The Clutch tab (and every panel) reaches the plugin through QAdvanceFeedback.Instance/Hub,
+            // as in SimHub - set them before the page is built.
+            ShakeItEffectCaptures.Prepare(plugin);
+            // The page exactly as SimHub gets it: the plugin builds its one SettingsPageViewModel and returns
+            // the thin SettingsControl host over SettingsPageView. A placeholder Label means it failed.
+            var control = plugin.GetWPFSettingsControl(pluginManager) as QAdvanceFeedback.Settings.SettingsControl;
+            if (control == null)
+                throw new InvalidOperationException("GetWPFSettingsControl returned its failure placeholder - see the health registry: "
+                    + string.Join(" | ", QAdvanceFeedback.Core.Health.HealthRegistry.Snapshot().Select(h => h.Subsystem + ": " + h.Detail)));
+            // The page view (and its own namescope: MainTabs and the TabItem names) inside the host.
+            var page = control.FindName("Page") as UserControl;
+            if (page == null)
+                throw new InvalidOperationException("Could not find the SettingsPageView ('Page') inside SettingsControl.");
 
             // Host in a real MahApps MetroWindow - consistent with how a SimHub-hosted plugin's
             // settings control lives inside SimHub's own (MahApps-based) dark-themed window chrome,
@@ -194,19 +215,25 @@ namespace ScreenshotHarness
             window.Show();
             PumpDispatcher();
 
-            var mainTabs = (TabControl)control.FindName("MainTabs");
+            var mainTabs = (TabControl)page.FindName("MainTabs");
             if (mainTabs == null)
-                throw new InvalidOperationException("Could not find MainTabs in SettingsControl's namescope.");
+                throw new InvalidOperationException("Could not find MainTabs in SettingsPageView's namescope.");
 
-            CaptureTabContent(control, mainTabs, "WheelLockTab", Path.Combine(outDir, "settings-wheel-lock.png"));
-            CaptureTabContent(control, mainTabs, "WheelSlipTab", Path.Combine(outDir, "settings-wheel-slip.png"));
+            CaptureTabContent(page, mainTabs, "WheelLockTab", Path.Combine(outDir, "settings-wheel-lock.png"));
+            CaptureTabContent(page, mainTabs, "WheelSlipTab", Path.Combine(outDir, "settings-wheel-slip.png"));
+            CaptureTabContent(page, mainTabs, "SlipAngleTab", Path.Combine(outDir, "settings-slip-angle.png"));
             // Filename is "settings-gforce.png" (NOT "settings-g-force.png") - see docs\architecture.md's
             // own "Settings screenshot capture rule" remarks: the README links (and every other
             // settings-*.png in this folder) already use the no-hyphen form.
-            CaptureTabContent(control, mainTabs, "GForceTab", Path.Combine(outDir, "settings-gforce.png"));
-            CaptureWholeControl(control, mainTabs, "GeneralTab", Path.Combine(outDir, "settings-general.png"));
+            CaptureTabContent(page, mainTabs, "GForceTab", Path.Combine(outDir, "settings-gforce.png"));
+            CaptureTabContent(page, mainTabs, "ClutchTab", Path.Combine(outDir, "settings-clutch.png"));
+            CaptureWholeControl(control, page, mainTabs, "GeneralTab", Path.Combine(outDir, "settings-general.png"));
 
             window.Close();
+
+            // Native ShakeIt effects (1.2.0, docs\shakeit-native-effects-design.md): the editors the
+            // effects show inside ShakeIt, in both README languages.
+            ShakeItEffectCaptures.Run(plugin, outDir);
             app.Shutdown();
 
             Console.WriteLine("Rendered PNGs written to: " + outDir);
@@ -223,6 +250,20 @@ namespace ScreenshotHarness
             }
             throw new InvalidOperationException(
                 "Could not locate QAdvanceFeedback.sln above " + AppDomain.CurrentDomain.BaseDirectory);
+        }
+
+        // A freshly selected tab realises its content, and MahApps' ToggleSwitch animates its thumb from Off
+        // to the bound state on Loaded (since the full-MVVM page, IsChecked is set by binding AFTER load, so
+        // the Wheel Lock "Auto Generate" switch was caught mid-slide). Run the dispatcher for real time so
+        // every storyboard finishes and the thumb is at rest, as ShakeItEffectCaptures.Capture already does.
+        private static void SettleAnimations()
+        {
+            var frame = new DispatcherFrame();
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+            timer.Tick += (s, e) => { timer.Stop(); frame.Continue = false; };
+            timer.Start();
+            Dispatcher.PushFrame(frame);
+            PumpDispatcher();
         }
 
         private static void PumpDispatcher()
@@ -243,6 +284,7 @@ namespace ScreenshotHarness
             mainTabs.SelectedItem = tab;
             control.UpdateLayout();
             PumpDispatcher();
+            SettleAnimations();
             control.UpdateLayout();
 
             // Search from mainTabs, NOT from the TabItem itself - a TabItem's own visual tree only
@@ -267,15 +309,16 @@ namespace ScreenshotHarness
 
         // General: whole control (tab strip + General's content + Apply/Restore row) - see
         // docs\architecture.md's capture rule.
-        private static void CaptureWholeControl(FrameworkElement control, TabControl mainTabs, string tabName, string outputPath)
+        private static void CaptureWholeControl(FrameworkElement control, UserControl page, TabControl mainTabs, string tabName, string outputPath)
         {
-            var tab = (TabItem)((UserControl)control).FindName(tabName);
+            var tab = (TabItem)page.FindName(tabName);
             if (tab == null)
                 throw new InvalidOperationException($"Could not find TabItem '{tabName}'.");
 
             mainTabs.SelectedItem = tab;
             control.UpdateLayout();
             PumpDispatcher();
+            SettleAnimations();
             control.UpdateLayout();
 
             ApplyDarkBackground(control);

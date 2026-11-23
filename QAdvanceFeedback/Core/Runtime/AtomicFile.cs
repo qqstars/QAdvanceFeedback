@@ -108,6 +108,42 @@ namespace QAdvanceFeedback.Core.Runtime
                 new Win32Exception(error));
         }
 
+        /// <summary>What <see cref="RecoverTemporary"/> found.</summary>
+        public enum Recovery
+        {
+            /// <summary>No temporary file.</summary>
+            None,
+            /// <summary>Both files present: the swap never happened, the temporary file was deleted.</summary>
+            DeletedLeftover,
+            /// <summary>The main file was missing: the valid temporary file was renamed into its place.</summary>
+            Restored,
+            /// <summary>The main file was missing and the temporary file is not valid: it was left alone.</summary>
+            Unusable,
+        }
+
+        /// <summary>
+        /// STARTUP RECOVERY (owner, 2026-11-21). Both <paramref name="path"/> and its temporary file present: the swap
+        /// never happened, so <paramref name="path"/> is the last complete write and the temporary file is deleted.
+        /// <paramref name="path"/> missing: if <paramref name="isValid"/> accepts the temporary file's text it is
+        /// renamed into place; otherwise it is left alone (the next write overwrites it). Never deletes or replaces
+        /// <paramref name="path"/> itself. Throws the caller's usual <see cref="IOException"/> /
+        /// <see cref="System.UnauthorizedAccessException"/>.
+        /// </summary>
+        public static Recovery RecoverTemporary(string path, System.Func<string, bool> isValid)
+        {
+            if (string.IsNullOrEmpty(path)) return Recovery.None;
+            string temporary = path + TemporarySuffix;
+            if (!File.Exists(temporary)) return Recovery.None;
+            if (File.Exists(path))
+            {
+                File.Delete(temporary);
+                return Recovery.DeletedLeftover;
+            }
+            if (isValid == null || !isValid(File.ReadAllText(temporary))) return Recovery.Unusable;
+            Swap(temporary, path);
+            return Recovery.Restored;
+        }
+
         private const uint MoveFileReplaceExisting = 0x00000001;
         private const uint MoveFileWriteThrough = 0x00000008;
 

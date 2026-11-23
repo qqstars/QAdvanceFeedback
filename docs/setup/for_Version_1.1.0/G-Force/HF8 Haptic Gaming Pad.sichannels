@@ -1,0 +1,126 @@
+{
+  "ChannelSettings": {
+    "$type": "SimHub.Plugins.DataPlugins.ShakeItV3.Settings.Vibrations.PadChannelSettings, SimHub.Plugins",
+    "MaxChannels": 8,
+    "DeviceType": 2,
+    "IsEnabled": true,
+    "MinimumForce": 10,
+    "Threshold": 5,
+    "EffectToChannelsMapStore": {
+      "CustomEffectContainer": {
+        "FrontLeft": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "FrontRight": {
+          "MapsStore": "0;1;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "RearLeft": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "RearRight": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        }
+      },
+      "WheelsRumbleContainer": {
+        "FrontLeft": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "FrontRight": {
+          "MapsStore": "0;1;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "RearLeft": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "RearRight": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        }
+      },
+      "WheelsVibrationContainer": {
+        "FrontLeft": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "FrontRight": {
+          "MapsStore": "0;1;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "RearLeft": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "RearRight": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        }
+      },
+      "GearMissedContainer": {
+        "All": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        }
+      },
+      "ImpactEffectContainer": {
+        "All": {
+          "MapsStore": "0;1;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;1;100;Back H.R.;;|7;1;100;Back H.L.;;"
+        }
+      },
+      "RPMContainer": {
+        "All": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        }
+      },
+      "GearEffectContainer": {
+        "All": {
+          "MapsStore": "0;1;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        }
+      },
+      "CustomEffectContainerQAdvanceFeedback-Bottom": {
+        "FrontLeft": {
+          "MapsStore": "0;1;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "FrontRight": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "RearLeft": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "RearRight": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        }
+      },
+      "CustomEffectContainerQAdvanceFeedback-Back": {
+        "FrontLeft": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;1;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "FrontRight": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "RearLeft": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;1;100;Back H.L.;;"
+        },
+        "RearRight": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;1;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        }
+      },
+      "WheelsImpactContainer": {
+        "FrontLeft": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "FrontRight": {
+          "MapsStore": "0;1;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "RearLeft": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;0;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        },
+        "RearRight": {
+          "MapsStore": "0;0;100;Seat F.R.;;|1;0;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;0;100;Seat R.L.;;|4;0;100;Back L.R.;;|5;0;100;Back L.L.;;|6;0;100;Back H.R.;;|7;0;100;Back H.L.;;"
+        }
+      }
+    },
+    "GlobalChannelsSettings": {
+      "Custom": {
+        "MapsStore": "0;1;100;Seat F.R.;;|1;1;100;Seat F.L.;;|2;1;100;Seat R.R.;;|3;1;100;Seat R.L.;;|4;1;100;Back L.R.;;|5;1;100;Back L.L.;;|6;1;100;Back H.R.;;|7;1;100;Back H.L.;;|8;0;100;;;|9;0;100;;;|10;0;100;;;|11;0;100;;;"
+      }
+    },
+    "Name": "ForceFeel Pad / Next Level Racing HF8 Haptic Gaming Pad",
+    "OutputId": "ForceFeel",
+    "InstanceId": "8aa19106-93c5-4136-b013-c658d9f645e2",
+    "ShowPerEffectsLevels": false,
+    "IsFavorite": false
+  }
+}

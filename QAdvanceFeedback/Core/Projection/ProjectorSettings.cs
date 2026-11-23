@@ -42,7 +42,7 @@ namespace QAdvanceFeedback.Core.Projection
     /// to match THIS plugin's own published names (WheelLock/WheelSlip) rather than importing the
     /// sibling's terminology verbatim.
     /// </summary>
-    public enum ProjectionChannel { Lock, Slip }
+    public enum ProjectionChannel { Lock, Slip, SlipAngle }
 
     /// <summary>
     /// User-editable output-shaping settings: an optional start point below which nothing is felt,
@@ -140,6 +140,11 @@ namespace QAdvanceFeedback.Core.Projection
         // revision, paired with the ModerateInput/CriticalInput threshold moves above): "we will get
         // the smooth range between 60 to 80, with flatten on the edge of 60 and 80, when out of the 60
         // to 80 range, the value will ramp up/down quick."
+        /// <summary>The Slip Angle curve's Best and Max smooth ranges (owner, 2026-11-22) - see
+        /// <see cref="ApplyPreset"/>.</summary>
+        public const double SlipAngleBestFlattenRange = 6.0;
+        public const double SlipAngleMaxFlattenRange = 3.0;
+
         public double SlightlyFlattenRange { get; set; } = 3.0;
         public double ModerateFlattenRange { get; set; } = 2.0;
         public double CriticalFlattenRange { get; set; } = 2.0;
@@ -155,6 +160,43 @@ namespace QAdvanceFeedback.Core.Projection
         public void ApplyPreset(ProjectorPreset preset, ProjectionChannel channel = ProjectionChannel.Lock)
         {
             Preset = preset;
+
+            if (channel == ProjectionChannel.SlipAngle)
+            {
+                // Every preset handled HERE (Task 18 review): Slip Angle never falls through to Lock's.
+                switch (preset)
+                {
+                    case ProjectorPreset.Curve:
+                        // docs\slip-angle-design.md 9.6 shipped preset. OWNER, 2026-11-22: Best 60 -> 20 with a
+                        // smooth range of 6, Max 80 -> 60 with a smooth range of 3 (was 62 -> 30 / 78 -> 60, ranges
+                        // 2 / 2). The anchors now sit exactly where the learned Best and Max map (9.4: Best -> 60,
+                        // Max -> 80), so the plateaus are centred on them. Min 30 -> 10 (range 3), Start 0 -> 0,
+                        // End 100 -> 100 unchanged; StartInput 15 (owner 2026-11-19): the Start-angle knot.
+                        StartInput = 15.0;
+                        EndInput = 100.0;
+                        SlightlyInput = 30.0; SlightlyOutput = 10.0;
+                        ModerateInput = 60.0; ModerateOutput = 20.0;
+                        CriticalInput = 80.0; CriticalOutput = 60.0;
+                        ResetFlattenRangesToDefault();
+                        ModerateFlattenRange = SlipAngleBestFlattenRange;
+                        CriticalFlattenRange = SlipAngleMaxFlattenRange;
+                        break;
+
+                    case ProjectorPreset.Linear:
+                        // The same straight line as Lock/Slip: anchors on the Start->End line (0->100
+                        // with the shipped Start/End), Start/End themselves left as the driver set them.
+                        SlightlyInput = 30.0; SlightlyOutput = OnLineFromStartToEnd(30.0);
+                        ModerateInput = 60.0; ModerateOutput = OnLineFromStartToEnd(60.0);
+                        CriticalInput = 80.0; CriticalOutput = OnLineFromStartToEnd(80.0);
+                        ResetFlattenRangesToDefault();
+                        break;
+
+                    default:
+                        // Custom and the customised variants only flag the preset.
+                        break;
+                }
+                return;
+            }
 
             if (channel == ProjectionChannel.Slip)
             {
@@ -351,6 +393,27 @@ namespace QAdvanceFeedback.Core.Projection
         /// docs\refinements-report.md, docs\curve-help-text-report.md), and a hand-copied number in a
         /// help string cannot be caught by the compiler when that happens again.
         /// </summary>
+        /// <summary>Copies every field (preset, anchors, outputs, flatten ranges) onto <paramref name="target"/>.
+        /// The one copy the settings page and the Slip Angle tab's editor share.</summary>
+        public void CopyTo(ProjectorSettings target)
+        {
+            if (target == null) return;
+            target.Preset = Preset;
+            target.StartInput = StartInput;
+            target.EndInput = EndInput;
+            target.StartOutput = StartOutput;
+            target.EndOutput = EndOutput;
+            target.SlightlyInput = SlightlyInput;
+            target.SlightlyOutput = SlightlyOutput;
+            target.ModerateInput = ModerateInput;
+            target.ModerateOutput = ModerateOutput;
+            target.CriticalInput = CriticalInput;
+            target.CriticalOutput = CriticalOutput;
+            target.SlightlyFlattenRange = SlightlyFlattenRange;
+            target.ModerateFlattenRange = ModerateFlattenRange;
+            target.CriticalFlattenRange = CriticalFlattenRange;
+        }
+
         public static ProjectorSettings CreateShippedDefault(ProjectionChannel channel)
         {
             var settings = new ProjectorSettings();

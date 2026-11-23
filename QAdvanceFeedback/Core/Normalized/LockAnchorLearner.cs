@@ -275,8 +275,12 @@ namespace QAdvanceFeedback.Core.Normalized
                 double span = run[i].G - run[i - 1].G;
                 double t = span > 1e-9 ? (level - run[i - 1].G) / span : 0.0;
                 double source = run[i - 1].Source + (run[i].Source - run[i - 1].Source) * t;
-                if (source > 0.0)
-                    ApplyImpactWeighted(ref estimate, source / sLimit, RatioToleranceFloor);
+                // S90 / S75 ARE BELOW SMAX BY DEFINITION (owner, 2026-11-22: "SMax > S90 > S75 always"): a crossing
+                // whose Lock value is at or above the limit's - the value peaked before the G did - is not a point on
+                // the rising branch, and is never taught (it published S90 54.6 / S75 54.1 over SMax 52.5).
+                double ratio = source / sLimit;
+                if (source > 0.0 && ratio < MaxPhysicalRatio)
+                    ApplyImpactWeighted(ref estimate, ratio, RatioToleranceFloor);
                 return;
             }
         }
@@ -300,9 +304,13 @@ namespace QAdvanceFeedback.Core.Normalized
         /// driving explains. The seed is a REFERENCE, so it should hand over gradually exactly the way
         /// the SMax tier reference does.
         /// </summary>
+        /// <summary>A learned S75 / S90 ratio of SMax must stay below this (owner, 2026-11-22): at or above it the crossing
+        /// is not on the rising branch, and a saved estimate there (written before the rule) is ignored.</summary>
+        public const double MaxPhysicalRatio = 0.98;
+
         private static double PhysicalRatioOrSeed(AnchorEstimate estimate, double seed)
         {
-            if (estimate.Level <= 0.0 || estimate.Hits <= 0) return seed;
+            if (estimate.Level <= 0.0 || estimate.Hits <= 0 || !(estimate.Level < MaxPhysicalRatio)) return seed;
             double confidence = ClampMath.To01(
                 (estimate.Hits - 1) / (double)Math.Max(1, RatioFullConfidenceHits - 1));
             return seed + (estimate.Level - seed) * confidence;
@@ -326,6 +334,21 @@ namespace QAdvanceFeedback.Core.Normalized
 
         /// <summary>How far this key's own learned S75/S90 ratios have taken over from the seed, 0..1 -
         /// diagnostic, so a replay/report can show whether a number is seeded or genuinely learned.</summary>
+        /// <summary>How far this key's own S75 ratio has taken over from the seed, 0..1 - the exact weight
+        /// <see cref="PhysicalS75Ratio"/> blends with (persisted hits, so it survives a restart).</summary>
+        public double PhysicalS75RatioConfidence(string gameId, string carId, string sourceIdentity)
+            => RatioConfidence(Find(gameId, carId, sourceIdentity)?.E75PhysicalRatio);
+
+        /// <summary>S90's counterpart to <see cref="PhysicalS75RatioConfidence"/>.</summary>
+        public double PhysicalS90RatioConfidence(string gameId, string carId, string sourceIdentity)
+            => RatioConfidence(Find(gameId, carId, sourceIdentity)?.E90PhysicalRatio);
+
+        private static double RatioConfidence(AnchorEstimate? estimate)
+        {
+            if (!estimate.HasValue || estimate.Value.Level <= 0.0 || estimate.Value.Hits <= 0 || !(estimate.Value.Level < MaxPhysicalRatio)) return 0.0;
+            return ClampMath.To01((estimate.Value.Hits - 1) / (double)Math.Max(1, RatioFullConfidenceHits - 1));
+        }
+
         public double PhysicalRatioConfidence(string gameId, string carId, string sourceIdentity)
         {
             Key k = Find(gameId, carId, sourceIdentity);

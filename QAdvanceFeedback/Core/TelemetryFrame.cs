@@ -28,6 +28,13 @@ namespace QAdvanceFeedback.Core
         public bool? WheelOnLooseSurfaceRearLeft { get; }
         public bool? WheelOnLooseSurfaceRearRight { get; }
 
+        public double? ForwardLocalVelocity { get; }
+        public double? YawRateRadPerSec { get; }
+        public double? VerticalG { get; }
+        public bool IsAirborne { get; }
+        public bool[] WheelsOnKerbs { get; }
+        public double? SurfaceGripHint { get; }
+
         /// <summary>A frame with every reading absent - the honest "no data" default, not a frame of
         /// zeros pretending to be real readings.</summary>
         public static readonly TelemetryFrame Empty = new TelemetryFrame();
@@ -50,7 +57,13 @@ namespace QAdvanceFeedback.Core
             bool? wheelOnLooseSurfaceFrontLeft = null,
             bool? wheelOnLooseSurfaceFrontRight = null,
             bool? wheelOnLooseSurfaceRearLeft = null,
-            bool? wheelOnLooseSurfaceRearRight = null)
+            bool? wheelOnLooseSurfaceRearRight = null,
+            double? forwardLocalVelocity = null,
+            double? yawRateRadPerSec = null,
+            double? verticalG = null,
+            bool isAirborne = false,
+            bool[] wheelsOnKerbs = null,
+            double? surfaceGripHint = null)
         {
             GroundSpeedKmh = groundSpeedKmh;
             SpeedKmh = speedKmh;
@@ -70,6 +83,13 @@ namespace QAdvanceFeedback.Core
             WheelOnLooseSurfaceFrontRight = wheelOnLooseSurfaceFrontRight;
             WheelOnLooseSurfaceRearLeft = wheelOnLooseSurfaceRearLeft;
             WheelOnLooseSurfaceRearRight = wheelOnLooseSurfaceRearRight;
+            ForwardLocalVelocity = forwardLocalVelocity;
+            YawRateRadPerSec = yawRateRadPerSec;
+            VerticalG = verticalG;
+            IsAirborne = isAirborne;
+            // A copy, and only a well-formed four-wheel array: anything else is "not supplied".
+            WheelsOnKerbs = wheelsOnKerbs != null && wheelsOnKerbs.Length == 4 ? (bool[])wheelsOnKerbs.Clone() : null;
+            SurfaceGripHint = surfaceGripHint;
         }
     }
 }

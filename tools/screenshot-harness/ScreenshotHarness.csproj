@@ -19,6 +19,11 @@
       dotnet build QAdvanceFeedback.sln -c Release
       dotnet build tools\screenshot-harness\ScreenshotHarness.csproj -c Release
       tools\screenshot-harness\bin\Release\net48\ScreenshotHarness.exe
+
+    Add the out option followed by a folder to write the PNGs there instead of docs\images (a before/after
+    comparison run). The page is the plugin's own GetWPFSettingsControl result (the thin SettingsControl over
+    Ui\Views\SettingsPageView); every capture waits 600 ms after a tab is selected so MahApps' ToggleSwitch
+    thumbs (set by binding after load) have finished animating.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
