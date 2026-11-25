@@ -91,16 +91,20 @@ It learns each car's own window, in degrees, from your driving:
   crash or kerb strike cannot move it.
 - **Best** and **Min** come from the car's measured grip curve.
 - Learning is kept separately for **tarmac, gravel/dirt and snow/ice**, so one rally car on mixed
-  surfaces keeps three windows.
+  surfaces keeps three windows. The surface is only what the game reports - its own per-wheel surface field
+  where the source file translates it (rFactor 2, Gran Turismo 7), else SimHub's grass/gravel flag (gravel/dirt
+  only) - never guessed.
 - Jumps, landings and impacts never teach it anything.
 - Until a car's peak is confirmed (three consistent crossings), it uses a window borrowed from the same
   car on another surface, another car, or another game, or failing that the shipped 5 / 8 / 10°.
 
 **Where the angle comes from.** It uses the game's own per-tyre slip angle when the game publishes one.
 Otherwise it estimates the rear-axle angle from the car's body motion, and an **orange warning** on the
-Slip Angle tab and its ShakeIt panel tells you so. The game list comes from a survey of SimHub 9.13.2's
-game readers (`docs/slip-angle-spike-report.md`); a native field is used only after it has proved
-itself in your session.
+Slip Angle tab and its ShakeIt panel tells you so. SimHub has no common per-wheel slip-angle property, so each
+game's own raw telemetry fields are listed in one file, `QAdvanceFeedback.SlipAngleSource.json` (1.2.1, see
+[Adding a game's per-wheel slip angle](#adding-a-games-per-wheel-slip-angle-121)). Only a game listed in that
+file can use its per-wheel slip angle. The shipped list comes from a survey of SimHub 9.13.2's game readers
+(`docs/slip-angle-spike-report.md`); a native field is used only after it has proved itself in your session.
 
 | Source | Games |
 |---|---|
@@ -108,26 +112,30 @@ itself in your session.
 | **Native, computed** (from the tyre contact-patch velocities) | rFactor 2, Le Mans Ultimate; provisionally NASCAR Heat 4 / 5, Tony Stewart's All-American / Sprint Car Racing, SRX: The Game |
 | **Fallback** (body-motion estimate, orange warning) | Every other game with tyres: Assetto Corsa, Automobilista 2, iRacing (not verified), RaceRoom, EA WRC, Dirt Rally 1 / 2, F1 2022 and earlier, Gran Turismo 7, BeamNG, Richard Burns Rally, the truck sims, and the rest |
 
-For most native games the unit is not documented. A game in a list is always read as its list says. Otherwise a
-unit the plugin's own table states (LFS, Drift21, the computed rows) is used. The lists live in the config file
-(`SlipAngle.SourceUnits`) and you can edit them by hand - adding a game needs no new plugin version:
-- `ByAngle`: the value is already in degrees (KartKraft).
-- `AngleUsingRatio1`: a 0-1 grip ratio, not an angle (all five Forza games: 0 = full grip, over 1 = losing
-  grip).
+For most native games the unit is not documented. A unit the source file states wins (`"unit"`, set with the
+**Source Unit** dropdown: LFS, Drift21, KartKraft's degrees, the Forza games' 0-1 ratio); a game computed from the
+two velocities is always radians. No unit is built into the plugin (1.2.1). For a game on **Auto Detect** (no
+`"unit"`), the unit is the one in its list - your pick in **Source Type for this game**, or what the check found
+while you drove. The lists live in the plugin's config file (`SlipAngle.SourceUnits`, never in the source file),
+start empty, and you can edit them by hand:
+- `ByAngle`: the value is already in degrees.
+- `AngleUsingRatio1`: a 0-1 grip ratio, not an angle (0 = full grip, over 1 = losing grip).
 - `AngleUsingRatio100`: a 0-100 grip ratio.
 - `AngleUsingRadians`: radians, checked (starts empty).
 - `UseCarAngle`: ignore the game's tyre value and always use the car-angle estimate (starts empty).
 - `ChosenByUser`: the games whose unit you picked from the dropdown (starts empty).
 
-A dropdown under the key data heading always shows, because the car angle is always available:
-- For a game whose unit is known (LFS, Drift21, the computed rows, KartKraft, the five Forza games) it offers that
-  unit or Car angle.
-- For any other game it offers Auto-detect (the default, showing the unit it found), Degrees, Radians, Slip ratio
-  0-1, Slip ratio 0-100 or Car angle.
-- For a game without a tyre value it shows Car angle only.
+The **Source Type for this game** dropdown, under the per-wheel source on the Slip Angle tab (and above the key data
+on the ShakeIt panel), is your own choice for the running game. It is saved to the plugin's config file at once -
+never to the source file - and its default is what the source file says. It shows while the angle source is
+**Per-wheel tyre angle when available** and the game has a per-wheel source (Telemetry Type not None):
+- **Per-Wheel Angle** with a Source Unit set: Per-Wheel Angle (that unit) or Car Angle.
+- **Per-Wheel Angle** on Auto Detect: Per-Wheel Angle (Auto - showing the unit it found), (Angle), (Radian),
+  (Ratio 0-1), (Ratio 0-100), or Car Angle.
+- **Lateral + Longitudinal Velocity Component**: Per-Wheel Angle (Radian) or Car Angle.
 
-After you change it, **Restore default** appears: it puts a known game back to its unit, and any other game back to
-Auto-detect (checked again while you drive).
+Surface and vertical acceleration do not change these choices. **Restore default** shows only while your choice
+differs from the source file's, and puts it back.
 
 A grip ratio is turned into an angle as the 0-100 value divided by 10 (so full slip, 100, is 10 degrees - the
 default Max). Its learned Max is capped at 22.5 degrees (ratio 2.25), and a corner past 13.5 degrees (ratio 1.35) never
@@ -140,6 +148,88 @@ radians - it is added to the right list and the config is saved, and the check s
 heading names the unit in use, e.g. "degrees from slip ratio 0-1" or "read as radians while the unit is
 checked".
 
+#### Adding a game's per-wheel slip angle (1.2.1)
+
+When SimHub adds a game, or a game you play is not in the list, you can add its per-wheel slip angle yourself -
+no new plugin version is needed. You need the game's own SimHub properties that hold each tyre's slip angle
+(open SimHub's property list, `DataCorePlugin.GameRawData.*`, while the game runs).
+
+The file has one entry per game:
+
+```json
+{
+  "id": "AssettoCorsaEVO",
+  "slipAngle": [
+    "DataCorePlugin.GameRawData.Physics.slipAngle01",
+    "DataCorePlugin.GameRawData.Physics.slipAngle02",
+    "DataCorePlugin.GameRawData.Physics.slipAngle03",
+    "DataCorePlugin.GameRawData.Physics.slipAngle04"
+  ]
+}
+```
+
+- `id`: which SimHub game ids the entry is for (the running game's id is shown in the Slip Angle tab's per-wheel
+  source heading). Case does not matter, and it must match the whole game id:
+  - `Game1|Game2|Game3` lists several games that share the same source.
+  - `*` matches any run of characters and `?` exactly one: `FM?|FH?` is FM7, FM8, FH4, FH5, FH6 and a future FH7.
+  - `regex:` starts a regular expression that runs to the end of the id (it can use `|` itself):
+    `regex:^F120(2[3-9]|[3-9]\d)[A-Za-z]*$` matches F12023 through F12099, and suffixed ids such as F12026SeasonPack.
+    Put it last if you combine it with names: `MySim|regex:^Other\d$`.
+  - **Which entry a game gets**, best first: 1. an id that is exactly that one name (`F12024`); 2. the name inside an
+    id with several parts (`F12019|F12024`, `F12024|regex:...`, `F12024|F12?|F1*`); 3. a wildcard with `?` only
+    (`F1202?`); 4. a wildcard with `*` (`F1*`); 5. a regex (`regex:F1.*`). At the same level the first entry in the
+    file wins. A game name may appear in only one entry - naming it in two makes the file invalid - so an exact
+    name always overrides the wildcards and regexes that would also match. An entry with an exact id and nothing
+    else (`{ "id": "FH6" }`) means "no per-wheel source for this game", even though `FH?` would match it.
+  - Use `note` to say which games a pattern matches; the Slip Angle tab shows it.
+- `slipAngle`: four SimHub property names, in the order front left, front right, rear left, rear right.
+- `unit` (optional, the tab's **Source Unit**): `degrees`, `radians`, `ratio1` (a 0-1 slip ratio) or `ratio100`
+  (0-100). Leave it out (Auto Detect) and the unit is detected while you drive, or pick one in **Source Type for this
+  game**. An entry computed from velocities (`atan2PatchVelocity`) has no `unit`: it is always radians.
+- `surface` (optional): four per-wheel surface properties, and `surfaceValues`: what their values mean, e.g.
+  `{ "0": "sealed", "2": "loose", "snow": "lowGrip" }` (keys are the values as SimHub shows them; a value not listed
+  is unknown). Slip Angle learns a separate window on tarmac (`sealed`), loose ground and snow/ice (`lowGrip`).
+  Without `surfaceValues` (or when no wheel's value is listed) SimHub's own grass/gravel flag is used: loose while
+  three or four wheels report it, and tarmac again once the game has reported loose at least once this session (a
+  game that never sets the flag stays on tarmac). An entry with only `surface` has no slip-angle field and uses the
+  car angle. The shipped file translates rFactor 2's and Gran Turismo 7's documented values.
+- `verticalAcceleration` (optional): `true` when the game really fills SimHub's vertical acceleration
+  (`FeedbackData.VerticalAcceleration` - the same field for every game, but most leave it at 0). Bumps, crests and
+  hops then pause Slip Angle learning, and it helps the impact check. The shipped file sets it for iRacing and
+  Rennsport. An entry may hold only this flag (iRacing has no per-wheel slip angle).
+- `transform` / `longitudinal` (advanced): `atanOfTangent` (the field is tan of the angle) or
+  `atan2PatchVelocity` (the angle is computed from the lateral patch velocity in `slipAngle` and the
+  longitudinal ground velocity in `longitudinal`).
+
+There are three ways to add or change a game:
+
+1. **On the Slip Angle tab** (easiest). Start the game, set **Global Source Type Mode** to **Per-wheel tyre angle when
+   available**, and use the **Per-wheel telemetry source** block: choose the **Telemetry Type** (**Per-Wheel
+   Angle**: four angle properties and their **Source Unit**; **Lateral + Longitudinal Velocity Component**: four of
+   each, the angle is atan2 of the two, always radians), tick **Has Per-Wheel Surface Telemetry?** to add four surface properties, tick **Has Vertical
+   Acceleration Data?** when the game fills SimHub's vertical acceleration, pick the properties and click
+   **Apply**. The plugin writes them to the file in `PluginsData\Common`. Telemetry Type **None** and Apply removes
+   the game's source. **Restore this game's source** shows only for a game the plugin ships an entry for (greyed
+   out while the file still holds that entry); it writes the shipped entry into the file at once, with no Apply,
+   like the page's other restores. Only the running game changes, even when its entry is shared, and the file
+   stays compact: the game leaves the entry that named it, and is then always named again - added to the id of
+   the first entry whose source (`slipAngle`, `surface`, `surfaceValues`, `unit`, `transform`, `longitudinal`,
+   `provisional`, `verticalAcceleration`) is exactly the same (`F1202?|F1203?|F12024`, even when `F1202?` already
+   matches it), or given an entry of its own. Change F12024 in `F12024|F1202?|F1203?` and it becomes
+   `F1202?|F1203?` plus `F12024`; change it back and they are one entry again.
+2. **Edit the file in `PluginsData\Common`.** The plugin creates
+   `SimHub\PluginsData\Common\QAdvanceFeedback.SlipAngleSource.json` from its own copy the first time it starts.
+   Edit it with any text editor; the plugin reads it again the next time a game starts. A file that is not valid
+   JSON, or has an entry that is not complete, is never overwritten: the plugin uses its own copy until you fix
+   it, says why in the Health section, and turns the tab's editor off. Delete the file to get the shipped copy
+   back.
+3. **Edit the file in the repository** (`QAdvanceFeedback.SlipAngleSource.json` in the solution root) and
+   rebuild. It is compiled into the DLL, so it becomes the shipped copy: it seeds a missing file and is what
+   Restore this game's source goes back to. An existing file in `PluginsData\Common` is not replaced.
+
+If you get a new game working, please share its entry (and the unit, if you know it) in a GitHub Discussion, so it
+can be added to the shipped list.
+
 **Fast learning.** Before the window is confirmed, every corner moves it: Max is the weighted mean of the starting
 value and the corners, each corner weighted by its lateral G against that speed band's peak (100% at 85% or more,
 then 80 / 60 / 30 / 10%; 10% for the first corner and while a band has no reference yet). Corners taken while the car
@@ -151,7 +241,21 @@ Learning never stops - a green value keeps following your driving.
 If the ratio never goes over 100%, drift starts at 100% with a longer hold (6 x Hold time, at most 2 s);
 otherwise drift starts at 1.5 x Max as usual, never past the 30-degree cap.
 
-The car-angle fallback shows its own warning: "This game has no tyre slip angle. Using the car's body angle."
+While the car angle is used, the orange line says why:
+- "This game has no tyre slip angle. Using the car's body angle." - the game has no per-wheel source.
+- "Checking this game's per-wheel slip angle (drive above 30 km/h and corner). Using the car's body angle
+  meanwhile." - a source is set; the game's own angle is used once a few seconds of moving, cornering data confirm
+  it.
+- "This game's per-wheel slip angle properties are not reported. Using the car's body angle." - a source is set,
+  but none of its four properties had a value for 10 s while moving (a wrong property name, or a game that does not
+  publish them).
+- "Global Source Type Mode is "Always car angle": using the car's body angle." - when that mode is chosen, for every
+  game (even one with a per-wheel source).
+- "Source Type for this game is Car Angle: using the car's body angle." - when that is this game's own choice.
+
+The line always describes the angle actually used for the output, not just what the game's source defines.
+**Global Source Type Mode** is saved with the other settings (it comes back after a restart), and **Restore all
+default settings** puts it back to **Per-wheel tyre angle when available**.
 
 **Speed-aware lateral G.** In a downforce car (F1, prototypes) the grip limit rises with speed, so the same
 lateral G means very different things at 60 and 220 km/h. The plugin learns, per game and car, the lateral G
@@ -550,6 +654,28 @@ sampled every 5 across the range and the points joined.
 
 ### Slip Angle
 
+- **Global Source Type Mode** (first, 1.2.1): **Per-wheel tyre angle when available** (the default) uses the game's
+  per-wheel slip angle when the game has a per-wheel telemetry source, otherwise the car angle. **Always car
+  angle** uses the car angle for every game; the per-wheel source and the **Source Type for this game** dropdown are
+  then hidden (the unit dropdown on the ShakeIt panel too). Applied with **Apply**. There is one source, the
+  plugin's own (1.2.1: the Custom source was removed - a game's source is edited in the per-wheel block instead).
+- **Per-wheel telemetry source** (plugin page only): the current game's entry in
+  `QAdvanceFeedback.SlipAngleSource.json`, saved by **Apply** - see
+  [Adding a game's per-wheel slip angle](#adding-a-games-per-wheel-slip-angle-121). **Telemetry Type**: None (no
+  boxes), Per-Wheel Angle (a **Source Unit** - Auto Detect, Angle Value (0 to 360), Radian Value (0 to 6.28), Slip
+  Ratio (0 to 1) or (0 to 100) - and Angle Front Left ... Rear Right) or Lateral + Longitudinal Velocity Component
+  (Lateral Velocity Component FL ... RR and Longitudinal Velocity Component FL ... RR; always radians). **Has Per-Wheel Surface Telemetry?**
+  adds Front Left Surface ... Rear Right Surface (each surface then learns its own window). **Has Vertical
+  Acceleration Data?** says the game fills SimHub's vertical acceleration (bumps and jumps then pause the learning).
+  **Restore this game's source** (only for a game the plugin ships an entry for) writes that entry into the file at
+  once. Plain SimHub property names only (no NCalc or JavaScript: the value is read as it is); every box starts at
+  the dropdowns' left edge, and every dropdown on the tab has the same width.
+- **Surface line** (tab and ShakeIt panel, under the key data heading): the surface whose learning key is in use -
+  Tarmac, Gravel / dirt or Snow / ice - and where it came from (the game's own surface field, SimHub's grass/gravel
+  flag, or none reported), with "changing, NN%" while the output fades to a new surface. While that surface has no
+  confirmed window, a second line says what it starts from (this car on another surface, another car, another
+  game, or the shipped 5 / 8 / 10°). It explains why the key data and the learning LEDs move when the surface
+  changes.
 - **Trigger by** decides which pedal opens the output: Brake, Throttle, or Brake or throttle (the
   default; brake ≥ 5% or throttle ≥ 10%). With neither pedal pressed it stays silent, but it keeps
   tracking the slide, so pressing again mid-drift picks up where it was. Below 10 km/h it fades out,
@@ -802,7 +928,7 @@ At a glance, here is what each subsystem is built on and why:
 | **Wheel Lock/Slip Normalizer** | Re-scales Raw's per-wheel shape against a per-(game, car, source) learned physical-grip reference (a deliberately slow-converging EMA, so a single spike is never mistaken for the car's real limit), cross-calibrated per source via a scale learner anchored to rare, independently-detected "at the physical limit" moments, blended between this session's live evidence and a persisted prior session's value by how *consistent* (not just how numerous) the live evidence has been. | Makes "60" mean the same thing — "right at the limit" — in every car, instead of a number whose meaning drifts with how grippy that particular car happens to be. |
 | **Wheel Lock/Slip Projector** | Pushes the normalized 0–100 value through a driver-editable five-anchor curve, smoothed with monotone cubic interpolation so the output can never dip as the input rises, plus an optional pulse-at-maximum stage. | Turns "how severe is this, numerically" into "exactly how this should feel" — the one property tier meant to be bound to a shaker. |
 | **G-Force** | A washout-style model that splits a *sustained* G level from a *rate-driven* transient, so a rising G pushes the felt sensation further along a pad chain than the same steady G would; per-game/per-car maxima are learned via a trimmed-pool robust estimator (excludes the top outliers, blends the remaining pool's max and mean) over a real-time rolling window; wheel lock/slip and slip angle optionally superimpose an alternating left/right shake on top. | Gives a seat pad a continuous, directional sense of braking/accelerating/cornering load, independent of and complementary to the wheel channels. |
-| **Slip Angle** | Native per-tyre slip angle from a per-game raw-data table (promoted only after sustained evidence; unit auto-detected by voting over hard corners), else a body-slip estimate; one combined angle with front/rear equalisation; a grip-curve learner per game, car, source, axle and surface whose Max is taught only by corroborated traction crossings, protected against impacts and landings; borrowing tiers for a cold car; a monotone 15/30/60/80/100 normalizer (15 at the derived Start angle); a drift attenuator state machine. Shares its crossing gate, corroborated estimator and borrowing resolver with Lock/Slip, each proven bit-identical to the code it was extracted from. | Tells you when the tyres enter and pass their ideal window, without buzzing through a held drift. |
+| **Slip Angle** | Native per-tyre slip angle from the per-game sources in `QAdvanceFeedback.SlipAngleSource.json` (promoted only after sustained evidence; unit auto-detected by voting over hard corners), else a body-slip estimate; one combined angle with front/rear equalisation; a grip-curve learner per game, car, source, axle and surface whose Max is taught only by corroborated traction crossings, protected against impacts and landings; borrowing tiers for a cold car; a monotone 15/30/60/80/100 normalizer (15 at the derived Start angle); a drift attenuator state machine. Shares its crossing gate, corroborated estimator and borrowing resolver with Lock/Slip, each proven bit-identical to the code it was extracted from. | Tells you when the tyres enter and pass their ideal window, without buzzing through a held drift. |
 
 ### Building from source
 

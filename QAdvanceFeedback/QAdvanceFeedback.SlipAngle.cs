@@ -249,7 +249,6 @@ namespace QAdvanceFeedback
             {
                 SlipAngleChannelSettings s = _settings.SlipAngle ?? new SlipAngleChannelSettings();
                 SlipAngleInput input = _adapter.ReadSlipAngleInput(data, pluginManager, sample);
-                bool custom = s.SourceMode == SourceMode.Custom;
 
                 var request = new SlipAngleFrameRequest
                 {
@@ -259,26 +258,10 @@ namespace QAdvanceFeedback
                     Dt = dtSeconds,
                     Input = input,
                     NativeSupport = (_adapter as SimHubTelemetryAdapter)?.SlipAngleNativeSupport,
-                    UseCustomSource = custom,
                     Gate = s.Gate,
                     WeightMax = s.WeightMax,
                     WeightMin = s.WeightMin,
                 };
-                if (custom)
-                {
-                    WheelSourceSet c = s.CustomSources ?? new WheelSourceSet();
-                    request.CustomWheelsDeg = new[]
-                    {
-                        ResolveSlipAngleWheel(pluginManager, c.FrontLeft, c.ScriptTypeFrontLeft),
-                        ResolveSlipAngleWheel(pluginManager, c.FrontRight, c.ScriptTypeFrontRight),
-                        ResolveSlipAngleWheel(pluginManager, c.RearLeft, c.ScriptTypeRearLeft),
-                        ResolveSlipAngleWheel(pluginManager, c.RearRight, c.ScriptTypeRearRight),
-                    };
-                    request.CustomSourceIdentity = SourceIdentity.Compute(
-                        c.FrontLeft, c.ScriptTypeFrontLeft.ToString(), c.FrontRight, c.ScriptTypeFrontRight.ToString(),
-                        c.RearLeft, c.ScriptTypeRearLeft.ToString(), c.RearRight, c.ScriptTypeRearRight.ToString());
-                }
-
                 // The one-time Manual seed goes through the display rule (what the tab and panel show), on
                 // the display context's surface blend - the previous frame's, Sealed on a new game / car.
                 SlipAngleKeyDataContext.Snapshot context = _slipAngleKeyDataContext.Current;
@@ -319,8 +302,7 @@ namespace QAdvanceFeedback
                     }
                     SlipAngleNativeness.Clear();
                     _slipAngleIdentityTier.NoteCleared();
-                    bool pluginInternal = _settings?.SlipAngle?.SourceMode != SourceMode.Custom;
-                    System.Threading.Volatile.Write(ref _slipAngleStatus, SlipAngleStatus.Fault(gameId, pluginInternal));
+                    System.Threading.Volatile.Write(ref _slipAngleStatus, SlipAngleStatus.Fault(gameId, true));
                 }
                 catch (Exception) { /* never into SimHub's data loop */ }
                 return SlipAngleFrameResult.Empty;
@@ -375,13 +357,5 @@ namespace QAdvanceFeedback
                 clear ? SlipAngleStatus.None : SlipAngleStatus.From(result, SlipAngleNativeness.Lock, gameId));
         }
 
-        /// <summary>One Custom wheel in degrees: the configured source through the shared
-        /// <see cref="WheelSourceResolver"/> (no 0-100 clamp there); null when missing or not a number. The
-        /// processor takes |α| and clamps it to 0-45°.</summary>
-        private double? ResolveSlipAngleWheel(PluginManager pluginManager, string source, ScriptType scriptType)
-        {
-            double v = _sourceResolver.Resolve(pluginManager, source, scriptType, double.NaN);
-            return ClampMath.IsFinite(v) ? v : (double?)null;
-        }
     }
 }

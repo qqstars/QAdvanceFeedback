@@ -17,13 +17,13 @@ namespace QAdvanceFeedback.Tests.SlipAngle
     {
         private const string Head = "SlipAngle.KeyData.Header";
 
-        private static string Key(string game, SourceMode mode = SourceMode.Manual, SourceNativeness tier = SourceNativeness.Native,
-            SlipAngleSourceUnits units = null) => SettingsHub.SlipAngleKeyDataHeaderKey(mode, tier, game, units ?? SlipAngleSourceUnits.CreateDefault());
+        private static string Key(string game, SourceNativeness tier = SourceNativeness.Native,
+            SlipAngleSourceUnits units = null) => SettingsHub.SlipAngleKeyDataHeaderKey(tier, game, units ?? SlipAngleSourceUnits.CreateDefault());
 
         [Theory]
-        [InlineData("FH6", Head + ".Ratio1")]            // the Forza list: a 0-1 grip ratio
+        [InlineData("FH6", Head + ".Ratio1")]            // the JSON's "FM?|FH?" row: a 0-1 grip ratio
         [InlineData("FM8", Head + ".Ratio1")]
-        [InlineData("KartKraft", Head)]                  // the degrees list
+        [InlineData("KartKraft", Head)]                  // the JSON row states degrees
         [InlineData("LFS", Head + ".Radians")]           // the table states radians
         [InlineData("F12025", Head + ".AssumedRadians")] // nothing states it: read as radians
         [InlineData("ACC", Head + ".AssumedRadians")]
@@ -43,18 +43,19 @@ namespace QAdvanceFeedback.Tests.SlipAngle
         }
 
         [Fact]
-        public void The_car_angle_fallback_and_a_custom_source_name_themselves_whatever_the_game()
+        public void The_car_angle_fallback_names_itself_whatever_the_game()
         {
             Assert.Equal(Head + ".CarAngle", Key("FH6", tier: SourceNativeness.Fallback));
-            Assert.Equal(Head + ".Custom", Key("FH6", mode: SourceMode.Custom));
-            Assert.Equal(Head + ".Custom", Key("F12025", mode: SourceMode.Custom, tier: SourceNativeness.Fallback));
+            Assert.Equal(Head + ".CarAngle", Key("F12025", tier: SourceNativeness.Fallback));
+            Assert.Equal(Head + ".CarAngle", SettingsHub.SlipAngleKeyDataHeaderKey(SourceNativeness.Native, "FH6",
+                SlipAngleSourceUnits.CreateDefault(), SlipAngleAngleSource.CarAngle));
         }
 
         [Fact]
         public void Every_heading_has_English_and_Chinese_text_without_spaces_in_the_Chinese()
         {
             Dictionary<string, string> zh = StringTableZhHans.Create();
-            foreach (string suffix in new[] { "", ".Radians", ".AssumedRadians", ".Ratio1", ".Ratio100", ".CarAngle", ".Custom" })
+            foreach (string suffix in new[] { "", ".Radians", ".AssumedRadians", ".Ratio1", ".Ratio100", ".CarAngle" })
             {
                 Assert.False(string.IsNullOrWhiteSpace(Strings.Get(Head + suffix)));
                 Assert.DoesNotContain(" ", zh[Head + suffix]);

@@ -88,8 +88,6 @@ namespace QAdvanceFeedback.Tests
                 slipAngle.Process(new SlipAngleFrameRequest
                 {
                     GameId = "G", CarId = "Car1", Frame = frame, Dt = 1.0 / 60.0, Input = new SlipAngleInput("G"),
-                    UseCustomSource = true, CustomSourceIdentity = "SA.Custom",
-                    CustomWheelsDeg = new double?[] { a, a, a * 1.1, a * 1.1 },
                 });
             }
 
@@ -124,7 +122,7 @@ namespace QAdvanceFeedback.Tests
             foreach (string key in lockGrip.Keys.Concat(slipGrip.Keys))
                 Assert.Contains(Segments(key)[3], new[] { NormalizedWheelLockSlipEngine.SealedSurfaceBucket, NormalizedWheelLockSlipEngine.LooseSurfaceBucket });
 
-            // Slip Angle: game | car | source/target | surface, both Custom and Plugin Internal present.
+            // Slip Angle: game | car | source/target | surface, Plugin Internal present.
             var parsedSources = new HashSet<string>();
             foreach (string key in slipAngleState.Keys)
             {
@@ -132,9 +130,7 @@ namespace QAdvanceFeedback.Tests
                 Assert.Equal(("G", "Car1"), (g, c));
                 parsedSources.Add(source + "/" + target);
             }
-            Assert.Contains("SA.Custom/All", parsedSources);
             Assert.Contains(SlipAngleFrameProcessor.FallbackIdentity + "/All", parsedSources);
-            Assert.Contains("SA.Custom/Front", parsedSources);
             Assert.Contains(SlipAngleFrameProcessor.FallbackIdentity + "/Rear", parsedSources);
 
             using (var store = new RuntimeStore(_path, flushInterval: TimeSpan.FromHours(1)))

@@ -93,6 +93,9 @@
     <!-- Slip Angle raw-source table and per-frame reader (Task 10): pure - the SimHub property read is
          injected as a Func<string, object> by SimHubTelemetryAdapter. -->
     <Compile Include="..\QAdvanceFeedback\SlipAngleRawSources.cs" LinkBase="Adapters" />
+    <!-- The slip-angle source JSON (Newtonsoft only) and the compiled-in copy it is checked against. -->
+    <Compile Include="..\QAdvanceFeedback\SlipAngleSourceFile.cs" LinkBase="Adapters" />
+    <EmbeddedResource Include="..\QAdvanceFeedback.SlipAngleSource.json" LogicalName="QAdvanceFeedback.SlipAngleSource.json" Link="QAdvanceFeedback.SlipAngleSource.json" />
     <Compile Include="..\QAdvanceFeedback\Ui\Mvvm\*.cs" LinkBase="Ui\Mvvm" />
     <Compile Include="..\QAdvanceFeedback\Ui\ViewModels\*.cs" LinkBase="Ui\ViewModels" />
   </ItemGroup>

@@ -217,9 +217,10 @@ namespace QAdvanceFeedback.Ui.ViewModels
             new RelayCommand(() => Host.Hub?.Set(SettingField.SlipAngleSourceUnit, null, SettingsOrigin.ShakeItPanel)));
         private RelayCommand _resetUnitCommand;
 
-        private void RefreshUnitChoice(SourceMode mode, string gameId, SlipAngleSourceUnits units)
+        private void RefreshUnitChoice(string gameId, SlipAngleSourceUnits units, SlipAngleAngleSource angleSource)
         {
-            ShowUnitChoice = SettingsHub.ShowSlipAngleUnitChoice(mode, gameId, units);
+            // Hidden under "Always car angle" (owner, 2026-11-23); the angle source itself is the plugin page's only.
+            ShowUnitChoice = SettingsHub.ShowSlipAngleUnitChoice(gameId, units, angleSource);
             ShowUnitReset = ShowUnitChoice && !SettingsHub.SlipAngleUnitIsDefault(gameId, units);
             IReadOnlyList<Choice<SlipAngleUnitChoice>> options = SlipAngleUnitChoices.For(gameId, units);
             SlipAngleUnitChoice? selected = SettingsHub.SlipAngleSelectedUnit(gameId, units);
@@ -269,6 +270,14 @@ namespace QAdvanceFeedback.Ui.ViewModels
         public bool ShowNoData { get => _showNoData; private set => SetProperty(ref _showNoData, value); }
         public string NoDataText { get => _noDataText; private set => SetProperty(ref _noDataText, value); }
 
+        /// <summary>The surface whose learning key is in use, and where it came from (as on the tab).</summary>
+        public string SurfaceText { get => _surfaceText; private set => SetProperty(ref _surfaceText, value); }
+        private string _surfaceText = string.Empty;
+
+        /// <summary>What this surface's key starts from while it has no confirmed window (as on the tab).</summary>
+        public string SurfaceBorrowText { get => _surfaceBorrowText; private set => SetProperty(ref _surfaceBorrowText, value); }
+        private string _surfaceBorrowText = string.Empty;
+
         /// <summary>Handover confidence / window quality (and the unconfirmed-peak lines), as on the tab.</summary>
         public string LearningStatus { get => _learningStatus; private set => SetProperty(ref _learningStatus, value); }
 
@@ -314,6 +323,7 @@ namespace QAdvanceFeedback.Ui.ViewModels
                     case SettingField.SlipAngleKeyDataAuto:
                     case SettingField.SlipAngleKeyDataValues:
                     case SettingField.SlipAngleSourceUnit:
+                    case SettingField.SlipAngleAngleSource:
                         RefreshKeyData();
                         break;
                     case SettingField.SlipAngleProjector:
@@ -362,8 +372,8 @@ namespace QAdvanceFeedback.Ui.ViewModels
 
             string identity = Identity();
             _shownIdentity = identity;
-            KeyDataHeader = Strings.Get(SettingsHub.SlipAngleKeyDataHeaderKey(live.SourceMode, _slip.SlipAngleIdentityTier, Host.CurrentGameId, live.SourceUnits));
-            RefreshUnitChoice(live.SourceMode, Host.CurrentGameId, live.SourceUnits);
+            KeyDataHeader = Strings.Get(SettingsHub.SlipAngleKeyDataHeaderKey(_slip.SlipAngleIdentityTier, Host.CurrentGameId, live.SourceUnits, live.AngleSource));
+            RefreshUnitChoice(Host.CurrentGameId, live.SourceUnits, live.AngleSource);
             bool auto = live.KeyData.GetAutoGenerate(identity);
             _perGame = live.KeyData.GetPerGame(identity);
 
@@ -398,6 +408,8 @@ namespace QAdvanceFeedback.Ui.ViewModels
             ShowNoData = t.ShowNoData;
             NoDataText = t.NoDataText;
             LearningStatus = t.LearningStatus;
+            SurfaceText = t.SurfaceText;
+            SurfaceBorrowText = t.SurfaceBorrowText;
         }
 
         /// <summary>The graph view calls this when shown (it is rebuilt per request and never activates the

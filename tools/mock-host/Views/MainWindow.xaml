@@ -1,0 +1,22 @@
+<mah:MetroWindow x:Class="MockHost.Views.MainWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:mah="http://metro.mahapps.com/winfx/xaml/controls"
+                 xmlns:views="clr-namespace:MockHost.Views"
+                 Title="QAdvanceFeedback Mock Host" Width="1280" Height="900"
+                 WindowStartupLocation="CenterScreen">
+    <TabControl x:Name="Tabs" Margin="8">
+        <TabItem Header="Plugin Settings">
+            <ContentControl x:Name="SettingsHost" Margin="0,8,0,0" />
+        </TabItem>
+        <TabItem Header="ShakeIt Effects">
+            <views:ShakeItEffectsView DataContext="{Binding ShakeIt}" Margin="0,8,0,0" />
+        </TabItem>
+        <TabItem Header="Game Simulation">
+            <views:GameSimulationView DataContext="{Binding Simulation}" Margin="0,8,0,0" />
+        </TabItem>
+        <TabItem Header="Language">
+            <views:LanguageView DataContext="{Binding Language}" Margin="0,8,0,0" />
+        </TabItem>
+    </TabControl>
+</mah:MetroWindow>

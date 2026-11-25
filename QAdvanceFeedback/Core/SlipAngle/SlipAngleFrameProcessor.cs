@@ -14,21 +14,11 @@ namespace QAdvanceFeedback.Core.SlipAngle
         /// <summary>Seconds since the previous frame (0 / NaN when unknown).</summary>
         public double Dt { get; set; }
 
-        /// <summary>This frame's Plugin Internal read (always read, also in Custom mode: kerbs, surface,
-        /// native promotion keep running).</summary>
+        /// <summary>This frame's Plugin Internal read (kerbs, surface, the game's per-wheel angle when it has one).</summary>
         public SlipAngleInput Input { get; set; } = SlipAngleInput.Empty;
 
         /// <summary>Native support state (unit detection / block diagnostics); optional.</summary>
         public SlipAngleNativeSupport NativeSupport { get; set; }
-
-        /// <summary>False = Plugin Internal (native or fallback); true = Custom per-wheel sources.</summary>
-        public bool UseCustomSource { get; set; }
-
-        /// <summary>Custom mode: per-wheel degrees FL, FR, RL, RR; a null entry = unreadable wheel.</summary>
-        public double?[] CustomWheelsDeg { get; set; }
-
-        /// <summary>Custom mode: <see cref="Normalized.SourceIdentity"/> of the four custom fields.</summary>
-        public string CustomSourceIdentity { get; set; }
 
         public SlipAngleGateSettings Gate { get; set; } = new SlipAngleGateSettings();
         public double WeightMax { get; set; } = 0.85;
@@ -50,7 +40,7 @@ namespace QAdvanceFeedback.Core.SlipAngle
     /// key data gate + one-time seed → <see cref="SlipAngleNormalizer"/> → <see cref="SlipAngleProjectedEngine"/>
     /// → <see cref="KeyedSlipAngleLearner.SaveIfDue"/>.</para>
     /// <para>Source identity: Plugin Internal learns under <see cref="NativeIdentity"/> or
-    /// <see cref="FallbackIdentity"/> (their scales differ, 9.1); Custom under its own composite identity.</para>
+    /// <see cref="FallbackIdentity"/> (their scales differ, 9.1).</para>
     /// Not thread-safe: the data thread owns it (and the learner).
     /// </summary>
     public sealed class SlipAngleFrameProcessor
@@ -73,13 +63,30 @@ namespace QAdvanceFeedback.Core.SlipAngle
         /// <summary>Learning needs a plausible frame time (matches <see cref="TelemetryLearningGate"/>).</summary>
         public const double MaxLearnDtSeconds = TelemetryLearningGate.MaxPlausibleDtSeconds;
 
-        public const double MaxCustomDeg = 45.0;
-
         private readonly KeyedSlipAngleLearner _learner;
         private readonly Action<Dictionary<string, SlipAngleKeyState>> _save;
         private readonly YawSignDetector _yawSign = new YawSignDetector();
         private readonly ManualOverrideGate _manualGate = new ManualOverrideGate();
         private SurfaceBucketClassifier _surface = new SurfaceBucketClassifier();
+
+        /// <summary>The games seen reporting loose by SimHub's grass/gravel flag this session (kept across a game / car
+        /// switch: the evidence is about the game, not the car).</summary>
+        private readonly HashSet<string> _simHubLooseGames = new HashSet<string>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// THE SURFACE (owner, 2026-11-22 / 2026-11-23): the game's own field translated by its source row; when that
+        /// gives nothing, SimHub's grass/gravel flag; else Unknown (held, never guessed).
+        /// </summary>
+        private SurfaceBlend StepSurface(string game, ITelemetryFrame f, SlipAngleInput input, double dt)
+        {
+            SurfaceBucket? own = SurfaceBucketMap.Vote(input.WheelSurface);
+            if (own.HasValue) return _surface.Step(own, dt, SurfaceBucketSource.Game);
+            SurfaceBucket? simHub = f == null ? null : SurfaceBucketMap.FromSimHubLoose(
+                f.WheelOnLooseSurfaceFrontLeft, f.WheelOnLooseSurfaceFrontRight, f.WheelOnLooseSurfaceRearLeft,
+                f.WheelOnLooseSurfaceRearRight, _simHubLooseGames.Contains(game));
+            if (simHub == SurfaceBucket.Loose) _simHubLooseGames.Add(game);
+            return _surface.Step(simHub, dt, SurfaceBucketSource.SimHub);
+        }
         private SlipAngleGate _gate = new SlipAngleGate();
         private ImpactGuard _impact = new ImpactGuard(ImpactGuardParameters.SlipAngle);
         private SlipAngleProjectedEngine _projected;
@@ -197,21 +204,11 @@ namespace QAdvanceFeedback.Core.SlipAngle
             string internalIdentity = internalRaw.Tier == SourceNativeness.Native ? nativeIdentity : FallbackIdentity;
             if (internalRaw.Tier != SourceNativeness.Native) internalK = 1.0;   // unused by fallback
 
-            SlipAngleRawResult raw;
-            string identity;
-            double k;
-            if (r.UseCustomSource)
-            {
-                identity = string.IsNullOrEmpty(r.CustomSourceIdentity) ? "SlipAngle.Custom" : r.CustomSourceIdentity;
-                k = _learner.K(game, car, identity, previousBlend);
-                raw = ComputeCustom(r.CustomWheelsDeg, input.KerbWheels ?? f?.WheelsOnKerbs, k, r.WeightMax, r.WeightMin);
-            }
-            else
-            {
-                raw = internalRaw;
-                identity = internalIdentity;
-                k = internalK;
-            }
+            // Plugin Internal is the only source (owner, 2026-11-24: Custom was removed - a game's source is edited in
+            // QAdvanceFeedback.SlipAngleSource.json instead).
+            SlipAngleRawResult raw = internalRaw;
+            string identity = internalIdentity;
+            double k = internalK;
 
             // 3. Impact guard (always stepped so its jump history stays continuous).
             double? latG = f?.LateralG;
@@ -239,7 +236,6 @@ namespace QAdvanceFeedback.Core.SlipAngle
             SurfaceBucket bandSurface = previousBlend.Active;
             double speedScale = _learner.SpeedBands.Scale(game, car, internalIdentity, bandSurface, speedKmh);
             double scaledLat = absLat * speedScale;
-            double customScale = r.UseCustomSource ? _learner.SpeedBands.Scale(game, car, identity, bandSurface, speedKmh) : speedScale;
             // SLIDE GUARD + FAST LEARNING CONTEXT (owner, 2026-11-21): the body angle decides "sliding" for every
             // source; the speed band at this speed is the lateral G reference.
             double bodyDeg = BodyAngleDeg(f);
@@ -250,9 +246,8 @@ namespace QAdvanceFeedback.Core.SlipAngle
                 out double bandPeak, out double bandMean, out bool bandMatured, out bool bandYoung);
             result.Sliding = sliding;
             // THE SURFACE: ONLY WHAT THE GAME REPORTS, NEVER GUESSED (owner, 2026-11-22). Stepped every frame; a game
-            // that reports no surface stays in the starting bucket (the source reads Unknown). Every source - Plugin
-            // Internal and Custom - learns into this one bucket.
-            SurfaceBlend blend = _surface.Step(SurfaceBucketMap.FromGame(game, input.RawWheelSurface), dt);
+            // that reports no surface stays in the starting bucket (the source reads Unknown).
+            SurfaceBlend blend = StepSurface(game, f, input, dt);
             if (internalRaw.AllDeg.HasValue && ClampMath.IsFinite(absLat))
             {
                 double internalAll = internalRaw.AllDeg.Value;
@@ -262,32 +257,13 @@ namespace QAdvanceFeedback.Core.SlipAngle
                 _learner.SpeedBands.Observe(game, car, internalIdentity, blend.Active, speedKmh, internalAll, absLat,
                     learnAllowed && impact.LearnAllowed && !(sliding && !bandMatured),
                     impact.RetroInvalidate, dt);
-                // INTERNAL SOURCE ALWAYS LEARNS (docs\internal-source-learning-design.md 3.2): Plugin Internal
-                // learns this frame under its own key (Native or Fallback, whichever this frame's raw angle
-                // is) with the same gates, selected or not.
+                // Plugin Internal learns this frame under its own key (Native or Fallback, whichever this frame's raw
+                // angle is - docs\internal-source-learning-design.md 3.2).
                 var internalEarly = new SlipAngleEarlyContext(absLat, bandPeak, bandMean, bandMatured, bandYoung, sliding,
                     AxleMax(internalRaw), internalRaw.Tier == SourceNativeness.Native && SlipAngleSourceScale.IsRatio(input.Unit), bodyDeg);
                 _learner.Observe(game, car, internalIdentity, blend, internalRaw.FrontDeg ?? double.NaN, internalRaw.RearDeg ?? double.NaN,
                     internalAll, scaledLat, impact, learnAllowed, dt, internalEarly);
             }
-
-            // Custom learns only while selected, under its own key - its own speed bands included - into the shared
-            // classification.
-            if (r.UseCustomSource && raw.AllDeg.HasValue && ClampMath.IsFinite(absLat))
-            {
-                _learner.SpeedBands.TryReference(game, car, identity, bandSurface, speedKmh,
-                    out double cPeak, out double cMean, out bool cMatured, out bool cYoung);
-                _learner.SpeedBands.Observe(game, car, identity, blend.Active, speedKmh, raw.AllDeg.Value, absLat,
-                    learnAllowed && impact.LearnAllowed && !(sliding && !cMatured), impact.RetroInvalidate, dt);
-                _learner.Observe(game, car, identity, blend, raw.FrontDeg ?? double.NaN, raw.RearDeg ?? double.NaN, raw.AllDeg.Value,
-                    absLat * customScale, impact, learnAllowed, dt,
-                    new SlipAngleEarlyContext(absLat, cPeak, cMean, cMatured, cYoung, sliding, AxleMax(raw), false, bodyDeg));
-            }
-
-            // 4b. While Custom is selected, the reads the selected path makes for Plugin Internal's key (the
-            // getters mutate), so its state follows the same history. Only the active (Custom) pass publishes.
-            if (r.UseCustomSource)
-                ReadPluginInternal(game, car, internalIdentity, blend, gate, dt);
 
             // 5. Learned window, maturity, tier (data thread only - these getters mutate).
             SlipAngleWindow learned = _learner.Window(game, car, identity, blend);
@@ -316,7 +292,7 @@ namespace QAdvanceFeedback.Core.SlipAngle
             // that stops at full slip starts at full slip with the longer hold - owner, 2026-11-20).
             double driftStartNu;
             DriftSettings driftOverride = null;
-            if (!r.UseCustomSource && raw.Tier == SourceNativeness.Native && SlipAngleSourceScale.IsRatio(input.Unit))
+            if (raw.Tier == SourceNativeness.Native && SlipAngleSourceScale.IsRatio(input.Unit))
             {
                 driftStartNu = SlipAngleDriftStart.RatioNu(applied, input.RatioExceedsFullScale, out bool saturating);
                 if (saturating) driftOverride = SaturatingDrift();
@@ -348,7 +324,7 @@ namespace QAdvanceFeedback.Core.SlipAngle
             result.Front = raw.FrontDeg;
             result.Rear = raw.RearDeg;
             result.K = KeyedSlipAngleLearner.ClampK(k);
-            result.SpeedScale = r.UseCustomSource ? customScale : speedScale;
+            result.SpeedScale = speedScale;
             result.FrontLearnedBest = _learner.Window(game, car, identity, SlipAngleTarget.Front, blend).Best;
             result.RearLearnedBest = _learner.Window(game, car, identity, SlipAngleTarget.Rear, blend).Best;
             result.Tier = raw.Tier;
@@ -378,6 +354,7 @@ namespace QAdvanceFeedback.Core.SlipAngle
             result.SurfaceWeightLowGrip = blend.WLowGrip;
             result.SurfaceSource = blend.Source;
             result.Unit = input.Unit;
+            result.SourceState = input.SourceState;
             SlipAngleNativeSupport native = r.NativeSupport;
             if (native != null && game.Length > 0)
             {
@@ -390,59 +367,9 @@ namespace QAdvanceFeedback.Core.SlipAngle
                 result.NativeBlocked = native.IsBlocked(game);
             }
             result.SourceIdentity = identity;
-            result.SourceIsPluginInternal = !r.UseCustomSource;
+            result.SourceIsPluginInternal = true;   // the only source (Custom was removed, owner 2026-11-24)
             result.ManualGateReady = gateReady;
             return result;
-        }
-
-        /// <summary>
-        /// While Custom is the active source: the window / maturity / tier reads (these getters mutate -
-        /// re-prior, cold latch) and the manual-gate time the selected path gives Plugin Internal's key, in
-        /// the same order, and nothing that publishes. Its learner update already ran in step 4.
-        /// </summary>
-        private void ReadPluginInternal(string game, string car, string identity, SurfaceBlend blend,
-            SlipAngleGateVerdict gate, double dt)
-        {
-            _learner.Window(game, car, identity, blend);
-            _learner.Maturity(game, car, identity, blend);
-            _learner.Tier(game, car, identity, blend);
-            _manualGate.Observe(ColdStartTierResolver.Key(game, car, identity), dt, advancing: gate.LearnSpeedOk && !gate.Airborne);
-            _learner.Window(game, car, identity, SlipAngleTarget.Front, blend);
-            _learner.Window(game, car, identity, SlipAngleTarget.Rear, blend);
-            _learner.WindowQuality(game, car, identity, SlipAngleTarget.All, blend.Active);
-            _learner.PeakConfirmed(game, car, identity, SlipAngleTarget.All, blend.Active);
-        }
-
-        /// <summary>Custom mode: |α| per wheel clamped to 0-45°; an unreadable wheel is excluded from its
-        /// axle exactly like a kerb wheel (both missing → that axle unavailable; all → no data).</summary>
-        private static SlipAngleRawResult ComputeCustom(double?[] wheels, bool[] kerbs, double k, double wMax, double wMin)
-        {
-            var values = new double[4];
-            var excluded = new bool[4];
-            bool any = false;
-            for (int i = 0; i < 4; i++)
-            {
-                double? v = wheels != null && i < wheels.Length ? wheels[i] : null;
-                bool kerb = kerbs != null && i < kerbs.Length && kerbs[i];
-                if (v.HasValue && ClampMath.IsFinite(v.Value))
-                {
-                    values[i] = ClampMath.Clamp(Math.Abs(v.Value), 0.0, MaxCustomDeg);
-                    any = true;
-                }
-                else
-                {
-                    excluded[i] = true;
-                }
-                excluded[i] |= kerb;
-            }
-            if (!any) return SlipAngleRawResult.None;
-
-            var input = new SlipAngleInput(string.Empty, hasNativeSource: true,
-                nativeWheelDeg: new Corners(values[0], values[1], values[2], values[3]), isNative: true,
-                unit: SlipAngleUnit.Degrees, kerbWheels: excluded);
-            SlipAngleRawResult r = SlipAngleRawCalculator.Compute(input, null, true, k, wMax, wMin);
-            // A driver-defined source is never classified native/fallback (Lock/Slip parity): tier Unknown.
-            return new SlipAngleRawResult(r.FrontDeg, r.RearDeg, r.AllDeg, SourceNativeness.Unknown, r.WheelsDeg);
         }
 
         /// <summary>The configured drift settings with the saturating-ratio hold, rebuilt when they change.</summary>

@@ -169,6 +169,7 @@ namespace QAdvanceFeedback.Integration.ShakeIt
         public SourceNativeness IdentityTier => _plugin.CurrentSlipAngleIdentityTier;
         public SlipAngleWindow? LearnedWindow(string sourceIdentity) => _plugin.GetLearnedSlipAngleWindowForDisplay(sourceIdentity);
         public void SaveLiveSettings() => _plugin.ApplySettings();
+        public SlipAngleSourceStore NativeSources => _plugin.SlipAngleSources;
 
         // ---------------------------------------------------------------- IClutchHost
 

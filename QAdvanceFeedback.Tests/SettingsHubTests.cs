@@ -316,7 +316,8 @@ namespace QAdvanceFeedback.Tests
                 "SlipAngleKeyDataAuto", "SlipAngleKeyDataValues", "SlipAngleProjector", "IntegrateSlipAngle",
                 "LockShakeItLegacyAlgorithm", "LockShakeItSensibility", "LockShakeItLockOnly",
                 "SlipShakeItLegacyAlgorithm", "SlipShakeItMuteWhileLockActive",
-                "SlipAngleSourceUnit"   // the unit dropdown (owner, 2026-11-21)
+                "SlipAngleSourceUnit",  // the unit dropdown (owner, 2026-11-21)
+                "SlipAngleAngleSource"  // the angle source dropdown (owner, 2026-11-23)
             };
             for (int i = 0; i < expected.Length; i++)
                 Assert.Equal(i, (int)Enum.Parse(typeof(SettingField), expected[i]));
@@ -412,19 +413,6 @@ namespace QAdvanceFeedback.Tests
             hub.Set(SettingField.SlipAngleKeyDataValues, W(5, 9, 13), SettingsOrigin.ShakeItPanel);
             Assert.Equal(W(5, 9, 13), SettingsHub.Read(s, SettingField.SlipAngleKeyDataValues, "B"));
             Assert.Equal(W(4, 8, 12), SettingsHub.Read(s, SettingField.SlipAngleKeyDataValues, "A"));
-        }
-
-        [Fact]
-        public void Custom_source_keys_key_data_by_its_composite_identity()
-        {
-            var hub = NewHub(out var s);
-            s.SlipAngle.SourceMode = SourceMode.Custom;
-            s.SlipAngle.CustomSources = new WheelSourceSet { FrontLeft = "a", FrontRight = "b", RearLeft = "c", RearRight = "d" };
-            string custom = SettingsHub.SlipAngleIdentity(s.SlipAngle);
-            Assert.NotEqual(Core.SlipAngle.SlipAngleFrameProcessor.NativeIdentity, custom);
-            hub.Set(SettingField.SlipAngleKeyDataAuto, false, SettingsOrigin.ShakeItPanel);
-            Assert.False(s.SlipAngle.KeyData.GetAutoGenerate(custom));
-            Assert.True(s.SlipAngle.KeyData.GetAutoGenerate(Core.SlipAngle.SlipAngleFrameProcessor.NativeIdentity));
         }
 
         [Fact]

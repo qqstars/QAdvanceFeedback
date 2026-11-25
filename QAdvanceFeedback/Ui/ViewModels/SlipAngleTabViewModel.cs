@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Threading.Tasks;
 using QAdvanceFeedback.Core;
 using QAdvanceFeedback.Core.Localization;
@@ -42,94 +43,71 @@ namespace QAdvanceFeedback.Ui.ViewModels
         int KeyDataRevision { get; }
         /// <summary>Apply and save the live settings now (the key data controls' immediate path).</summary>
         void SaveLiveSettings();
-        bool EvaluatorAvailable { get; }
         SourceButtonMode ResolveSourceButton(ScriptType scriptType);
         /// <summary>Picker or script editor; null when cancelled.</summary>
         Task<SourceEdit> EditSourceAsync(SourceButtonMode mode, string text, ScriptType scriptType);
+        /// <summary>The per-wheel slip-angle source file (QAdvanceFeedback.SlipAngleSource.json in PluginsData\Common);
+        /// null while the plugin is not running (the telemetry source editor is then hidden).</summary>
+        SlipAngleSourceStore NativeSources { get; }
     }
 
-    /// <summary>One Custom wheel source row: text, script type toggle (P/J/N) and the Pick/Edit button.</summary>
-    public sealed class SlipAngleSourceRowViewModel : ObservableObject
+    /// <summary>One wheel of the Plugin Internal per-wheel telemetry source (owner, 2026-11-23): a plain SimHub
+    /// property name - no NCalc / JavaScript, the reader reads it as it is - with the property picker.</summary>
+    public sealed class SlipAngleTelemetryRowViewModel : ObservableObject
     {
         private readonly ISlipAngleTabHost _host;
         private readonly Action _edited;
         private string _text = string.Empty;
-        private ScriptType _scriptType;
-        private bool _loading;
+        private bool _readOnly, _loading;
 
-        internal SlipAngleSourceRowViewModel(ISlipAngleTabHost host, string label, Action edited)
+        internal SlipAngleTelemetryRowViewModel(ISlipAngleTabHost host, string label, Action edited)
         {
             _host = host;
             _edited = edited;
             Label = label;
-            CycleScriptTypeCommand = new RelayCommand(() => ScriptType = ScriptSyntax.Cycle(_scriptType));
-            ActionCommand = new RelayCommand(() => { _ = RunActionAsync(); });
+            PickCommand = new RelayCommand(() => { _ = PickAsync(); });
         }
 
         public string Label { get; }
-        public RelayCommand CycleScriptTypeCommand { get; }
-        public RelayCommand ActionCommand { get; }
+        public RelayCommand PickCommand { get; }
+        public string PickLabel => Strings.Get("Curve.PickButton");
 
         public string Text
         {
             get => _text;
-            set { if (SetProperty(ref _text, value ?? string.Empty) && !_loading) _edited(); }
+            set { if (SetProperty(ref _text, (value ?? string.Empty).Trim()) && !_loading) _edited(); }
         }
 
-        public ScriptType ScriptType
+        /// <summary>A computed row (several fields per wheel) is shown but only editable in the file.</summary>
+        public bool IsReadOnly
         {
-            get => _scriptType;
-            set
+            get => _readOnly;
+            private set
             {
-                if (!SetProperty(ref _scriptType, value)) return;
-                NotifyScriptType();
-                if (!_loading) _edited();
+                if (!SetProperty(ref _readOnly, value)) return;
+                OnPropertyChanged(nameof(IsEditable));
+                OnPropertyChanged(nameof(ShowPick));
             }
         }
 
-        public string ScriptLetter => _scriptType == ScriptType.JavaScript ? "J" : _scriptType == ScriptType.NCalc ? "N" : "P";
+        /// <summary>The box takes typing (the page disables, never half-disables, its inputs).</summary>
+        public bool IsEditable => !_readOnly;
 
-        public string ScriptTooltip => Strings.Get(_scriptType == ScriptType.JavaScript ? "Sources.ScriptType.TooltipJavaScript"
-            : _scriptType == ScriptType.NCalc ? "Sources.ScriptType.TooltipNCalc" : "Sources.ScriptType.TooltipPlain");
+        public bool ShowPick => !_readOnly && _host.ResolveSourceButton(ScriptType.Plain) == SourceButtonMode.Picker;
 
-        /// <summary>Hidden without the expression evaluator (a plain property is then the only syntax).</summary>
-        public bool ShowScriptType => _host.EvaluatorAvailable;
-
-        private SourceButtonMode Mode => _host.ResolveSourceButton(_scriptType);
-        public bool ShowAction => Mode != SourceButtonMode.None;
-        public string ActionLabel => Strings.Get(Mode == SourceButtonMode.Editor ? "Sources.EditScriptButton" : "Curve.PickButton");
-
-        internal void Load(string text, ScriptType scriptType)
+        internal void Load(string text, bool readOnly)
         {
             _loading = true;
-            try
-            {
-                Text = text;
-                ScriptType = _host.EvaluatorAvailable ? scriptType : ScriptType.Plain;
-            }
+            try { Text = text; IsReadOnly = readOnly; }
             finally { _loading = false; }
-            NotifyScriptType();
         }
 
-        private void NotifyScriptType()
-        {
-            OnPropertyChanged(nameof(ScriptLetter));
-            OnPropertyChanged(nameof(ScriptTooltip));
-            OnPropertyChanged(nameof(ShowAction));
-            OnPropertyChanged(nameof(ActionLabel));
-        }
-
-        private async Task RunActionAsync()
+        private async Task PickAsync()
         {
             try
             {
-                SourceButtonMode mode = Mode;
-                if (mode == SourceButtonMode.None) return;
-                SourceEdit result = await _host.EditSourceAsync(mode, _text, _scriptType);
-                if (result == null) return;
-                if (mode == SourceButtonMode.Picker && string.IsNullOrEmpty(result.Text)) return;
-                Text = result.Text;
-                if (mode == SourceButtonMode.Editor) ScriptType = result.ScriptType;
+                SourceEdit result = await _host.EditSourceAsync(SourceButtonMode.Picker, _text, ScriptType.Plain);
+                if (result != null && !string.IsNullOrEmpty(result.Text)) Text = result.Text;
             }
             catch (Exception e)
             {
@@ -168,7 +146,6 @@ namespace QAdvanceFeedback.Ui.ViewModels
         private bool _loading;
 
         // Draft (page Apply).
-        private SourceMode _sourceMode = SourceMode.Manual;
         private TriggerBy _triggerBy = TriggerBy.Any;
         private double? _brake, _throttle, _wMax, _wMin;
         private bool _pulseEnabled;
@@ -195,24 +172,36 @@ namespace QAdvanceFeedback.Ui.ViewModels
             _host = host ?? throw new ArgumentNullException(nameof(host));
             _ticker = ticker ?? throw new ArgumentNullException(nameof(ticker));
 
-            SourceModeChoices = new[]
-            {
-                new Choice<SourceMode>(SourceMode.Manual, Strings.Get("Sources.Mode.Manual")),
-                new Choice<SourceMode>(SourceMode.Custom, Strings.Get("Sources.Mode.Custom")),
-            };
             TriggerByChoices = new[]
             {
                 new Choice<TriggerBy>(TriggerBy.Brake, Strings.Get("SlipAngle.TriggerBy.Brake")),
                 new Choice<TriggerBy>(TriggerBy.Throttle, Strings.Get("SlipAngle.TriggerBy.Throttle")),
                 new Choice<TriggerBy>(TriggerBy.Any, Strings.Get("SlipAngle.TriggerBy.Any")),
             };
-            SourceRows = new[]
+            AngleSourceChoices = new[]
             {
-                new SlipAngleSourceRowViewModel(host, Strings.Get("Sources.FrontLeft"), OnSourceRowEdited),
-                new SlipAngleSourceRowViewModel(host, Strings.Get("Sources.FrontRight"), OnSourceRowEdited),
-                new SlipAngleSourceRowViewModel(host, Strings.Get("Sources.RearLeft"), OnSourceRowEdited),
-                new SlipAngleSourceRowViewModel(host, Strings.Get("Sources.RearRight"), OnSourceRowEdited),
+                new Choice<SlipAngleAngleSource>(SlipAngleAngleSource.PerWheelWhenAvailable, Strings.Get("SlipAngle.AngleSource.PerWheel")),
+                new Choice<SlipAngleAngleSource>(SlipAngleAngleSource.CarAngle, Strings.Get("SlipAngle.AngleSource.CarAngle")),
             };
+            TelemetryTypeChoices = new[]
+            {
+                new Choice<SlipAngleTelemetryType>(SlipAngleTelemetryType.None, Strings.Get("SlipAngle.Telemetry.Type.None")),
+                new Choice<SlipAngleTelemetryType>(SlipAngleTelemetryType.AngleOnly, Strings.Get("SlipAngle.Telemetry.Type.AngleOnly")),
+                new Choice<SlipAngleTelemetryType>(SlipAngleTelemetryType.LateralLongitudinal, Strings.Get("SlipAngle.Telemetry.Type.LateralLongitudinal")),
+            };
+            SourceUnitChoices = new[]
+            {
+                new Choice<SlipAngleUnitChoice>(SlipAngleUnitChoice.AutoDetect, Strings.Get("SlipAngle.Telemetry.Unit.AutoDetect")),
+                new Choice<SlipAngleUnitChoice>(SlipAngleUnitChoice.Degrees, Strings.Get("SlipAngle.Telemetry.Unit.Degrees")),
+                new Choice<SlipAngleUnitChoice>(SlipAngleUnitChoice.Radians, Strings.Get("SlipAngle.Telemetry.Unit.Radians")),
+                new Choice<SlipAngleUnitChoice>(SlipAngleUnitChoice.Ratio1, Strings.Get("SlipAngle.Telemetry.Unit.Ratio1")),
+                new Choice<SlipAngleUnitChoice>(SlipAngleUnitChoice.Ratio100, Strings.Get("SlipAngle.Telemetry.Unit.Ratio100")),
+            };
+            AngleRows = Rows(host, "SlipAngle.Telemetry.Row.Angle", "Long", OnTelemetryRowEdited);
+            LateralRows = Rows(host, "SlipAngle.Telemetry.Row.Lateral", "Short", OnTelemetryRowEdited);
+            LongitudinalRows = Rows(host, "SlipAngle.Telemetry.Row.Longitudinal", "Short", OnTelemetryRowEdited);
+            SurfaceRows = Rows(host, "SlipAngle.Telemetry.Row.Surface", "Long", OnTelemetryRowEdited);
+            RestoreTelemetryCommand = new RelayCommand(RestoreTelemetry, () => CanRestoreTelemetry);
 
             ProjectorSettings d = ProjectorSettings.CreateShippedDefault(ProjectionChannel.SlipAngle);
             string Fmt(string key, double v) => string.Format(Strings.Get(key), v.ToString("0.#", CultureInfo.InvariantCulture));
@@ -248,26 +237,348 @@ namespace QAdvanceFeedback.Ui.ViewModels
         public bool ShowNoData { get => _showNoData; private set => SetProperty(ref _showNoData, value); }
         public string NoDataText { get => _noDataText; private set => SetProperty(ref _noDataText, value); }
 
+        /// <summary>The surface whose learning key is in use, and where it came from (empty with no game).</summary>
+        public string SurfaceText { get => _surfaceText; private set => SetProperty(ref _surfaceText, value); }
+        private string _surfaceText = string.Empty;
+
+        /// <summary>What this surface's key starts from while it has no confirmed window (empty otherwise).</summary>
+        public string SurfaceBorrowText { get => _surfaceBorrowText; private set => SetProperty(ref _surfaceBorrowText, value); }
+        private string _surfaceBorrowText = string.Empty;
+
         // ---------------- 2. sources ----------------
 
-        public IReadOnlyList<Choice<SourceMode>> SourceModeChoices { get; }
-        public IReadOnlyList<SlipAngleSourceRowViewModel> SourceRows { get; }
+        // ---------------- 2a. General Source Type + the per-wheel telemetry source (owner, 2026-11-23) ----------------
+        // General Source Type comes first and is a draft setting (page Apply): "Always car angle" uses the car angle for
+        // every game, so everything under it is hidden. Plugin Internal is the only source (owner, 2026-11-24: the Custom
+        // source and the Current Source dropdown were removed). The telemetry source is the current game's row in
+        // QAdvanceFeedback.SlipAngleSource.json: Telemetry Type + the property boxes + Has Per-Wheel Surface Telemetry +
+        // Has Vertical Acceleration Data, edited as a draft and written to the file by the page's Apply
+        // (ApplyTelemetrySource); "Restore this game's source" writes the shipped row at once. Plugin page only.
 
-        public SourceMode SourceMode
+        public IReadOnlyList<Choice<SlipAngleAngleSource>> AngleSourceChoices { get; }
+
+        public SlipAngleAngleSource AngleSource
         {
-            get => _sourceMode;
+            get => _angleSource;
             set
             {
-                if (value != SourceMode.Custom) value = SourceMode.Manual;
-                if (!SetDraft(ref _sourceMode, value)) return;
-                OnPropertyChanged(nameof(IsCustom));
-                OnPropertyChanged(nameof(IsPluginInternal));
-                OnDraftSourceChanged();
+                if (value != SlipAngleAngleSource.CarAngle) value = SlipAngleAngleSource.PerWheelWhenAvailable;
+                if (!SetDraft(ref _angleSource, value)) return;
+                NotifyAngleSource();
+                if (_loading) return;
+                if (_commit != null) CommitNow();   // the pending edit belongs to the source it was typed for
+                else RefreshKeyData();              // identity, heading and the unit dropdown follow
+            }
+        }
+        private SlipAngleAngleSource _angleSource = SlipAngleAngleSource.PerWheelWhenAvailable;
+
+        private bool AlwaysCarAngle => _angleSource == SlipAngleAngleSource.CarAngle;
+
+        /// <summary>The per-wheel part (telemetry source, unit dropdown) shows only with "Per-wheel tyre angle when
+        /// available".</summary>
+        public bool ShowPerWheel => !AlwaysCarAngle;
+
+        public string AngleSourceNote => Strings.Get(AlwaysCarAngle
+            ? "SlipAngle.AngleSource.Note.CarAngle" : "SlipAngle.AngleSource.Note.PerWheel");
+
+        private void NotifyAngleSource()
+        {
+            OnPropertyChanged(nameof(ShowPerWheel));
+            OnPropertyChanged(nameof(AngleSourceNote));
+            RefreshTelemetryState();
+        }
+
+        // ---- Telemetry Type / Has Surface / the boxes ----
+
+        public IReadOnlyList<Choice<SlipAngleTelemetryType>> TelemetryTypeChoices { get; }
+
+        /// <summary>None: no boxes. Angle Only: the four angle boxes. Lateral + Longitudinal Velocity: the eight velocity boxes.</summary>
+        public SlipAngleTelemetryType TelemetryType
+        {
+            get => _telemetryType;
+            set
+            {
+                if (!SetProperty(ref _telemetryType, value)) return;
+                NotifyTelemetryShape();
+                OnTelemetryRowEdited();
+            }
+        }
+        private SlipAngleTelemetryType _telemetryType;
+
+        /// <summary>Per-Wheel Angle's Source Unit (owner, 2026-11-24) - the row's <c>unit</c> in the JSON, saved by Apply
+        /// with the rest of the source: Auto Detect (no field), Angle, Radian, Slip Ratio 0-1 or 0-100. Not shown for
+        /// Lateral + Longitudinal Velocity (always radians).</summary>
+        public IReadOnlyList<Choice<SlipAngleUnitChoice>> SourceUnitChoices { get; }
+
+        public SlipAngleUnitChoice SourceUnit
+        {
+            get => _sourceUnit;
+            set
+            {
+                if (!SetProperty(ref _sourceUnit, value)) return;
+                OnTelemetryRowEdited();
+            }
+        }
+        private SlipAngleUnitChoice _sourceUnit = SlipAngleUnitChoice.AutoDetect;
+
+        private static SlipAngleUnitChoice SourceUnitOf(string unit)
+        {
+            switch (SlipAngleSourceEdit.NormalUnit(unit))
+            {
+                case "degrees": return SlipAngleUnitChoice.Degrees;
+                case "radians": return SlipAngleUnitChoice.Radians;
+                case "ratio1": return SlipAngleUnitChoice.Ratio1;
+                case "ratio100": return SlipAngleUnitChoice.Ratio100;
+                default: return SlipAngleUnitChoice.AutoDetect;
             }
         }
 
-        public bool IsCustom => _sourceMode == SourceMode.Custom;
-        public bool IsPluginInternal => !IsCustom;
+        private static string JsonUnit(SlipAngleUnitChoice c)
+        {
+            switch (c)
+            {
+                case SlipAngleUnitChoice.Degrees: return "degrees";
+                case SlipAngleUnitChoice.Radians: return "radians";
+                case SlipAngleUnitChoice.Ratio1: return "ratio1";
+                case SlipAngleUnitChoice.Ratio100: return "ratio100";
+                default: return null;
+            }
+        }
+
+        /// <summary>Shows the four surface boxes.</summary>
+        public bool HasSurface
+        {
+            get => _hasSurface;
+            set
+            {
+                if (!SetProperty(ref _hasSurface, value)) return;
+                NotifyTelemetryShape();
+                OnTelemetryRowEdited();
+            }
+        }
+        private bool _hasSurface;
+
+        /// <summary>"Has Vertical Acceleration Data?" - the row's <c>verticalAcceleration</c>: SimHub's vertical
+        /// acceleration is real for this game, so bumps and hops pause the learning.</summary>
+        public bool HasVerticalAcceleration
+        {
+            get => _hasVerticalAcceleration;
+            set
+            {
+                if (!SetProperty(ref _hasVerticalAcceleration, value)) return;
+                OnTelemetryRowEdited();
+            }
+        }
+        private bool _hasVerticalAcceleration;
+
+        public IReadOnlyList<SlipAngleTelemetryRowViewModel> AngleRows { get; }
+        public IReadOnlyList<SlipAngleTelemetryRowViewModel> LateralRows { get; }
+        public IReadOnlyList<SlipAngleTelemetryRowViewModel> LongitudinalRows { get; }
+        public IReadOnlyList<SlipAngleTelemetryRowViewModel> SurfaceRows { get; }
+
+        public bool ShowAngleRows => _telemetryType == SlipAngleTelemetryType.AngleOnly;
+        public bool ShowVelocityRows => _telemetryType == SlipAngleTelemetryType.LateralLongitudinal;
+        public bool ShowSurfaceRows => _hasSurface;
+
+        private void NotifyTelemetryShape()
+        {
+            OnPropertyChanged(nameof(ShowAngleRows));
+            OnPropertyChanged(nameof(ShowVelocityRows));
+            OnPropertyChanged(nameof(ShowSurfaceRows));
+        }
+
+        private static IReadOnlyList<SlipAngleTelemetryRowViewModel> Rows(ISlipAngleTabHost host, string formatKey, string wheelForm, Action edited) =>
+            new[] { "FL", "FR", "RL", "RR" }.Select(w => new SlipAngleTelemetryRowViewModel(host,
+                string.Format(Strings.Get(formatKey), Strings.Get("SlipAngle.Telemetry.Wheel." + wheelForm + "." + w)), edited)).ToArray();
+
+        public RelayCommand RestoreTelemetryCommand { get; }
+
+        private string _telemetryGame = string.Empty;
+        private bool _telemetryEdited, _telemetryLoading;
+        private string _telemetryStatus = string.Empty, _telemetryHeader = string.Empty, _telemetryMessage = string.Empty;
+        private bool _showTelemetry, _showTelemetryRows, _showTelemetryRestore, _showTelemetryTangent;
+
+        /// <summary>The game the rows were loaded for (and are saved to).</summary>
+        public string TelemetryGameId => _telemetryGame;
+
+        /// <summary>The telemetry block shows (Plugin Internal, per-wheel, the plugin running).</summary>
+        public bool ShowTelemetry { get => _showTelemetry; private set => SetProperty(ref _showTelemetry, value); }
+        public string TelemetryHeader { get => _telemetryHeader; private set => SetProperty(ref _telemetryHeader, value); }
+        /// <summary>The grey line: no game, no source for this game (Telemetry Type None), or the file is not valid.</summary>
+        public string TelemetryMessage { get => _telemetryMessage; private set => SetProperty(ref _telemetryMessage, value); }
+        /// <summary>The editor (Telemetry Type, Has Surface, the boxes) shows: a game running and the file valid.</summary>
+        public bool ShowTelemetryRows { get => _showTelemetryRows; private set => SetProperty(ref _showTelemetryRows, value); }
+        /// <summary>"Restore this game's source" shows only for a game the plugin ships a row for (owner, 2026-11-24).</summary>
+        public bool ShowTelemetryRestore { get => _showTelemetryRestore; private set => SetProperty(ref _showTelemetryRestore, value); }
+
+        /// <summary>The restore is enabled: the file's row (or the typed edit) is not the shipped one.</summary>
+        public bool CanRestoreTelemetry
+        {
+            get => _canRestoreTelemetry;
+            private set { if (SetProperty(ref _canRestoreTelemetry, value)) RestoreTelemetryCommand?.RaiseCanExecuteChanged(); }
+        }
+        private bool _canRestoreTelemetry;
+        /// <summary>The row's angle field is a tangent (LFS): said so under the angle boxes.</summary>
+        public bool ShowTelemetryTangent { get => _showTelemetryTangent; private set => SetProperty(ref _showTelemetryTangent, value); }
+        /// <summary>The matched row's note when the row is shared or a pattern (which games it matches); empty otherwise.</summary>
+        public string TelemetryRowNote { get => _telemetryRowNote; private set => SetProperty(ref _telemetryRowNote, value); }
+        private string _telemetryRowNote = string.Empty;
+
+        /// <summary>The italic line under the rows: a refused or failed save, or what the restore did.</summary>
+        public string TelemetryStatus { get => _telemetryStatus; private set => SetProperty(ref _telemetryStatus, value); }
+
+        /// <summary>The editor holds an edit the page's Apply has not written yet - the page is dirty.</summary>
+        public bool HasPendingTelemetry => _telemetryEdited;
+
+        /// <summary>Raised when <see cref="HasPendingTelemetry"/> may have changed.</summary>
+        public event Action TelemetryPendingChanged;
+
+        /// <summary>
+        /// The page's Apply: writes the pending editor to the file for <see cref="TelemetryGameId"/>
+        /// (<see cref="SlipAngleSourceStore.Save(string, SlipAngleSourceEdit, bool)"/>). A group shown with an empty box is
+        /// refused (the editor stays, with a red line; the rest of the Apply goes through). Nothing pending: nothing written.
+        /// </summary>
+        public SlipAngleSourceSaveResult ApplyTelemetrySource()
+        {
+            SlipAngleSourceStore store = _host.NativeSources;
+            if (!HasPendingTelemetry || store == null) return SlipAngleSourceSaveResult.Unchanged;
+            SlipAngleSourceSaveResult result = store.Save(_telemetryGame, CurrentEdit());
+            if (result == SlipAngleSourceSaveResult.Incomplete)
+            {
+                TelemetryStatus = Strings.Get("SlipAngle.Telemetry.Incomplete");
+                return result;
+            }
+            if (result == SlipAngleSourceSaveResult.Failed || result == SlipAngleSourceSaveResult.Unavailable)
+            {
+                RefreshTelemetryState();
+                return result;
+            }
+            SetTelemetryPending(edited: false);
+            LoadTelemetryRows(_telemetryGame);
+            RefreshKeyData();   // the game may now read (or no longer read) its tyre field
+            return result;
+        }
+
+        /// <summary>The editor as a save request.</summary>
+        public SlipAngleSourceEdit CurrentEdit() => new SlipAngleSourceEdit
+        {
+            Type = _telemetryType,
+            Unit = _telemetryType == SlipAngleTelemetryType.AngleOnly ? JsonUnit(_sourceUnit) : null,
+            Angle = AngleRows.Select(r => r.Text).ToArray(),
+            Lateral = LateralRows.Select(r => r.Text).ToArray(),
+            Longitudinal = LongitudinalRows.Select(r => r.Text).ToArray(),
+            HasSurface = _hasSurface,
+            Surface = SurfaceRows.Select(r => r.Text).ToArray(),
+            HasVerticalAcceleration = _hasVerticalAcceleration,
+        };
+
+        private void OnTelemetryRowEdited()
+        {
+            if (_telemetryLoading) return;
+            TelemetryStatus = string.Empty;
+            SetTelemetryPending(edited: true);
+            RefreshTelemetryState();
+            RaiseEdited();
+        }
+
+        private void SetTelemetryPending(bool edited)
+        {
+            bool before = HasPendingTelemetry;
+            _telemetryEdited = edited;
+            if (before != HasPendingTelemetry || edited) TelemetryPendingChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// "Restore this game's source" (owner, 2026-11-24): the shipped row goes into the file AT ONCE - no Apply, like the
+        /// page's other restores - and a typed edit is dropped. The editor then shows what the file holds.
+        /// </summary>
+        private void RestoreTelemetry()
+        {
+            SlipAngleSourceStore store = _host.NativeSources;
+            if (store == null || !store.HasCompiledDefault(_telemetryGame)) return;
+            SlipAngleSourceSaveResult result = store.Save(_telemetryGame, CurrentEdit(), restoreCompiled: true);
+            if (result == SlipAngleSourceSaveResult.Failed || result == SlipAngleSourceSaveResult.Unavailable)
+            {
+                RefreshTelemetryState();
+                TelemetryStatus = Strings.Get("SlipAngle.Telemetry.RestoreFailed");
+                return;
+            }
+            SetTelemetryPending(edited: false);
+            LoadTelemetryRows(_telemetryGame);
+            TelemetryStatus = Strings.Get("SlipAngle.Telemetry.Restored");
+            RefreshKeyData();   // the game may now read (or no longer read) its tyre field
+        }
+
+        /// <summary>Loads the editor for the running game unless it holds an unapplied edit for the game it was
+        /// typed for (that edit is saved to that game).</summary>
+        private void ReloadTelemetryIfClean()
+        {
+            if (!HasPendingTelemetry) LoadTelemetryRows(_host.CurrentGameId ?? string.Empty);
+            else RefreshTelemetryState();
+        }
+
+        private void LoadTelemetryRows(string gameId)
+        {
+            _telemetryGame = gameId ?? string.Empty;
+            TelemetryStatus = string.Empty;
+            FillTelemetryRows(_host.NativeSources?.Current(_telemetryGame));
+            RefreshTelemetryState();
+        }
+
+        /// <summary>Telemetry Type, Has Surface and every box from a row (null: a game with no row - None, no surface).</summary>
+        private void FillTelemetryRows(SlipAngleSourceGame row)
+        {
+            SlipAngleSourceEdit e = SlipAngleSourceEdit.From(row);
+            _telemetryLoading = true;
+            try
+            {
+                TelemetryType = e.Type;
+                SourceUnit = SourceUnitOf(e.Unit);
+                HasSurface = e.HasSurface;
+                HasVerticalAcceleration = e.HasVerticalAcceleration;
+                Fill(AngleRows, e.Angle);
+                Fill(LateralRows, e.Lateral);
+                Fill(LongitudinalRows, e.Longitudinal);
+                Fill(SurfaceRows, e.Surface);
+            }
+            finally { _telemetryLoading = false; }
+        }
+
+        private static void Fill(IReadOnlyList<SlipAngleTelemetryRowViewModel> rows, IReadOnlyList<string> texts)
+        {
+            for (int i = 0; i < rows.Count; i++) rows[i].Load(texts != null && i < texts.Count ? texts[i] : string.Empty, false);
+        }
+
+        private void RefreshTelemetryState()
+        {
+            SlipAngleSourceStore store = _host.NativeSources;
+            ShowTelemetry = ShowPerWheel && store != null;
+            bool hasGame = !string.IsNullOrEmpty(_telemetryGame);
+            TelemetryHeader = string.Format(Strings.Get("SlipAngle.Telemetry.Header"), hasGame ? _telemetryGame : "-");
+            TelemetryRowNote = string.Empty;
+            if (store == null || !hasGame || store.IsBroken)
+            {
+                TelemetryMessage = store == null ? string.Empty
+                    : !hasGame ? Strings.Get("SlipAngle.Telemetry.NoGame")
+                    : string.Format(Strings.Get("SlipAngle.Telemetry.Broken"), store.BrokenReason);
+                ShowTelemetryRows = ShowTelemetryRestore = ShowTelemetryTangent = CanRestoreTelemetry = false;
+                return;
+            }
+            SlipAngleSourceGame row = store.Current(_telemetryGame);
+            // A row shared by several games, or matched by a wildcard / regex, says so - with its note, which names the
+            // games a pattern matches (e.g. "Matches F12023 through F12099").
+            if (row != null && !row.IsEmpty && !string.Equals(row.Id, _telemetryGame, StringComparison.OrdinalIgnoreCase))
+            {
+                TelemetryHeader = string.Format(Strings.Get("SlipAngle.Telemetry.HeaderFrom"), _telemetryGame, row.Id);
+                TelemetryRowNote = row.Note ?? string.Empty;
+            }
+            ShowTelemetryRows = true;
+            TelemetryMessage = _telemetryType == SlipAngleTelemetryType.None ? Strings.Get("SlipAngle.Telemetry.None") : string.Empty;
+            ShowTelemetryTangent = ShowAngleRows && row != null && row.HasSlipAngle
+                && string.Equals(row.Transform, "atanOfTangent", StringComparison.OrdinalIgnoreCase);
+            ShowTelemetryRestore = store.HasCompiledDefault(_telemetryGame);
+            CanRestoreTelemetry = ShowTelemetryRestore && (store.CanRestore(_telemetryGame) || _telemetryEdited);
+        }
 
         // ---------------- 3. trigger ----------------
 
@@ -416,9 +727,9 @@ namespace QAdvanceFeedback.Ui.ViewModels
             new RelayCommand(() => _host.Hub?.Set(SettingField.SlipAngleSourceUnit, null, SettingsOrigin.PluginPage)));
         private RelayCommand _resetUnitCommand;
 
-        private void RefreshUnitChoice(SourceMode mode, string gameId, SlipAngleSourceUnits units)
+        private void RefreshUnitChoice(string gameId, SlipAngleSourceUnits units)
         {
-            ShowUnitChoice = SettingsHub.ShowSlipAngleUnitChoice(mode, gameId, units);
+            ShowUnitChoice = SettingsHub.ShowSlipAngleUnitChoice(gameId, units, _angleSource);
             ShowUnitReset = ShowUnitChoice && !SettingsHub.SlipAngleUnitIsDefault(gameId, units);
             IReadOnlyList<Choice<SlipAngleUnitChoice>> options = SlipAngleUnitChoices.For(gameId, units);
             SlipAngleUnitChoice? selected = SettingsHub.SlipAngleSelectedUnit(gameId, units);
@@ -489,10 +800,13 @@ namespace QAdvanceFeedback.Ui.ViewModels
         {
             _refresh?.Dispose();
             RefreshLive();
+            ReloadTelemetryIfClean();
             RefreshKeyData();
             _refresh = _ticker.Every(RefreshInterval, () =>
             {
                 RefreshLive();
+                if (!string.Equals(_host.CurrentGameId ?? string.Empty, _telemetryGame, StringComparison.OrdinalIgnoreCase))
+                    ReloadTelemetryIfClean();   // the running game changed: show its source
                 if (_auto || _host.KeyDataRevision != _lastRevision) RefreshKeyData();
             });
         }
@@ -514,12 +828,7 @@ namespace QAdvanceFeedback.Ui.ViewModels
             _loading = true;
             try
             {
-                SourceMode = s.SourceMode;
-                WheelSourceSet c = s.CustomSources ?? new WheelSourceSet();
-                SourceRows[0].Load(c.FrontLeft, c.ScriptTypeFrontLeft);
-                SourceRows[1].Load(c.FrontRight, c.ScriptTypeFrontRight);
-                SourceRows[2].Load(c.RearLeft, c.ScriptTypeRearLeft);
-                SourceRows[3].Load(c.RearRight, c.ScriptTypeRearRight);
+                AngleSource = s.AngleSource;
                 SlipAngleGateSettings g = s.Gate ?? new SlipAngleGateSettings();
                 LoadGate(g);
                 WeightMax = s.WeightMax;
@@ -544,6 +853,7 @@ namespace QAdvanceFeedback.Ui.ViewModels
                 Projector.Load(s.Projector);
             }
             finally { _loading = false; }
+            ReloadTelemetryIfClean();
             RefreshKeyData();   // the draft source may have moved
             RefreshGraph();
         }
@@ -553,13 +863,7 @@ namespace QAdvanceFeedback.Ui.ViewModels
         public void SaveTo(SlipAngleChannelSettings target)
         {
             if (target == null) return;
-            target.SourceMode = _sourceMode;
-            var c = target.CustomSources ?? new WheelSourceSet();
-            c.FrontLeft = SourceRows[0].Text; c.ScriptTypeFrontLeft = SourceRows[0].ScriptType;
-            c.FrontRight = SourceRows[1].Text; c.ScriptTypeFrontRight = SourceRows[1].ScriptType;
-            c.RearLeft = SourceRows[2].Text; c.ScriptTypeRearLeft = SourceRows[2].ScriptType;
-            c.RearRight = SourceRows[3].Text; c.ScriptTypeRearRight = SourceRows[3].ScriptType;
-            target.CustomSources = c;
+            target.AngleSource = _angleSource;
 
             SlipAngleGateSettings g = target.Gate ?? (target.Gate = new SlipAngleGateSettings());
             g.TriggerBy = _triggerBy;
@@ -610,9 +914,14 @@ namespace QAdvanceFeedback.Ui.ViewModels
                         case SettingField.SlipAngleTriggerBy: if (live.Gate != null) TriggerBy = live.Gate.TriggerBy; break;
                         case SettingField.SlipAngleBrakeThreshold: if (live.Gate != null) BrakeThreshold = live.Gate.BrakeThreshold; break;
                         case SettingField.SlipAngleThrottleThreshold: if (live.Gate != null) ThrottleThreshold = live.Gate.ThrottleThreshold; break;
+                        case SettingField.SlipAngleAngleSource: AngleSource = live.AngleSource; keyData = true; break;
+                        case SettingField.SourceAvailability:
+                            // Also raised when the source file changed (a save, a hand edit picked up on a game change).
+                            ReloadTelemetryIfClean();
+                            keyData = true;
+                            break;
                         case SettingField.SlipAngleKeyDataAuto:
                         case SettingField.SlipAngleKeyDataValues:
-                        case SettingField.SourceAvailability:
                         case SettingField.SlipAngleSourceUnit:
                             keyData = true;
                             break;
@@ -631,33 +940,13 @@ namespace QAdvanceFeedback.Ui.ViewModels
         // ================= key data =================
 
         /// <summary>
-        /// The source identity the key data is read and written for: the DRAFT source, exactly like the Lock
-        /// tab's <c>_currentLockSource</c> (ruling R35) - switching the Source combo, or editing a Custom
-        /// row, shows that source's key data at once, before Apply. Plugin Internal keys by the identity
-        /// tier (Native / Fallback identity; the last in-session tier for the current game, kept across
-        /// pause / menu - <see cref="SlipAngleIdentityTier"/>), Custom by its composite identity (<see cref="SettingsHub.SlipAngleIdentity"/>).
+        /// The source identity the key data is read and written for: the DRAFT General Source Type, exactly like the Lock
+        /// tab's <c>_currentLockSource</c> (ruling R35). Plugin Internal keys by the identity tier (Native / Fallback
+        /// identity; the last in-session tier for the current game, kept across pause / menu - <see cref="SlipAngleIdentityTier"/>).
         /// </summary>
-        private string DraftIdentity()
-        {
-            if (_sourceMode != SourceMode.Custom)
-                return SettingsHub.SlipAngleIdentity(null, _host.IdentityTier, _host.CurrentGameId, _host.Settings?.SlipAngle?.SourceUnits);
-            var draft = new SlipAngleChannelSettings { SourceMode = SourceMode.Custom, CustomSources = DraftSources() };
-            return SettingsHub.SlipAngleIdentity(draft, _host.IdentityTier);
-        }
-
-        private WheelSourceSet DraftSources() => new WheelSourceSet
-        {
-            FrontLeft = SourceRows[0].Text, ScriptTypeFrontLeft = SourceRows[0].ScriptType,
-            FrontRight = SourceRows[1].Text, ScriptTypeFrontRight = SourceRows[1].ScriptType,
-            RearLeft = SourceRows[2].Text, ScriptTypeRearLeft = SourceRows[2].ScriptType,
-            RearRight = SourceRows[3].Text, ScriptTypeRearRight = SourceRows[3].ScriptType,
-        };
-
-        private void OnSourceRowEdited()
-        {
-            RaiseEdited();
-            OnDraftSourceChanged();
-        }
+        private string DraftIdentity() =>
+            SettingsHub.SlipAngleIdentity(new SlipAngleChannelSettings { AngleSource = _angleSource, SourceUnits = null },
+                _host.IdentityTier, _host.CurrentGameId, _host.Settings?.SlipAngle?.SourceUnits);
 
         /// <summary>The draft source moved (the Lock tab's OnSourceConfigurationChanged): a pending edit
         /// lands in the slot it was typed for, then the new source's key data is shown.</summary>
@@ -686,8 +975,8 @@ namespace QAdvanceFeedback.Ui.ViewModels
 
             string identity = DraftIdentity();
             _shownIdentity = identity;
-            KeyDataHeader = Strings.Get(SettingsHub.SlipAngleKeyDataHeaderKey(_sourceMode, _host.IdentityTier, _host.CurrentGameId, live.SourceUnits));
-            RefreshUnitChoice(_sourceMode, _host.CurrentGameId, live.SourceUnits);
+            KeyDataHeader = Strings.Get(SettingsHub.SlipAngleKeyDataHeaderKey(_host.IdentityTier, _host.CurrentGameId, live.SourceUnits, _angleSource));
+            RefreshUnitChoice(_host.CurrentGameId, live.SourceUnits);
             string game = _host.CurrentGameId;
             bool auto = live.KeyData.GetAutoGenerate(identity);
             bool perGame = live.KeyData.GetPerGame(identity);
@@ -713,18 +1002,10 @@ namespace QAdvanceFeedback.Ui.ViewModels
             OnPropertyChanged(nameof(ShowPerGame));
             UpdateStartDisplay();
             ValuesEditable = !auto;
-            // Custom has no shipped default to restore to (the Lock tab's CanRestoreKeyDataDefaults, draft mode).
-            ShowReset = _sourceMode != SourceMode.Custom && !live.KeyData.IsDefault(identity);
+            ShowReset = !live.KeyData.IsDefault(identity);
 
-            // The Lock tab's hint rule (RefreshKeyDataChannel: knownSource || manualLive): never under Auto,
-            // and for a source with no shipped default (Custom) only once the manual warm-up gate is ready
-            // for THIS source - before that the learned value is still the cold-start blend. Plugin
-            // Internal is a shipped source (5/8/10).
-            // The gate is live state of the APPLIED source: it counts for this one only when they match.
-            bool knownSource = _sourceMode != SourceMode.Custom;
-            bool matches = string.Equals(status.SourceIdentity, identity, StringComparison.Ordinal);
-            bool manualLive = matches && status.ManualGateReady;
-            ShowLearnedHints = !auto && (knownSource || manualLive);
+            // The Lock tab's hint rule for a shipped source (Plugin Internal: 5/8/10): never under Auto.
+            ShowLearnedHints = !auto;
             MinLearnedText = Learned(learned.HasValue, learned?.Min ?? 0.0);
             BestLearnedText = Learned(learned.HasValue, learned?.Best ?? 0.0);
             MaxLearnedText = Learned(learned.HasValue, learned?.Max ?? 0.0);
@@ -796,6 +1077,8 @@ namespace QAdvanceFeedback.Ui.ViewModels
             ShowNoData = t.ShowNoData;
             NoDataText = t.NoDataText;
             LearningStatus = t.LearningStatus;
+            SurfaceText = t.SurfaceText;
+            SurfaceBorrowText = t.SurfaceBorrowText;
         }
 
         /// <summary>Shown only while a game runs and the pipeline is healthy (a fault is the Health panel's).</summary>
@@ -868,13 +1151,62 @@ namespace QAdvanceFeedback.Ui.ViewModels
         public SlipAngleLiveText(SlipAngleStatus status)
         {
             SlipAngleStatus s = status ?? SlipAngleStatus.None;
-            ShowFallbackWarning = s.ShowFallbackWarning;
-            FallbackWarningText = s.IsRatioSource ? Strings.Get("Source.RatioWarning.SlipAngle")
-                : s.IsCarAngleFallback ? Strings.Get("Source.FallbackWarning.SlipAngle") : string.Empty;
+            FallbackWarningText = WarningText(s);
+            ShowFallbackWarning = FallbackWarningText.Length > 0;
             ShowNoData = s.NoSlipAngleData;
             NoDataText = s.NoSlipAngleData ? Strings.Get("SlipAngle.Status.NoData") : string.Empty;
             LearningStatus = SlipAngleTabViewModel.StatusText(s);
+            SurfaceText = SurfaceLine(s);
+            SurfaceBorrowText = BorrowLine(s);
         }
+
+        /// <summary>
+        /// THE ORANGE LINE (owner, 2026-11-24): what is APPLIED for the projection, not what the game's source defines -
+        /// a grip ratio turned into an angle, or, while the car angle is used, why: Global Source Type Mode is "Always car
+        /// angle", "Source Type for this game" is Car Angle, the game has no per-wheel source, its source is still being
+        /// checked (driving and cornering promote it), or its properties are not reported.
+        /// </summary>
+        internal static string WarningText(SlipAngleStatus s)
+        {
+            if (s == null) return string.Empty;
+            if (s.IsRatioSource) return Strings.Get("Source.RatioWarning.SlipAngle");
+            if (!s.IsCarAngleFallback) return string.Empty;
+            switch (s.SourceState)
+            {
+                case SlipAngleSourceState.CarAngleAlways: return Strings.Get("Source.FallbackWarning.SlipAngle.Always");
+                case SlipAngleSourceState.CarAngleForGame: return Strings.Get("Source.FallbackWarning.SlipAngle.ForGame");
+                case SlipAngleSourceState.Checking:
+                case SlipAngleSourceState.Native:   // promoted this frame, the debounced tier not yet
+                    return Strings.Get("Source.FallbackWarning.SlipAngle.Checking");
+                case SlipAngleSourceState.NotReported: return Strings.Get("Source.FallbackWarning.SlipAngle.NotReported");
+                default: return Strings.Get("Source.FallbackWarning.SlipAngle");
+            }
+        }
+
+        /// <summary>
+        /// THE SURFACE LINE (owner, 2026-11-23): which surface's learning key is in use, and where the surface came
+        /// from - so a window or LED that moves when the surface changes says why. Empty with no game or after a fault.
+        /// </summary>
+        internal static string SurfaceLine(SlipAngleStatus s)
+        {
+            if (s == null || s.Faulted || string.IsNullOrEmpty(s.GameId)) return string.Empty;
+            string name = Strings.Get("SlipAngle.Surface." + s.Surface);
+            string line = string.Format(Strings.Get("SlipAngle.Surface.Line"), name, Strings.Get("SlipAngle.Surface.Source." + s.SurfaceSource));
+            if (s.SurfaceWeight < 0.995)
+                line += " - " + string.Format(Strings.Get("SlipAngle.Surface.Changing"),
+                    Math.Round(s.SurfaceWeight * 100.0).ToString("0", CultureInfo.InvariantCulture));
+            return line;
+        }
+
+        /// <summary>While this surface's key has no confirmed window: what it starts from (the borrowing tier).</summary>
+        internal static string BorrowLine(SlipAngleStatus s)
+        {
+            if (s == null || s.Faulted || string.IsNullOrEmpty(s.GameId) || s.PeakConfirmed || s.NoSlipAngleData) return string.Empty;
+            return Strings.Get("SlipAngle.Surface.Borrow." + s.BorrowingTier);
+        }
+
+        public string SurfaceText { get; }
+        public string SurfaceBorrowText { get; }
 
         public bool ShowFallbackWarning { get; }
         public string FallbackWarningText { get; }

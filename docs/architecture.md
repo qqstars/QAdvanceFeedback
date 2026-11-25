@@ -60,8 +60,9 @@ genuine zero is never confused with "does not support this channel" - see
 **Must NOT depend on:** nothing above it. It may reference SimHub/GameReaderCommon types (it is the
 one place allowed to), but Layer 3 and above never reference SimHub types back.
 
-**Slip Angle inputs:** `SlipAngleRawSources.cs` is the per-game raw-data table (paths, wheel
-order, unit, transform) and `SlipAngleRawSourceReader` reads it through a value-lookup delegate, so the
+**Slip Angle inputs:** `SlipAngleRawSources.cs` holds the per-game raw-data table (paths, unit, transform),
+built ONLY from `QAdvanceFeedback.SlipAngleSource.json` (1.2.1, `SlipAngleSourceFile.cs`; see "Sources" in the
+Slip Angle section), and `SlipAngleRawSourceReader` reads it through a value-lookup delegate, so the
 table itself is SimHub-free and link-compiled into the tests. `SimHubTelemetryAdapter` adds the body
 inputs Slip Angle needs to `ITelemetryFrame` (forward local velocity, yaw rate, `IsAirborne` from
 `IsFlying`, `WheelsOnKerbs`, vertical G, a surface-grip hint).
@@ -1026,9 +1027,58 @@ again (`Core\Health\HealthRecoveryTracker`), so a one-off fault does not leave a
 #### Sources: native, computed, fallback, custom
 
 - **Plugin Internal, native tier.** `SlipAngleRawSources.cs` (project root, Layer 2 but SimHub-free and
-  link-compiled into the tests) is a per-game table: four raw-data paths under
-  `DataCorePlugin.GameRawData.`, the wheel-order remap, the unit and the transform. It lists only games
-  where the spike found the field:
+  link-compiled into the tests) is a per-game table: four full SimHub property names (FL, FR, RL, RR, any
+  raw-index remap already applied), the unit and the transform.
+  **Since 1.2.1 the table has no built-in rows: it is built only from `QAdvanceFeedback.SlipAngleSource.json`**
+  (`SlipAngleSourceFile.cs`):
+  - The solution root's copy is an embedded resource (`SlipAngleSourceCompiled`). It seeds
+    `PluginsData\Common\QAdvanceFeedback.SlipAngleSource.json` when that file is missing, and is what the page's
+    Restore default goes back to.
+  - `SlipAngleSourceStore` loads the Common file at Init and again when the running game changes (a hand edit
+    applies without a SimHub restart; a deleted file is created again), and puts the parsed
+    `SlipAngleSourceCatalog` in use (`SlipAngleRawSourceTable.Use`, a volatile swap). The reader drops its
+    per-game missing/failed verdicts when the table revision changes.
+  - A file that does not parse, or has an incomplete row, is refused whole and never overwritten: the compiled
+    copy is used for the session, Health (`SlipAngleSourceFile`) says why, and the page's editor is off.
+  - `id` names the games: `Game1|Game2`, wildcards `*` / `?`, or `regex:...` to the end of the id
+    (`SlipAngleGameIdPattern`); an exact name wins over a pattern, else the first matching row; an exact row with
+    nothing else is "no source". On save, a game whose settings equal another row's joins that row's id, and a game
+    a pattern covers with the same settings gets no row (`SlipAngleSourceStore.Place`).
+  - Surface: `surfaceValues` translates the row's `surface` values (sealed / loose / lowGrip) in the reader
+    (`SlipAngleInput.WheelSurface`); without it, the processor uses SimHub's `WheelOnLooseSurface*` flag
+    (`SurfaceBucketMap.FromSimHubLoose`: loose at 3+ wheels, tarmac at 0-1 only after loose was seen this session);
+    else Unknown, held.
+  - Each row: `id`, `slipAngle` (four names), optional `unit` (degrees / radians / ratio1 /
+    ratio100; absent = detected), `transform` (direct / atanOfTangent / atan2PatchVelocity) with `longitudinal`,
+    `surface`, `provisional`, `verticalAcceleration`, `note`. Unknown fields are kept on save. The shipped units are
+    the ones the code stated before 1.2.1: LFS, Drift21, rF2, LMU, the NASCAR family radians; KartKraft degrees; the
+    Forza games ratio1. NOTHING GAME-SPECIFIC IS HARD-CODED any more (owner, 2026-11-24): the config's unit lists
+    (`SlipAngleSourceUnits`) start empty (the KartKraft / Forza defaults are gone - `SettingsHub.SlipAngleHardCodedUnit`
+    is the row's `unit`), and SimHub's vertical acceleration is read only for a row with `verticalAcceleration: true`
+    (Rennsport, and an `IRacing` row holding only that flag) - `SlipAngleRawSourceTable.ReportsVerticalAcceleration`.
+  - The settings page's Slip Angle tab edits the current game's row ("Per-wheel tyre angle when available"):
+    Telemetry Type (None / Per-Wheel Angle / Lateral + Longitudinal Velocity), the property boxes, Has Per-Wheel
+    Surface Telemetry and Has Vertical Acceleration Data (`SlipAngleSourceEdit`), written by the page's Apply
+    (`SlipAngleTabViewModel.ApplyTelemetrySource` -> `SlipAngleSourceStore.Save`). "Restore this game's source" shows
+    only for a game the compiled copy has a row for (`SlipAngleSourceStore.HasCompiledDefault`), is enabled while the
+    file's row (or the typed edit) differs, and writes the compiled row AT ONCE - no Apply, like the page's other
+    restores.
+  - **Match levels and units** (owner, 2026-11-24): a game gets the row whose best term matches it best - exact
+    single name, name in a list, `?` wildcard, `*` wildcard, regex - then file order (`SlipAngleGameIdPattern.Level`);
+    a save always names the game in the first row with its settings. Per-Wheel Angle's **Source Unit** is the row's
+    `unit` (saved by Apply); a velocity row is always radians with no `unit`. **Source Type for this game** is the
+    game's own override in the plugin config (never the JSON), defaulting to the JSON's; a JSON unit wins over the
+    config lists.
+  - **One source** (owner, 2026-11-24): the Slip Angle Custom source (`SourceMode` / `CustomSources`, the frame
+    request's Custom fields, the Current Source dropdown) was removed; Plugin Internal is the only source.
+  - **Why the car angle is used** (`SlipAngleSourceState` on `SlipAngleInput` -> frame result -> `SlipAngleStatus`;
+    `SlipAngleLiveText.WarningText`): no source, Checking (a source is read but not promoted yet), NotReported (none
+    of its properties for `MissingVerdictFrames` while moving), or CarAngleChosen (no warning).
+  - **Angle source** (`SlipAngleChannelSettings.AngleSource`, hub field `SlipAngleAngleSource`): "Always car angle"
+    makes the reader read no game's tyre field (`SlipAngleRawSourceReader.AlwaysCarAngle`), keys the key data by the
+    car-angle identity, and hides the per-wheel source and the unit dropdown on the tab and the ShakeIt panel.
+
+  The shipped file lists only games where the spike found the field:
   - **Native (direct)**, a per-wheel slip angle field: ACC, Assetto Corsa Rally, Assetto Corsa EVO,
     F1 23/24/25, Forza (FM7, FM8, FH4, FH5, FH6), Live For Speed (a tangent, converted with atan),
     Wreckfest 2, Project Motor Racing, Drift21 (radians), KartKraft, Bus Bound, Rennsport.
@@ -1572,7 +1622,8 @@ Verified against the directory listing on 2026-11-20 (branch `feature/slip-angle
 | `QAdvanceFeedback.SettingsPage.cs` | composition root (partial) | The settings page: ONE `SettingsPageViewModel`, created on the first `GetWPFSettingsControl` and disposed in `End()`; each view SimHub asks for is a thin `SettingsControl` over it. `SettingsPageStateChanged` replaces every push into the page; `ManualGateReadyForDisplay`. |
 | `SimHubTelemetryAdapter.cs` | 2 | Maps SimHub's `GameData` onto Layer 1's `TelemetrySample`; captures the raw diagnostics snapshot; supplies the Slip Angle body inputs. |
 | `ITelemetryAdapter.cs` | 2 (contract) | The interface `SimHubTelemetryAdapter` implements. |
-| `SlipAngleRawSources.cs` | 2 (pure) | The per-game Slip Angle raw-data table (paths, wheel order remap, unit, transform; native direct/computed rows and the raw surface paths) and `SlipAngleRawSourceReader`, which reads it through a lookup delegate into `SlipAngleInput`. SimHub-free, link-compiled into the tests. |
+| `SlipAngleRawSources.cs` | 2 (pure) | The per-game Slip Angle raw-data table (paths, unit, transform, raw surface paths), built only from the source file, and `SlipAngleRawSourceReader`, which reads it through a lookup delegate into `SlipAngleInput`. SimHub-free, link-compiled into the tests. |
+| `SlipAngleSourceFile.cs` | 2 (pure) | `QAdvanceFeedback.SlipAngleSource.json` (1.2.1): the row/document types, the checked `SlipAngleSourceCatalog`, the compiled-in copy (`SlipAngleSourceCompiled`) and `SlipAngleSourceStore` (create, reload on a game change, the page's save, broken-file fallback). Newtonsoft only, link-compiled into the tests. |
 | `KnownSourceColdStartReference.cs` | Layer 4 support | Which of the two input sources this plugin has measured cold-start evidence for, from a channel's composite `SourceIdentity`. |
 | `ViperAvailabilityProvider.cs` / `ViperStore.cs` | Settings-adjacent / persistence | Live check for viper4gh's CalcLngWheelSlip plugin (faults under health `ViperAvailability`); read/write of `QAdvanceFeedback.Viper.json`. |
 | `WheelSourceResolver.cs` | Layer 4 input | Resolves one of `WheelChannelSettings`'s source fields (plain property, JavaScript or NCalc) to a live 0-100 reading. The ShakeIt Built-in source never goes through it (it reads the tap, or falls back to Raw per channel). |
@@ -2063,3 +2114,26 @@ gitignored `Private\` folder outside both projects, with a reflection-based fact
 (`AlgorithmFactory`/`PrivateTypeResolver`) resolving them at runtime and falling back to inert stubs
 (`InertTelemetryAdapter`/`InertLegacyWheelLockSlipEngine`) when absent. That split, and the machinery
 behind it, is gone - see `docs\clean-room-restructure-report.md` for the full history and rationale.
+
+## Mock host (`tools\mock-host`)
+
+A stand-alone WPF app (net48) that runs the real plugin without SimHub. Unlike `tools\screenshot-harness`, it IS part
+of `QAdvanceFeedback.sln`, listed first so Visual Studio starts and debugs it on F5. The plugin's own DLL build is
+unchanged; the mock host only adds its exe. It has four tabs:
+- **Plugin Settings:** `GetWPFSettingsControl`.
+- **ShakeIt Effects:** **Add Effect** for the eight native effects, each effect's own `EditControl` and graph,
+  saved to `PluginsData\Common\MockHost.ShakeItProfile.json`.
+- **Game Simulation:** game id, car, pedals, speed, G, yaw, per-wheel speed / slip / surface flags, the game's
+  reported capabilities, and any SimHub property. It is fed to `DataUpdate` at 60 Hz on a background thread.
+- **Language:** English or Simplified Chinese for the plugin's page and editors (rebuilt at once; the page's one view
+  model is disposed and created again).
+
+The plugin's files go to `<exe folder>\PluginsData\Common` (SimHub's relative storage path).
+
+SimHub's `PluginManager` and ShakeIt containers are created without their constructors, which need
+SimHub-only DLLs. `MockGameManager` supplies `FeedbackCapabilities`. Init's ShakeIt profile inspector, which
+needs GongSolutions.WPF.DragDrop, is finished with an empty inspector.
+
+`MockHost.exe --capture <folder> [seconds]` saves every tab, and every added effect, as a PNG.
+
+Full description, files and limits: `docs\mock-host.md`.

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json;
 using QAdvanceFeedback.Core;
+using QAdvanceFeedback.Core.Localization;
 using QAdvanceFeedback.Core.Normalized;
 using QAdvanceFeedback.Core.Projection;
 using QAdvanceFeedback.Core.SlipAngle;
@@ -50,38 +52,80 @@ namespace QAdvanceFeedback.Tests.SlipAngle
         // ---------------- lists ----------------
 
         [Fact]
-        public void Defaults_list_forza_as_a_0_to_1_ratio_that_goes_over_and_kartkraft_as_degrees()
+        public void Defaults_seed_empty_lists_and_forza_and_kartkraft_take_their_unit_from_the_json()
         {
+            // Owner, 2026-11-24: no game is hard-coded in the lists; a known unit is the JSON row's "unit".
             SlipAngleSourceUnits u = SlipAngleSourceUnits.CreateDefault();
+            Assert.Empty(u.ByAngle);
+            Assert.Empty(u.AngleUsingRatio1);
+            Assert.Empty(u.AngleUsingRatio100);
+            Assert.Empty(u.AngleUsingRadians);
+            Assert.Empty(u.UseCarAngle);
+            Assert.Empty(u.ChosenByUser);
             foreach (string forza in new[] { "FM7", "FM8", "FH4", "FH5", "FH6" })
             {
-                Assert.Equal(SlipAngleUnit.Ratio1, u.Resolve(forza, SlipAngleUnit.Unverified));
-                Assert.Equal(true, u.ExceedsFullScale(forza));
+                Assert.False(u.IsListed(forza));
+                Assert.Equal(SlipAngleUnit.Ratio1, SettingsHub.NativeUnit(forza, u));
+                Assert.Equal(SlipAngleUnitChoice.Ratio1, SettingsHub.SlipAngleHardCodedUnit(forza));
             }
-            Assert.Equal(SlipAngleUnit.Degrees, u.Resolve("KartKraft", SlipAngleUnit.Unverified));
-            Assert.Empty(u.AngleUsingRatio100);
+            Assert.False(u.IsListed("KartKraft"));
+            Assert.Equal(SlipAngleUnit.Degrees, SettingsHub.NativeUnit("KartKraft", u));
+            Assert.Equal(SlipAngleUnitChoice.Degrees, SettingsHub.SlipAngleHardCodedUnit("KartKraft"));
+            Assert.True(SettingsHub.SlipAngleUnitIsHardCoded("KartKraft"));
+            Assert.False(SettingsHub.SlipAngleUnitIsHardCoded("ACC"));   // no "unit" in its row: detected
+            Assert.Null(SettingsHub.SlipAngleHardCodedUnit("ACC"));
         }
 
         [Fact]
-        public void An_unlisted_game_reads_radians_and_a_listed_game_reads_its_list_even_over_the_table()
+        public void Restore_default_takes_a_json_unit_game_out_of_every_list()
         {
-            // The lists are authoritative (owner, 2026-11-21): an unlisted game keeps the table's unit (else radians);
-            // a game in a list is read as the list says.
+            SlipAngleSourceUnits u = SlipAngleSourceUnits.CreateDefault();
+            Assert.True(u.Choose("FH5", SlipAngleUnitChoice.CarAngle));
+            Assert.True(u.Choose("KartKraft", SlipAngleUnitChoice.Radians));
+            Assert.True(u.IsListed("FH5"));
+            Assert.True(u.RestoreDefault("FH5"));
+            Assert.True(u.RestoreDefault("KartKraft"));
+            foreach (string game in new[] { "FH5", "KartKraft" })
+            {
+                Assert.False(u.IsListed(game));
+                Assert.False(u.IsChosenByUser(game));
+            }
+            Assert.Empty(u.ByAngle);
+            Assert.Empty(u.AngleUsingRatio1);
+            Assert.Empty(u.AngleUsingRadians);
+            Assert.Empty(u.UseCarAngle);
+            Assert.Empty(u.ChosenByUser);
+            // ...and they read in their JSON unit again.
+            Assert.Equal(SlipAngleUnit.Ratio1, SettingsHub.NativeUnit("FH5", u));
+            Assert.Equal(SlipAngleUnit.Degrees, SettingsHub.NativeUnit("KartKraft", u));
+        }
+
+        [Fact]
+        public void An_unlisted_game_reads_radians_a_listed_game_its_list_and_a_table_unit_wins_over_the_lists()
+        {
+            // Owner, 2026-11-24: a unit the table (the source JSON) states wins over the lists; else the game's list;
+            // else radians while it is checked.
             SlipAngleSourceUnits u = SlipAngleSourceUnits.CreateDefault();
             Assert.Equal(SlipAngleUnit.Radians, u.Resolve("F12025", SlipAngleUnit.Unverified));
+            Assert.True(u.Assign("F12025", SlipAngleUnit.Ratio100));
+            Assert.Equal(SlipAngleUnit.Ratio100, u.Resolve("F12025", SlipAngleUnit.Unverified));
             Assert.Equal(SlipAngleUnit.Radians, u.Resolve("LFS", SlipAngleUnit.Radians));
             Assert.True(u.Assign("LFS", SlipAngleUnit.Ratio1));
-            Assert.Equal(SlipAngleUnit.Ratio1, u.Resolve("LFS", SlipAngleUnit.Radians));
+            Assert.Equal(SlipAngleUnit.Radians, u.Resolve("LFS", SlipAngleUnit.Radians));
+            Assert.Equal(SlipAngleUnit.Degrees, u.Resolve("LFS", SlipAngleUnit.Degrees));
         }
 
         [Fact]
-        public void Missing_lists_read_as_the_defaults_until_seeded()
+        public void Missing_lists_list_nothing_and_are_seeded_empty()
         {
             var u = new SlipAngleSourceUnits();
-            Assert.Equal(SlipAngleUnit.Ratio1, u.Resolve("FH6", SlipAngleUnit.Unverified));
-            Assert.Equal(SlipAngleUnit.Degrees, u.Resolve("kartkraft", SlipAngleUnit.Unverified));
+            Assert.Equal(SlipAngleUnit.Radians, u.Resolve("FH6", SlipAngleUnit.Unverified));
+            Assert.Equal(SlipAngleUnit.Ratio1, u.Resolve("FH6", SlipAngleUnit.Ratio1));   // the table's unit
+            Assert.False(u.IsListed("kartkraft"));
             Assert.True(u.Normalise());
             Assert.False(u.Normalise());
+            Assert.Empty(u.ByAngle);
+            Assert.Empty(u.AngleUsingRatio1);
         }
 
         [Fact]
@@ -127,8 +171,8 @@ namespace QAdvanceFeedback.Tests.SlipAngle
             string json = JsonConvert.SerializeObject(fresh);
             var back = JsonConvert.DeserializeObject<SlipAngleChannelSettings>(json);
             Assert.False(back.EnsureSourceUnits());
-            Assert.Equal(5, back.SourceUnits.AngleUsingRatio1.Count);
-            Assert.Single(back.SourceUnits.ByAngle);
+            Assert.Empty(back.SourceUnits.AngleUsingRatio1);
+            Assert.Empty(back.SourceUnits.ByAngle);
             Assert.Contains("AngleUsingRatio100", json);
         }
 
@@ -320,7 +364,7 @@ namespace QAdvanceFeedback.Tests.SlipAngle
             Assert.Equal(1, saves);
             // The heading now names it, and the check is over.
             Assert.Equal("SlipAngle.KeyData.Header.Radians",
-                QAdvanceFeedback.Settings.SettingsHub.SlipAngleKeyDataHeaderKey(QAdvanceFeedback.Settings.SourceMode.Manual, SourceNativeness.Native, "ACC", units));
+                QAdvanceFeedback.Settings.SettingsHub.SlipAngleKeyDataHeaderKey(SourceNativeness.Native, "ACC", units));
         }
 
         [Fact]
@@ -383,7 +427,7 @@ namespace QAdvanceFeedback.Tests.SlipAngle
                 new TelemetryFrame(groundSpeedKmh: 108, speedKmh: 108, lateralG: 0.5), Dt);
             Assert.Equal(SlipAngleUnit.Ratio1, input.Unit);
             Assert.Equal(5.0, input.NativeWheelDeg.Value.FrontLeft, 4);   // ratio 0.5 = 5 degrees (10 points per degree)
-            Assert.Equal(true, input.RatioExceedsFullScale);
+            Assert.NotEqual(false, input.RatioExceedsFullScale);   // not known yet: treated as "goes over"
         }
 
         // ---------------- learning key and warnings ----------------
@@ -414,6 +458,54 @@ namespace QAdvanceFeedback.Tests.SlipAngle
             Assert.Equal("This game has no tyre slip angle. Using the car's body angle.", car.FallbackWarningText);
 
             Assert.False(new SlipAngleLiveText(Status(SourceNativeness.Native, SlipAngleUnit.Radians)).ShowFallbackWarning);
+        }
+
+        // ---------------- the orange line's wording by source state (owner, 2026-11-24) ----------------
+
+        private static SlipAngleStatus CarAngle(SlipAngleSourceState state, bool pluginInternal = true, bool faulted = false) =>
+            new SlipAngleStatus(SourceNativeness.Fallback, pluginInternal, true, Max20, Max20, 1.0, ColdStartTier.Tier1, false, false,
+                "G", SlipAngleFrameProcessor.FallbackIdentity, faulted, sourceState: state);
+
+        [Theory]
+        [InlineData(SlipAngleSourceState.NoSource, "Source.FallbackWarning.SlipAngle")]
+        [InlineData(SlipAngleSourceState.Checking, "Source.FallbackWarning.SlipAngle.Checking")]
+        [InlineData(SlipAngleSourceState.Native, "Source.FallbackWarning.SlipAngle.Checking")]
+        [InlineData(SlipAngleSourceState.NotReported, "Source.FallbackWarning.SlipAngle.NotReported")]
+        [InlineData(SlipAngleSourceState.CarAngleAlways, "Source.FallbackWarning.SlipAngle.Always")]
+        [InlineData(SlipAngleSourceState.CarAngleForGame, "Source.FallbackWarning.SlipAngle.ForGame")]
+        public void The_car_angle_warning_says_why_the_car_angle_is_used(SlipAngleSourceState state, string key)
+        {
+            SlipAngleStatus s = CarAngle(state);
+            Assert.True(s.IsCarAngleFallback);
+            string expected = key == null ? string.Empty : Strings.Get(key);
+            Assert.Equal(expected, SlipAngleLiveText.WarningText(s));
+            var text = new SlipAngleLiveText(s);
+            Assert.Equal(expected, text.FallbackWarningText);
+            Assert.Equal(key != null, text.ShowFallbackWarning);
+            if (key != null) Assert.False(string.IsNullOrWhiteSpace(expected));
+        }
+
+        [Fact]
+        public void The_three_car_angle_warnings_are_different_texts_in_both_languages()
+        {
+            var keys = new[] { "Source.FallbackWarning.SlipAngle", "Source.FallbackWarning.SlipAngle.Checking", "Source.FallbackWarning.SlipAngle.NotReported",
+                "Source.FallbackWarning.SlipAngle.Always", "Source.FallbackWarning.SlipAngle.ForGame" };
+            Assert.Equal(5, keys.Select(Strings.Get).Distinct().Count());
+            System.Collections.Generic.Dictionary<string, string> zh = QAdvanceFeedback.Core.Localization.StringTableZhHans.Create();
+            Assert.Equal(5, keys.Select(k => zh[k]).Distinct().Count());
+        }
+
+        [Fact]
+        public void No_car_angle_warning_without_the_plugin_internal_fallback_or_after_a_fault()
+        {
+            Assert.Equal(string.Empty, SlipAngleLiveText.WarningText(CarAngle(SlipAngleSourceState.NotReported, pluginInternal: false)));
+            Assert.Equal(string.Empty, SlipAngleLiveText.WarningText(CarAngle(SlipAngleSourceState.NotReported, faulted: true)));
+            Assert.Equal(string.Empty, SlipAngleLiveText.WarningText(null));
+            Assert.Equal(string.Empty, SlipAngleLiveText.WarningText(SlipAngleStatus.None));
+            // The ratio warning comes first, whatever the source state.
+            var ratio = new SlipAngleStatus(SourceNativeness.Native, true, true, Max20, Max20, 1.0, ColdStartTier.Tier1, false, false,
+                "G", "id", unit: SlipAngleUnit.Ratio1, sourceState: SlipAngleSourceState.Native);
+            Assert.Equal(Strings.Get("Source.RatioWarning.SlipAngle"), SlipAngleLiveText.WarningText(ratio));
         }
     }
 }

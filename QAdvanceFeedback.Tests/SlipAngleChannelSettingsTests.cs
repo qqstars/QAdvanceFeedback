@@ -12,7 +12,6 @@ namespace QAdvanceFeedback.Tests
         public void Defaults_match_spec()
         {
             var s = new SlipAngleChannelSettings();
-            Assert.Equal(SourceMode.Manual, s.SourceMode);
             Assert.Equal(0.85, s.WeightMax);
             Assert.Equal(0.15, s.WeightMin);
             Assert.True(s.CrossingGateEnabled);
@@ -36,16 +35,14 @@ namespace QAdvanceFeedback.Tests
                 Assert.NotNull(loaded.SlipAngle.Gate);
                 Assert.NotNull(loaded.SlipAngle.KeyData);
                 Assert.NotNull(loaded.SlipAngle.Drift);
-                Assert.Equal(SourceMode.Manual, loaded.SlipAngle.SourceMode);
 
                 File.WriteAllText(path, "{\"SlipAngle\":null}");
                 Assert.NotNull(ConfigStore.Load(path).SlipAngle);
 
-                File.WriteAllText(path, "{\"SlipAngle\":{\"Gate\":null,\"Drift\":null,\"Pulse\":null,\"Projector\":null,\"KeyData\":null,\"SourceMode\":1}}");
+                File.WriteAllText(path, "{\"SlipAngle\":{\"Gate\":null,\"Drift\":null,\"Pulse\":null,\"Projector\":null,\"KeyData\":null,\"SourceMode\":1,\"CustomSources\":{\"FrontLeft\":\"a\"}}}");
                 var n = ConfigStore.Load(path).SlipAngle;
                 Assert.NotNull(n.Gate); Assert.NotNull(n.Drift); Assert.NotNull(n.Pulse);
                 Assert.NotNull(n.Projector); Assert.NotNull(n.KeyData);
-                Assert.Equal(SourceMode.Manual, n.SourceMode);
             }
             finally { if (File.Exists(path)) File.Delete(path); }
         }
@@ -65,22 +62,18 @@ namespace QAdvanceFeedback.Tests
         public void Round_trip_json()
         {
             var s = new QAdvanceFeedbackSettings();
-            s.SlipAngle.SourceMode = SourceMode.Custom;
             s.SlipAngle.WeightMax = 0.7;
             s.SlipAngle.WeightMin = 0.3;
             s.SlipAngle.CrossingGateEnabled = false;
             s.SlipAngle.Gate.BrakeThreshold = 12;
             s.SlipAngle.Drift.Gamma = 3.0;
-            s.SlipAngle.CustomSources = new WheelSourceSet { FrontLeft = "a" };
             var back = JsonConvert.DeserializeObject<QAdvanceFeedbackSettings>(JsonConvert.SerializeObject(s));
             back.Normalise();
-            Assert.Equal(SourceMode.Custom, back.SlipAngle.SourceMode);
             Assert.Equal(0.7, back.SlipAngle.WeightMax);
             Assert.Equal(0.3, back.SlipAngle.WeightMin);
             Assert.False(back.SlipAngle.CrossingGateEnabled);
             Assert.Equal(12, back.SlipAngle.Gate.BrakeThreshold);
             Assert.Equal(3.0, back.SlipAngle.Drift.Gamma);
-            Assert.Equal("a", back.SlipAngle.CustomSources.FrontLeft);
         }
 
         [Fact]

@@ -12,12 +12,18 @@
     <RootNamespace>QAdvanceFeedback</RootNamespace>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <SimHubRefPath Condition="'$(SimHubRefPath)' == ''">$(MSBuildThisFileDirectory)..\lib</SimHubRefPath>
-    <AssemblyVersion>1.2.0.0</AssemblyVersion>
-    <FileVersion>1.2.0.0</FileVersion>
+    <AssemblyVersion>1.2.1.0</AssemblyVersion>
+    <FileVersion>1.2.1.0</FileVersion>
     <!-- Single-DLL distribution (hard requirement): every SimHub/GameReaderCommon/MahApps reference
          below is <Private>false</Private>, so none of them are copied into bin\Release\net48 - only
          QAdvanceFeedback.dll and its .pdb land there. -->
   </PropertyGroup>
+  <ItemGroup>
+    <!-- The per-wheel slip-angle sources (owner, 2026-11-23): the solution root's JSON, compiled in. It seeds
+         PluginsData\Common\QAdvanceFeedback.SlipAngleSource.json when that file is missing, and is what the page's
+         "Restore default" goes back to (SlipAngleSourceCompiled). -->
+    <EmbeddedResource Include="..\QAdvanceFeedback.SlipAngleSource.json" LogicalName="QAdvanceFeedback.SlipAngleSource.json" Link="QAdvanceFeedback.SlipAngleSource.json" />
+  </ItemGroup>
   <ItemGroup>
     <Reference Include="SimHub.Plugins">
       <HintPath>$(SimHubRefPath)\SimHub.Plugins.dll</HintPath><Private>false</Private>

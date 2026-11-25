@@ -86,6 +86,10 @@ namespace QAdvanceFeedback.Core.Health
         /// (<c>SlipAngleRawSourceReader</c>).</summary>
         public const string SlipAngleSource = "SlipAngleSource";
 
+        /// <summary>The per-wheel slip-angle source file (<c>QAdvanceFeedback.SlipAngleSource.json</c> in
+        /// PluginsData\Common, <c>SlipAngleSourceStore</c>): not valid, or not readable/writable.</summary>
+        public const string SlipAngleSourceFile = "SlipAngleSourceFile";
+
         /// <summary>The per-frame Slip Angle pipeline (<c>QAdvanceFeedback.UpdateSlipAngle</c> /
         /// <c>SlipAngleFrameProcessor</c>); on a fault its outputs read 0 / null and Lock/Slip/G-Force carry on.</summary>
         public const string SlipAngle = "SlipAngle";
