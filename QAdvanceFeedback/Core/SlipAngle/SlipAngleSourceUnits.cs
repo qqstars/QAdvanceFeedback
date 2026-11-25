@@ -27,20 +27,14 @@ namespace QAdvanceFeedback.Core.SlipAngle
     /// </list>
     /// Every list lives in the plugin config file, so a user can add a game to any of them without a new
     /// plugin version.
-    /// A list missing from the file is seeded from the hard-coded defaults (<see cref="Normalise"/>), and the
-    /// plugin then writes it. <see cref="SlipAngleUnitClassifier"/> adds games it detects. A listed game is read as
-    /// its list says even when the table states a unit (the lists are authoritative); the unit dropdown never
-    /// offers a game whose unit is hard-coded, so that only happens by a hand edit. Thread-safe.
+    /// A list missing from the file starts empty (<see cref="Normalise"/>), and the plugin then writes it - no game
+    /// is hard-coded here (owner, 2026-11-24): a known unit is the game's JSON row's <c>unit</c>.
+    /// <see cref="SlipAngleUnitClassifier"/> adds games it detects. A unit the game's JSON row states wins over the
+    /// lists (owner, 2026-11-24); the lists hold the driver's pick under Auto Detect and what the check found. These
+    /// lists are the plugin config's, never the source JSON's. Thread-safe.
     /// </summary>
     public sealed class SlipAngleSourceUnits
     {
-        /// <summary>Known degrees fields: KartKraft (official schema: "slipAngle ... Degrees").</summary>
-        public static readonly IReadOnlyList<string> DefaultByAngle = new[] { "KartKraft" };
-
-        /// <summary>Known 0..1 ratio fields: Forza's normalized "TireSlipAngle" (official Data Out docs:
-        /// "0 means 100% grip and |angle| &gt; 1.0 means loss of grip") - it goes over 1.</summary>
-        public static readonly IReadOnlyList<string> DefaultRatio1 = new[] { "FM7", "FM8", "FH4", "FH5", "FH6" };
-
         private readonly object _gate = new object();
 
         public List<string> ByAngle { get; set; }
@@ -53,12 +47,6 @@ namespace QAdvanceFeedback.Core.SlipAngle
         /// by the check. Only these show their unit as picked (with Restore default); a game the check placed shows
         /// Auto-detect. A game in <see cref="UseCarAngle"/> always counts as chosen (the check never picks it).</summary>
         public List<string> ChosenByUser { get; set; }
-
-        /// <summary>True for a game whose unit ships hard-coded in these lists (KartKraft, the five Forza games) -
-        /// known for certain, so the unit dropdown never offers to change it.</summary>
-        public static bool IsShippedDefault(string gameId) =>
-            !string.IsNullOrEmpty(gameId)
-            && (DefaultByAngle.Any(g => Same(g, gameId)) || DefaultRatio1.Any(g => Same(g, gameId)));
 
         public static SlipAngleSourceUnits CreateDefault()
         {
@@ -74,12 +62,8 @@ namespace QAdvanceFeedback.Core.SlipAngle
             lock (_gate)
             {
                 bool seeded = false;
-                if (ByAngle == null) { ByAngle = DefaultByAngle.ToList(); seeded = true; }
-                if (AngleUsingRatio1 == null)
-                {
-                    AngleUsingRatio1 = DefaultRatio1.Select(g => new SlipAngleRatioGame { Game = g, ExceedsFullScale = true }).ToList();
-                    seeded = true;
-                }
+                if (ByAngle == null) { ByAngle = new List<string>(); seeded = true; }
+                if (AngleUsingRatio1 == null) { AngleUsingRatio1 = new List<SlipAngleRatioGame>(); seeded = true; }
                 if (AngleUsingRatio100 == null) { AngleUsingRatio100 = new List<SlipAngleRatioGame>(); seeded = true; }
                 if (AngleUsingRadians == null) { AngleUsingRadians = new List<string>(); seeded = true; }
                 if (UseCarAngle == null) { UseCarAngle = new List<string>(); seeded = true; }
@@ -94,20 +78,21 @@ namespace QAdvanceFeedback.Core.SlipAngle
             }
         }
 
-        /// <summary>The unit for <paramref name="gameId"/>. THE LISTS ARE AUTHORITATIVE (owner, 2026-11-21): a game
-        /// in a list is read as that list says, whatever the table states; else the table's own unit when it
-        /// states one; else <see cref="SlipAngleUnit.Radians"/> (read as radians while it is checked). A missing
-        /// list reads as its defaults. (A game in <see cref="UseCarAngle"/> has no tyre field read at all.)</summary>
+        /// <summary>The unit for <paramref name="gameId"/>. A UNIT THE SOURCE FILE STATES WINS (owner, 2026-11-24: the
+        /// Source Unit is set in QAdvanceFeedback.SlipAngleSource.json; only the car angle - <see cref="UseCarAngle"/>,
+        /// checked by the caller - overrides it); else the game's list (the driver's pick under Auto Detect, or what
+        /// the check found); else <see cref="SlipAngleUnit.Radians"/> (read as radians while it is checked).</summary>
         public SlipAngleUnit Resolve(string gameId, SlipAngleUnit tableUnit)
         {
+            if (tableUnit != SlipAngleUnit.Unverified) return tableUnit;
             if (!string.IsNullOrEmpty(gameId))
             {
                 lock (_gate)
                 {
-                    if (Contains(ByAngle, DefaultByAngle, gameId)) return SlipAngleUnit.Degrees;
-                    if (Find(AngleUsingRatio1, DefaultRatio1, gameId, out _)) return SlipAngleUnit.Ratio1;
-                    if (Find(AngleUsingRatio100, null, gameId, out _)) return SlipAngleUnit.Ratio100;
-                    if (Contains(AngleUsingRadians, null, gameId)) return SlipAngleUnit.Radians;
+                    if (Contains(ByAngle, gameId)) return SlipAngleUnit.Degrees;
+                    if (Find(AngleUsingRatio1, gameId, out _)) return SlipAngleUnit.Ratio1;
+                    if (Find(AngleUsingRatio100, gameId, out _)) return SlipAngleUnit.Ratio100;
+                    if (Contains(AngleUsingRadians, gameId)) return SlipAngleUnit.Radians;
                 }
             }
             return tableUnit != SlipAngleUnit.Unverified ? tableUnit : SlipAngleUnit.Radians;
@@ -118,9 +103,9 @@ namespace QAdvanceFeedback.Core.SlipAngle
         {
             if (string.IsNullOrEmpty(gameId)) return false;
             lock (_gate)
-                return Contains(ByAngle, DefaultByAngle, gameId) || Find(AngleUsingRatio1, DefaultRatio1, gameId, out _)
-                    || Find(AngleUsingRatio100, null, gameId, out _) || Contains(AngleUsingRadians, null, gameId)
-                    || Contains(UseCarAngle, null, gameId);
+                return Contains(ByAngle, gameId) || Find(AngleUsingRatio1, gameId, out _)
+                    || Find(AngleUsingRatio100, gameId, out _) || Contains(AngleUsingRadians, gameId)
+                    || Contains(UseCarAngle, gameId);
         }
 
         /// <summary>True when the game is in <see cref="UseCarAngle"/>: its tyre field is ignored and the car-angle
@@ -128,7 +113,7 @@ namespace QAdvanceFeedback.Core.SlipAngle
         public bool ForcesCarAngle(string gameId)
         {
             if (string.IsNullOrEmpty(gameId)) return false;
-            lock (_gate) return Contains(UseCarAngle, null, gameId);
+            lock (_gate) return Contains(UseCarAngle, gameId);
         }
 
         /// <summary>The dropdown's current choice for a listed game; null when the game is in no list.</summary>
@@ -137,11 +122,11 @@ namespace QAdvanceFeedback.Core.SlipAngle
             if (string.IsNullOrEmpty(gameId)) return null;
             lock (_gate)
             {
-                if (Contains(UseCarAngle, null, gameId)) return SlipAngleUnitChoice.CarAngle;
-                if (Contains(ByAngle, DefaultByAngle, gameId)) return SlipAngleUnitChoice.Degrees;
-                if (Find(AngleUsingRatio1, DefaultRatio1, gameId, out _)) return SlipAngleUnitChoice.Ratio1;
-                if (Find(AngleUsingRatio100, null, gameId, out _)) return SlipAngleUnitChoice.Ratio100;
-                if (Contains(AngleUsingRadians, null, gameId)) return SlipAngleUnitChoice.Radians;
+                if (Contains(UseCarAngle, gameId)) return SlipAngleUnitChoice.CarAngle;
+                if (Contains(ByAngle, gameId)) return SlipAngleUnitChoice.Degrees;
+                if (Find(AngleUsingRatio1, gameId, out _)) return SlipAngleUnitChoice.Ratio1;
+                if (Find(AngleUsingRatio100, gameId, out _)) return SlipAngleUnitChoice.Ratio100;
+                if (Contains(AngleUsingRadians, gameId)) return SlipAngleUnitChoice.Radians;
                 return null;
             }
         }
@@ -174,7 +159,7 @@ namespace QAdvanceFeedback.Core.SlipAngle
         public bool IsChosenByUser(string gameId)
         {
             if (string.IsNullOrEmpty(gameId)) return false;
-            lock (_gate) return Contains(ChosenByUser, null, gameId) || Contains(UseCarAngle, null, gameId);
+            lock (_gate) return Contains(ChosenByUser, gameId) || Contains(UseCarAngle, gameId);
         }
 
         /// <summary>A DRIVER's pick from the dropdown (owner, 2026-11-22): the game moves to that list and is marked as
@@ -192,10 +177,10 @@ namespace QAdvanceFeedback.Core.SlipAngle
         }
 
         /// <summary>
-        /// RESTORE DEFAULT (owner, 2026-11-22): the game leaves every list and the chosen mark; a game whose unit ships
-        /// in these lists (<see cref="IsShippedDefault"/>: KartKraft's degrees, Forza's 0-1 ratio that goes over 1) goes
-        /// back into its list. Any other game is then checked again while driving (Auto-detect); a game whose unit the
-        /// table states is read in that unit. True when anything changed.
+        /// RESTORE DEFAULT (owner, 2026-11-22): the game leaves every list and the chosen mark. A game whose unit its row
+        /// in QAdvanceFeedback.SlipAngleSource.json states is then read in that unit; any other game is checked again while
+        /// driving (Auto-detect). No unit is hard-coded here (owner, 2026-11-24: the JSON is the only source definition).
+        /// True when anything changed.
         /// </summary>
         public bool RestoreDefault(string gameId)
         {
@@ -204,15 +189,7 @@ namespace QAdvanceFeedback.Core.SlipAngle
             {
                 Normalise();
                 bool changed = ChosenByUser.RemoveAll(g => Same(g, gameId)) > 0;
-                if (DefaultByAngle.Any(g => Same(g, gameId)))
-                    changed |= Assign(gameId, SlipAngleUnit.Degrees);
-                else if (DefaultRatio1.Any(g => Same(g, gameId)))
-                {
-                    changed |= Assign(gameId, SlipAngleUnit.Ratio1);
-                    SlipAngleRatioGame e = AngleUsingRatio1.First(x => Same(x.Game, gameId));
-                    if (e.ExceedsFullScale == null) { e.ExceedsFullScale = true; changed = true; }
-                }
-                else changed |= Assign(gameId, SlipAngleUnit.Unverified);
+                changed |= Assign(gameId, SlipAngleUnit.Unverified);
                 return changed;
             }
         }
@@ -223,8 +200,8 @@ namespace QAdvanceFeedback.Core.SlipAngle
             if (string.IsNullOrEmpty(gameId)) return null;
             lock (_gate)
             {
-                if (Find(AngleUsingRatio1, DefaultRatio1, gameId, out SlipAngleRatioGame e1)) return e1?.ExceedsFullScale ?? true;
-                if (Find(AngleUsingRatio100, null, gameId, out SlipAngleRatioGame e100)) return e100?.ExceedsFullScale;
+                if (Find(AngleUsingRatio1, gameId, out SlipAngleRatioGame e1)) return e1?.ExceedsFullScale ?? true;
+                if (Find(AngleUsingRatio100, gameId, out SlipAngleRatioGame e100)) return e100?.ExceedsFullScale;
                 return null;
             }
         }
@@ -280,18 +257,12 @@ namespace QAdvanceFeedback.Core.SlipAngle
 
         private static bool Same(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
-        private static bool Contains(List<string> list, IReadOnlyList<string> defaults, string gameId) =>
-            (list ?? (IEnumerable<string>)defaults ?? Array.Empty<string>()).Any(g => Same(g, gameId));
+        private static bool Contains(List<string> list, string gameId) => list != null && list.Any(g => Same(g, gameId));
 
-        private static bool Find(List<SlipAngleRatioGame> list, IReadOnlyList<string> defaults, string gameId, out SlipAngleRatioGame entry)
+        private static bool Find(List<SlipAngleRatioGame> list, string gameId, out SlipAngleRatioGame entry)
         {
-            entry = null;
-            if (list != null)
-            {
-                entry = list.FirstOrDefault(e => e != null && Same(e.Game, gameId));
-                return entry != null;
-            }
-            return defaults != null && defaults.Any(g => Same(g, gameId));
+            entry = list?.FirstOrDefault(e => e != null && Same(e.Game, gameId));
+            return entry != null;
         }
     }
 }

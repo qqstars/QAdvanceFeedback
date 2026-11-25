@@ -18,8 +18,14 @@ namespace QAdvanceFeedback.Core.SlipAngle
         public SlipAngleStatus(SourceNativeness nativeness, bool sourceIsPluginInternal, bool hasData,
             SlipAngleWindow learnedWindow, SlipAngleWindow appliedWindow, double maturity, ColdStartTier borrowingTier,
             bool peakConfirmed, bool manualGateReady, string gameId, string sourceIdentity, bool faulted = false,
-            double windowQuality = 0.0, SlipAngleUnit unit = SlipAngleUnit.Unverified)
+            double windowQuality = 0.0, SlipAngleUnit unit = SlipAngleUnit.Unverified,
+            SurfaceBucket surface = SurfaceBucket.Sealed, SurfaceBucketSource surfaceSource = SurfaceBucketSource.Unknown,
+            double surfaceWeight = 1.0, SlipAngleSourceState sourceState = SlipAngleSourceState.NoSource)
         {
+            SourceState = sourceState;
+            Surface = surface;
+            SurfaceSource = surfaceSource;
+            SurfaceWeight = ClampMath.IsFinite(surfaceWeight) ? ClampMath.Clamp(surfaceWeight, 0.0, 1.0) : 1.0;
             Unit = unit;
             Faulted = faulted;
             WindowQuality = ClampMath.IsFinite(windowQuality) ? ClampMath.Clamp(windowQuality, 0.0, 1.0) : 0.0;
@@ -35,6 +41,9 @@ namespace QAdvanceFeedback.Core.SlipAngle
             GameId = gameId ?? string.Empty;
             SourceIdentity = sourceIdentity ?? string.Empty;
         }
+
+        /// <summary>Where the game's per-wheel slip angle stands (the orange line's wording).</summary>
+        public SlipAngleSourceState SourceState { get; }
 
         /// <summary>Debounced tier of the current source (Unknown with no game).</summary>
         public SourceNativeness Nativeness { get; }
@@ -52,6 +61,15 @@ namespace QAdvanceFeedback.Core.SlipAngle
         public double WindowQuality { get; }
         public string GameId { get; }
         public string SourceIdentity { get; }
+
+        /// <summary>The surface bucket the learning goes to now - its key is the one whose window / progress is shown.</summary>
+        public SurfaceBucket Surface { get; }
+
+        /// <summary>Where this frame's surface came from (Unknown: nothing reported, the bucket is held).</summary>
+        public SurfaceBucketSource SurfaceSource { get; }
+
+        /// <summary>The weight of <see cref="Surface"/> in the published blend (below 1 while changing surface).</summary>
+        public double SurfaceWeight { get; }
 
         /// <summary>The unit of the game's native field (a grip ratio shows the ratio warning).</summary>
         public SlipAngleUnit Unit { get; }
@@ -86,7 +104,11 @@ namespace QAdvanceFeedback.Core.SlipAngle
             if (r == null) return None;
             return new SlipAngleStatus(debouncedNativeness, r.SourceIsPluginInternal, r.RawAll.HasValue,
                 r.LearnedWindow, r.AppliedWindow, r.Maturity, r.BorrowingTier, r.PeakConfirmed, r.ManualGateReady,
-                gameId, r.SourceIdentity, windowQuality: r.WindowQuality, unit: r.Unit);
+                gameId, r.SourceIdentity, windowQuality: r.WindowQuality, unit: r.Unit,
+                surface: r.SurfaceBucket, surfaceSource: r.SurfaceSource,
+                surfaceWeight: r.SurfaceBucket == SurfaceBucket.Sealed ? r.SurfaceWeightSealed
+                    : r.SurfaceBucket == SurfaceBucket.Loose ? r.SurfaceWeightLoose : r.SurfaceWeightLowGrip,
+                sourceState: r.SourceState);
         }
     }
 }

@@ -10,12 +10,11 @@ namespace QAdvanceFeedback.Ui.ViewModels
     public static class SlipAngleUnitChoices
     {
         /// <summary>
-        /// The current game's entries (owner, 2026-11-22; <see cref="SettingsHub.SlipAngleUnitOptions"/>): a hard-coded
-        /// game's own unit is marked as such; Auto-detect names the unit the check found, or says it is still checking.
+        /// The current game's entries (owner, 2026-11-24; <see cref="SettingsHub.SlipAngleUnitOptions"/>): "Per-Wheel Angle
+        /// (unit)" and "Car Angle"; Auto names the unit the check found, or says it is still checking.
         /// </summary>
         public static IReadOnlyList<Choice<SlipAngleUnitChoice>> For(string gameId, SlipAngleSourceUnits units)
         {
-            SlipAngleUnitChoice? hard = SettingsHub.SlipAngleHardCodedUnit(gameId);
             var list = new List<Choice<SlipAngleUnitChoice>>();
             foreach (SlipAngleUnitChoice c in SettingsHub.SlipAngleUnitOptions(gameId))
             {
@@ -23,11 +22,10 @@ namespace QAdvanceFeedback.Ui.ViewModels
                 if (c == SlipAngleUnitChoice.AutoDetect)
                 {
                     SlipAngleUnitChoice? found = SettingsHub.SlipAngleDetectedUnit(gameId, units);
-                    label = found.HasValue
-                        ? string.Format(Strings.Get("SlipAngle.Unit.AutoDetect.Found"), Label(found.Value))
+                    label = found.HasValue && found != SlipAngleUnitChoice.CarAngle
+                        ? string.Format(Strings.Get("SlipAngle.Unit.AutoDetect.Found"), Strings.Get("SlipAngle.Unit.Short." + found.Value))
                         : Strings.Get("SlipAngle.Unit.AutoDetect.Checking");
                 }
-                else if (c == hard) label = string.Format(Strings.Get("SlipAngle.Unit.HardCoded"), Label(c));
                 else label = Label(c);
                 list.Add(new Choice<SlipAngleUnitChoice>(c, label));
             }

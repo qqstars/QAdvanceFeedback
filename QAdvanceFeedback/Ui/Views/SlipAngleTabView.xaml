@@ -15,55 +15,13 @@
        and one shared editor column ("SlipAngleEditor") across every section, like LockAlign/LockEditor. -->
   <UserControl.Resources>
     <v:VisibleWhenConverter x:Key="VisibleWhen"/>
-    <LinearGradientBrush x:Key="ScriptPlainBrush" StartPoint="0,0" EndPoint="0,1">
-      <GradientStop Color="#FF9E9E9E" Offset="0"/><GradientStop Color="#FF424242" Offset="1"/>
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="ScriptJavaScriptBrush" StartPoint="0,0" EndPoint="0,1">
-      <GradientStop Color="#FF66BB6A" Offset="0"/><GradientStop Color="#FF1B5E20" Offset="1"/>
-    </LinearGradientBrush>
-    <LinearGradientBrush x:Key="ScriptNCalcBrush" StartPoint="0,0" EndPoint="0,1">
-      <GradientStop Color="#FF42A5F5" Offset="0"/><GradientStop Color="#FF0D47A1" Offset="1"/>
-    </LinearGradientBrush>
-    <!-- The page's script-type toggle (P/J/N), with its fill bound to the row's script type. -->
-    <Style x:Key="ScriptTypeToggleButtonStyle" TargetType="Button">
-      <Setter Property="Width" Value="28"/>
-      <Setter Property="Height" Value="24"/>
-      <Setter Property="Margin" Value="4,4,0,4"/>
-      <Setter Property="Padding" Value="0"/>
-      <Setter Property="FontWeight" Value="Bold"/>
-      <Setter Property="Foreground" Value="White"/>
-      <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="Background" Value="{StaticResource ScriptPlainBrush}"/>
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="Button">
-            <Border x:Name="ScriptTypeBorder" CornerRadius="6" Background="{TemplateBinding Background}"
-                    BorderBrush="#55000000" BorderThickness="1">
-              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Border>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="ScriptTypeBorder" Property="Opacity" Value="0.85"/>
-              </Trigger>
-              <Trigger Property="IsPressed" Value="True">
-                <Setter TargetName="ScriptTypeBorder" Property="Opacity" Value="0.7"/>
-              </Trigger>
-              <Trigger Property="IsKeyboardFocused" Value="True">
-                <Setter TargetName="ScriptTypeBorder" Property="BorderBrush" Value="Black"/>
-                <Setter TargetName="ScriptTypeBorder" Property="BorderThickness" Value="2"/>
-              </Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-      <Style.Triggers>
-        <DataTrigger Binding="{Binding ScriptLetter}" Value="J">
-          <Setter Property="Background" Value="{StaticResource ScriptJavaScriptBrush}"/>
-        </DataTrigger>
-        <DataTrigger Binding="{Binding ScriptLetter}" Value="N">
-          <Setter Property="Background" Value="{StaticResource ScriptNCalcBrush}"/>
-        </DataTrigger>
-      </Style.Triggers>
+    <!-- ONE WIDTH FOR EVERY DROPDOWN on this tab (owner, 2026-11-23), wide enough for the longest entry. BasedOn resolves
+         to MahApps' own style here (not the page's), so the page's 4 px margin is set again: the dropdowns' left edge is
+         then the boxes' (owner, 2026-11-24). -->
+    <Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+      <Setter Property="Margin" Value="4"/>
+      <Setter Property="Width" Value="340"/>
+      <Setter Property="HorizontalAlignment" Value="Left"/>
     </Style>
   </UserControl.Resources>
 
@@ -105,72 +63,203 @@
         <TextBlock Text="{Binding NoDataText}" TextWrapping="Wrap" FontStyle="Italic" Foreground="DarkOrange" Margin="4,0,4,4"
                    Visibility="{Binding ShowNoData, Converter={StaticResource VisibleWhen}}"/>
 
-        <Grid x:Name="SlipAngleSourceRow" HorizontalAlignment="Left">
+        <!-- GENERAL SOURCE TYPE first (owner, 2026-11-23): "Always car angle" uses the car angle for every game, so
+             everything under it is hidden. Plugin Internal is the only source (owner, 2026-11-24: Current Source and the
+             Custom rows were removed). Every dropdown on this tab has the same width (the ComboBox style above), and every
+             property box starts at the dropdowns' left edge (one shared label column, SlipAngleAlign). -->
+        <Grid x:Name="SlipAngleSourceRow">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="*"/>
           </Grid.ColumnDefinitions>
-          <TextBlock Grid.Column="0" Text="{v:Loc Sources.Mode.Label}"/>
-          <ComboBox Grid.Column="1" HorizontalAlignment="Stretch"
-                    ItemsSource="{Binding SourceModeChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SourceMode}"/>
+          <TextBlock Grid.Column="0" Text="{v:Loc SlipAngle.GeneralSourceType.Label}"/>
+          <ComboBox Grid.Column="1" ItemsSource="{Binding AngleSourceChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding AngleSource}"/>
         </Grid>
-        <TextBlock Text="{v:Loc SlipAngle.Sources.ManualNote}" TextWrapping="Wrap" FontStyle="Italic"
-                   Visibility="{Binding IsPluginInternal, Converter={StaticResource VisibleWhen}}"/>
-        <TextBlock Text="{v:Loc SlipAngle.Sources.CustomNote}" TextWrapping="Wrap" FontStyle="Italic"
-                   Visibility="{Binding IsCustom, Converter={StaticResource VisibleWhen}}"/>
+        <TextBlock Text="{Binding AngleSourceNote}" TextWrapping="Wrap" FontStyle="Italic"/>
 
-        <!-- Custom only: the four wheel sources, the same row layout as the Lock tab's. -->
-        <Grid Visibility="{Binding IsCustom, Converter={StaticResource VisibleWhen}}">
+        <!-- PER-WHEEL (plugin page only): the running game's row in QAdvanceFeedback.SlipAngleSource.json, written by Apply -
+             Telemetry Type (None / Per-Wheel Angle / Lateral + Longitudinal Velocity), the boxes each choice needs, Has
+             Per-Wheel Surface Telemetry, Has Vertical Acceleration Data. GAPS (owner, 2026-11-24): a normal one (16) before
+             this block, small ones (8) before each checkbox, a larger one (24) before "Source Type for this game". -->
+        <StackPanel Visibility="{Binding ShowTelemetry, Converter={StaticResource VisibleWhen}}">
+          <TextBlock Text="{Binding TelemetryHeader}" FontWeight="Bold" Margin="4,16,4,4" TextWrapping="Wrap"/>
+          <TextBlock Text="{Binding TelemetryRowNote}" TextWrapping="Wrap" FontStyle="Italic"
+                     Visibility="{Binding TelemetryRowNote, Converter={StaticResource VisibleWhen}}"/>
+          <TextBlock Text="{Binding TelemetryMessage}" TextWrapping="Wrap" FontStyle="Italic"
+                     Visibility="{Binding TelemetryMessage, Converter={StaticResource VisibleWhen}}"/>
+          <StackPanel Visibility="{Binding ShowTelemetryRows, Converter={StaticResource VisibleWhen}}">
+            <TextBlock Text="{v:Loc SlipAngle.Telemetry.Note}" TextWrapping="Wrap" FontStyle="Italic"/>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock Grid.Column="0" Text="{v:Loc SlipAngle.Telemetry.Type.Label}"/>
+              <ComboBox Grid.Column="1" ItemsSource="{Binding TelemetryTypeChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding TelemetryType}"/>
+            </Grid>
+            <!-- Source Unit (owner, 2026-11-24): Per-Wheel Angle only - the row's "unit" (Auto Detect = none). -->
+            <Grid Visibility="{Binding ShowAngleRows, Converter={StaticResource VisibleWhen}}">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock Grid.Column="0" Text="{v:Loc SlipAngle.Telemetry.Unit.Label}"/>
+              <ComboBox Grid.Column="1" ItemsSource="{Binding SourceUnitChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SourceUnit}"/>
+            </Grid>
+            <Grid Visibility="{Binding ShowAngleRows, Converter={StaticResource VisibleWhen}}">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+              </Grid.RowDefinitions>
+              <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding AngleRows[0].Label}"/>
+              <TextBox   Grid.Row="0" Grid.Column="1" Text="{Binding AngleRows[0].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="0" Grid.Column="2" DataContext="{Binding AngleRows[0]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+              <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding AngleRows[1].Label}"/>
+              <TextBox   Grid.Row="1" Grid.Column="1" Text="{Binding AngleRows[1].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="1" Grid.Column="2" DataContext="{Binding AngleRows[1]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+              <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding AngleRows[2].Label}"/>
+              <TextBox   Grid.Row="2" Grid.Column="1" Text="{Binding AngleRows[2].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="2" Grid.Column="2" DataContext="{Binding AngleRows[2]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+              <TextBlock Grid.Row="3" Grid.Column="0" Text="{Binding AngleRows[3].Label}"/>
+              <TextBox   Grid.Row="3" Grid.Column="1" Text="{Binding AngleRows[3].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="3" Grid.Column="2" DataContext="{Binding AngleRows[3]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+            </Grid>
+            <TextBlock Text="{v:Loc SlipAngle.Telemetry.Tangent}" TextWrapping="Wrap" FontStyle="Italic"
+                       Visibility="{Binding ShowTelemetryTangent, Converter={StaticResource VisibleWhen}}"/>
+            <Grid Visibility="{Binding ShowVelocityRows, Converter={StaticResource VisibleWhen}}">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+              </Grid.RowDefinitions>
+              <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding LateralRows[0].Label}"/>
+              <TextBox   Grid.Row="0" Grid.Column="1" Text="{Binding LateralRows[0].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="0" Grid.Column="2" DataContext="{Binding LateralRows[0]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+              <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding LateralRows[1].Label}"/>
+              <TextBox   Grid.Row="1" Grid.Column="1" Text="{Binding LateralRows[1].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="1" Grid.Column="2" DataContext="{Binding LateralRows[1]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+              <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding LateralRows[2].Label}"/>
+              <TextBox   Grid.Row="2" Grid.Column="1" Text="{Binding LateralRows[2].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="2" Grid.Column="2" DataContext="{Binding LateralRows[2]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+              <TextBlock Grid.Row="3" Grid.Column="0" Text="{Binding LateralRows[3].Label}"/>
+              <TextBox   Grid.Row="3" Grid.Column="1" Text="{Binding LateralRows[3].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="3" Grid.Column="2" DataContext="{Binding LateralRows[3]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+            </Grid>
+            <!-- A small gap (8) between the lateral and the longitudinal boxes (owner, 2026-11-24). -->
+            <Grid Margin="0,8,0,0" Visibility="{Binding ShowVelocityRows, Converter={StaticResource VisibleWhen}}">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+              </Grid.RowDefinitions>
+              <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding LongitudinalRows[0].Label}"/>
+              <TextBox   Grid.Row="0" Grid.Column="1" Text="{Binding LongitudinalRows[0].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="0" Grid.Column="2" DataContext="{Binding LongitudinalRows[0]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+              <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding LongitudinalRows[1].Label}"/>
+              <TextBox   Grid.Row="1" Grid.Column="1" Text="{Binding LongitudinalRows[1].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="1" Grid.Column="2" DataContext="{Binding LongitudinalRows[1]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+              <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding LongitudinalRows[2].Label}"/>
+              <TextBox   Grid.Row="2" Grid.Column="1" Text="{Binding LongitudinalRows[2].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="2" Grid.Column="2" DataContext="{Binding LongitudinalRows[2]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+              <TextBlock Grid.Row="3" Grid.Column="0" Text="{Binding LongitudinalRows[3].Label}"/>
+              <TextBox   Grid.Row="3" Grid.Column="1" Text="{Binding LongitudinalRows[3].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="3" Grid.Column="2" DataContext="{Binding LongitudinalRows[3]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+            </Grid>
+            <TextBlock Text="{v:Loc SlipAngle.Telemetry.VelocityNote}" TextWrapping="Wrap" FontStyle="Italic"
+                       Visibility="{Binding ShowVelocityRows, Converter={StaticResource VisibleWhen}}"/>
+            <Grid Margin="0,8,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+              </Grid.RowDefinitions>
+              <TextBlock Grid.Column="0" Text="{v:Loc SlipAngle.Telemetry.HasSurface}"/>
+              <CheckBox Grid.Column="1" IsChecked="{Binding HasSurface}" Margin="4" VerticalAlignment="Center"/>
+              <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Text="{v:Loc SlipAngle.Telemetry.HasSurface.Desc}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,4"/>
+            </Grid>
+            <Grid Visibility="{Binding ShowSurfaceRows, Converter={StaticResource VisibleWhen}}">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+              </Grid.RowDefinitions>
+              <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding SurfaceRows[0].Label}"/>
+              <TextBox   Grid.Row="0" Grid.Column="1" Text="{Binding SurfaceRows[0].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="0" Grid.Column="2" DataContext="{Binding SurfaceRows[0]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+              <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding SurfaceRows[1].Label}"/>
+              <TextBox   Grid.Row="1" Grid.Column="1" Text="{Binding SurfaceRows[1].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="1" Grid.Column="2" DataContext="{Binding SurfaceRows[1]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+              <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding SurfaceRows[2].Label}"/>
+              <TextBox   Grid.Row="2" Grid.Column="1" Text="{Binding SurfaceRows[2].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="2" Grid.Column="2" DataContext="{Binding SurfaceRows[2]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+              <TextBlock Grid.Row="3" Grid.Column="0" Text="{Binding SurfaceRows[3].Label}"/>
+              <TextBox   Grid.Row="3" Grid.Column="1" Text="{Binding SurfaceRows[3].Text, UpdateSourceTrigger=PropertyChanged}"/>
+              <Button    Grid.Row="3" Grid.Column="2" DataContext="{Binding SurfaceRows[3]}" Content="{Binding PickLabel}" Command="{Binding PickCommand}"
+                         Visibility="{Binding ShowPick, Converter={StaticResource VisibleWhen}}"/>
+            </Grid>
+            <TextBlock Text="{v:Loc SlipAngle.Telemetry.SurfaceNote}" TextWrapping="Wrap" FontStyle="Italic"
+                       Visibility="{Binding ShowSurfaceRows, Converter={StaticResource VisibleWhen}}"/>
+            <!-- "Has Vertical Acceleration Data?" (owner, 2026-11-24): the row's verticalAcceleration - SimHub's
+                 FeedbackData.VerticalAcceleration is the same field for every game, but only some games fill it. -->
+            <Grid Margin="0,8,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+              </Grid.RowDefinitions>
+              <TextBlock Grid.Column="0" Text="{v:Loc SlipAngle.Telemetry.HasVerticalAcceleration}"/>
+              <CheckBox Grid.Column="1" IsChecked="{Binding HasVerticalAcceleration}" Margin="4" VerticalAlignment="Center"/>
+              <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Text="{v:Loc SlipAngle.Telemetry.HasVerticalAcceleration.Desc}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,4"/>
+            </Grid>
+            <!-- "Restore this game's source" (owner, 2026-11-24): only for a game the plugin ships a row for; writes it at once. -->
+            <Button Content="{v:Loc SlipAngle.Telemetry.Restore}" Command="{Binding RestoreTelemetryCommand}" HorizontalAlignment="Left" Padding="12,2" Margin="4,4,4,0"
+                    ToolTip="{v:Loc SlipAngle.Telemetry.Restore.ToolTip}"
+                    Visibility="{Binding ShowTelemetryRestore, Converter={StaticResource VisibleWhen}}"/>
+            <TextBlock Text="{Binding TelemetryStatus}" TextWrapping="Wrap" FontStyle="Italic" Foreground="#C62828" Margin="4,4,4,0"
+                       Visibility="{Binding TelemetryStatus, Converter={StaticResource VisibleWhen}}"/>
+          </StackPanel>
+        </StackPanel>
+
+        <!-- The game's unit dropdown (owner, 2026-11-22): what this game reads - its tyre value in a unit, or the car
+             angle. Only with "Per-wheel tyre angle when available" (ShowUnitChoice). Restore default only when changed. -->
+        <Grid Margin="0,24,0,0" Visibility="{Binding ShowUnitChoice, Converter={StaticResource VisibleWhen}}">
           <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
           </Grid.ColumnDefinitions>
-          <Grid.RowDefinitions>
-            <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
-          </Grid.RowDefinitions>
-
-          <TextBlock Grid.Row="0" Grid.Column="0" Text="{Binding SourceRows[0].Label}"/>
-          <Button    Grid.Row="0" Grid.Column="1" DataContext="{Binding SourceRows[0]}" Style="{StaticResource ScriptTypeToggleButtonStyle}"
-                     Content="{Binding ScriptLetter}" ToolTip="{Binding ScriptTooltip}" Command="{Binding CycleScriptTypeCommand}"
-                     Visibility="{Binding ShowScriptType, Converter={StaticResource VisibleWhen}}"/>
-          <TextBox   Grid.Row="0" Grid.Column="2" Text="{Binding SourceRows[0].Text, UpdateSourceTrigger=PropertyChanged}"/>
-          <Button    Grid.Row="0" Grid.Column="3" DataContext="{Binding SourceRows[0]}" Content="{Binding ActionLabel}" Command="{Binding ActionCommand}"
-                     Visibility="{Binding ShowAction, Converter={StaticResource VisibleWhen}}"/>
-
-          <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding SourceRows[1].Label}"/>
-          <Button    Grid.Row="1" Grid.Column="1" DataContext="{Binding SourceRows[1]}" Style="{StaticResource ScriptTypeToggleButtonStyle}"
-                     Content="{Binding ScriptLetter}" ToolTip="{Binding ScriptTooltip}" Command="{Binding CycleScriptTypeCommand}"
-                     Visibility="{Binding ShowScriptType, Converter={StaticResource VisibleWhen}}"/>
-          <TextBox   Grid.Row="1" Grid.Column="2" Text="{Binding SourceRows[1].Text, UpdateSourceTrigger=PropertyChanged}"/>
-          <Button    Grid.Row="1" Grid.Column="3" DataContext="{Binding SourceRows[1]}" Content="{Binding ActionLabel}" Command="{Binding ActionCommand}"
-                     Visibility="{Binding ShowAction, Converter={StaticResource VisibleWhen}}"/>
-
-          <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding SourceRows[2].Label}"/>
-          <Button    Grid.Row="2" Grid.Column="1" DataContext="{Binding SourceRows[2]}" Style="{StaticResource ScriptTypeToggleButtonStyle}"
-                     Content="{Binding ScriptLetter}" ToolTip="{Binding ScriptTooltip}" Command="{Binding CycleScriptTypeCommand}"
-                     Visibility="{Binding ShowScriptType, Converter={StaticResource VisibleWhen}}"/>
-          <TextBox   Grid.Row="2" Grid.Column="2" Text="{Binding SourceRows[2].Text, UpdateSourceTrigger=PropertyChanged}"/>
-          <Button    Grid.Row="2" Grid.Column="3" DataContext="{Binding SourceRows[2]}" Content="{Binding ActionLabel}" Command="{Binding ActionCommand}"
-                     Visibility="{Binding ShowAction, Converter={StaticResource VisibleWhen}}"/>
-
-          <TextBlock Grid.Row="3" Grid.Column="0" Text="{Binding SourceRows[3].Label}"/>
-          <Button    Grid.Row="3" Grid.Column="1" DataContext="{Binding SourceRows[3]}" Style="{StaticResource ScriptTypeToggleButtonStyle}"
-                     Content="{Binding ScriptLetter}" ToolTip="{Binding ScriptTooltip}" Command="{Binding CycleScriptTypeCommand}"
-                     Visibility="{Binding ShowScriptType, Converter={StaticResource VisibleWhen}}"/>
-          <TextBox   Grid.Row="3" Grid.Column="2" Text="{Binding SourceRows[3].Text, UpdateSourceTrigger=PropertyChanged}"/>
-          <Button    Grid.Row="3" Grid.Column="3" DataContext="{Binding SourceRows[3]}" Content="{Binding ActionLabel}" Command="{Binding ActionCommand}"
-                     Visibility="{Binding ShowAction, Converter={StaticResource VisibleWhen}}"/>
-        </Grid>
-
-        <!-- KEY DATA POINTS: one Min/Best/Max set on Raw.All. Applies and saves at once (never Apply).
-             Auto => the editors (text box and +/- together) are disabled and show the learned window. -->
-        <TextBlock Text="{Binding KeyDataHeader}" FontWeight="Bold" Margin="4,14,4,4" TextWrapping="Wrap"/>
-        <!-- Unit dropdown (owner, 2026-11-22): always shown; entries depend on the game. Restore default only when changed. -->
-        <StackPanel Orientation="Horizontal" Margin="4,0,4,6" Visibility="{Binding ShowUnitChoice, Converter={StaticResource VisibleWhen}}">
-          <ComboBox ItemsSource="{Binding UnitChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedUnitChoice}"
-                    MinWidth="240" ToolTip="{v:Loc SlipAngle.Unit.ToolTip}"/>
-          <Button Content="{v:Loc SlipAngle.Unit.Reset}" Command="{Binding ResetUnitCommand}" Margin="6,0,0,0" Padding="12,2"
+          <TextBlock Grid.Column="0" Text="{v:Loc SlipAngle.Unit.Label}"/>
+          <ComboBox Grid.Column="1" ItemsSource="{Binding UnitChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedUnitChoice}"
+                    ToolTip="{v:Loc SlipAngle.Unit.ToolTip}"/>
+          <Button Grid.Column="2" Content="{v:Loc SlipAngle.Unit.Reset}" Command="{Binding ResetUnitCommand}" Margin="6,0,0,0" Padding="12,2" HorizontalAlignment="Left"
                   Visibility="{Binding ShowUnitReset, Converter={StaticResource VisibleWhen}}"
                   ToolTip="{v:Loc SlipAngle.Unit.Reset.ToolTip}"/>
-        </StackPanel>
+        </Grid>
+
+        <TextBlock Text="{Binding KeyDataHeader}" FontWeight="Bold" Margin="4,14,4,4" TextWrapping="Wrap"/>
+        <!-- The surface whose learning key is in use (owner, 2026-11-23) - why the window / LEDs move when it changes -
+             and what a surface with no confirmed window starts from. -->
+        <TextBlock Text="{Binding SurfaceText}" TextWrapping="Wrap" Margin="4,0,4,2"
+                   Visibility="{Binding SurfaceText, Converter={StaticResource VisibleWhen}}"/>
+        <TextBlock Text="{Binding SurfaceBorrowText}" TextWrapping="Wrap" FontStyle="Italic" Margin="4,0,4,4"
+                   Visibility="{Binding SurfaceBorrowText, Converter={StaticResource VisibleWhen}}"/>
         <Grid IsEnabled="{Binding Available}">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" SharedSizeGroup="SlipAngleAlign"/>

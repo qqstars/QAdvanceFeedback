@@ -120,17 +120,31 @@ namespace QAdvanceFeedback.Tests
         }
 
         [Fact]
-        public void RestoreDefaults_preserves_slip_angle_custom_sources_like_lock_and_slip()
+        public void RestoreDefaults_resets_slip_angle_weights()
         {
-            // R36: the Custom source is the driver's work - kept for Slip Angle exactly as for Lock/Slip.
             var s = new QAdvanceFeedbackSettings();
-            var custom = new WheelSourceSet { FrontLeft = "My.SlipAngle.FL", ScriptTypeRearRight = ScriptType.NCalc };
-            s.SlipAngle.CustomSources = custom;
             s.SlipAngle.WeightMax = 0.4;
             s.RestoreDefaults();
-            Assert.Same(custom, s.SlipAngle.CustomSources);
-            Assert.Equal("My.SlipAngle.FL", s.SlipAngle.CustomSources.FrontLeft);
-            Assert.Equal(SlipAngleChannelSettings.DefaultWeightMax, s.SlipAngle.WeightMax);   // the rest is reset
+            Assert.Equal(SlipAngleChannelSettings.DefaultWeightMax, s.SlipAngle.WeightMax);
+        }
+
+        [Fact]
+        public void RestoreDefaults_puts_the_global_source_type_mode_back_to_per_wheel()
+        {
+            var s = new QAdvanceFeedbackSettings();
+            s.SlipAngle.AngleSource = SlipAngleAngleSource.CarAngle;
+            s.RestoreDefaults();
+            Assert.Equal(SlipAngleAngleSource.PerWheelWhenAvailable, s.SlipAngle.AngleSource);
+        }
+
+        [Fact]
+        public void The_global_source_type_mode_is_saved_and_loaded_with_the_config()
+        {
+            var s = new QAdvanceFeedbackSettings();
+            s.SlipAngle.AngleSource = SlipAngleAngleSource.CarAngle;
+            var loaded = Newtonsoft.Json.JsonConvert.DeserializeObject<QAdvanceFeedbackSettings>(Newtonsoft.Json.JsonConvert.SerializeObject(s));
+            loaded.SlipAngle.Normalise();
+            Assert.Equal(SlipAngleAngleSource.CarAngle, loaded.SlipAngle.AngleSource);
         }
     }
 }

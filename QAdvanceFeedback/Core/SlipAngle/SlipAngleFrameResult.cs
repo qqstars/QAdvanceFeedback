@@ -57,6 +57,8 @@ namespace QAdvanceFeedback.Core.SlipAngle
         public double SurfaceWeightLowGrip { get; internal set; }
         public SurfaceBucketSource SurfaceSource { get; internal set; } = SurfaceBucketSource.Unknown;
         public SlipAngleUnit Unit { get; internal set; } = SlipAngleUnit.Unverified;
+        /// <summary>Where the game's per-wheel slip angle stands this frame (<see cref="SlipAngleSourceState"/>).</summary>
+        public SlipAngleSourceState SourceState { get; internal set; } = SlipAngleSourceState.NoSource;
         public bool UnitUndetermined { get; internal set; }
         public int UnitVotesDegrees { get; internal set; }
         public int UnitVotesRadians { get; internal set; }

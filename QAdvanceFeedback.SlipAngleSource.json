@@ -1,0 +1,282 @@
+{
+  "about": "QAdvanceFeedback per-wheel slip-angle sources. id: one or more SimHub game ids separated by |; * and ? are wildcards (FH? = FH plus one character); regex: starts a regular expression that runs to the end of the id. A game named exactly wins over a pattern; otherwise the first matching row wins. Each row lists four SimHub properties: front left, front right, rear left, rear right. unit: degrees, radians, ratio1 (0-1 slip ratio) or ratio100 (0-100); leave it out to detect the unit while driving. A row computed from velocities (transform atan2PatchVelocity) is always radians and has no unit. surface lists four per-wheel surface properties and surfaceValues says what their values mean (sealed, loose or lowGrip); without surfaceValues, SimHub's own grass/gravel flag is used. verticalAcceleration: true when the game really writes SimHub's vertical acceleration (bumps and hops then pause slip-angle learning); other games leave it at 0, so it is not read. A row with only 'surface' or 'verticalAcceleration' has no slip-angle field and uses the car angle.",
+  "version": 1,
+  "games": [
+    {
+      "id": "ACC|AssettoCorsaCompetizione|AssettoCorsaRally|AssettoCorsaEVO",
+      "slipAngle": [
+        "DataCorePlugin.GameRawData.Physics.slipAngle01",
+        "DataCorePlugin.GameRawData.Physics.slipAngle02",
+        "DataCorePlugin.GameRawData.Physics.slipAngle03",
+        "DataCorePlugin.GameRawData.Physics.slipAngle04"
+      ],
+      "note": "Wheel order: SimHub feedback index (FL, FR, RL, RR) for ACC; not confirmed for AC Rally and AC EVO (FL, FR, RL, RR assumed)."
+    },
+    {
+      "id": "regex:^F120(2[3-9]|[3-9]\\d)[A-Za-z]*$",
+      "slipAngle": [
+        "DataCorePlugin.GameRawData.PacketMotionExData.m_wheelSlipAngle03",
+        "DataCorePlugin.GameRawData.PacketMotionExData.m_wheelSlipAngle04",
+        "DataCorePlugin.GameRawData.PacketMotionExData.m_wheelSlipAngle01",
+        "DataCorePlugin.GameRawData.PacketMotionExData.m_wheelSlipAngle02"
+      ],
+      "surface": [
+        "DataCorePlugin.GameRawData.PlayerCarTelemetryData.m_surfaceType03",
+        "DataCorePlugin.GameRawData.PlayerCarTelemetryData.m_surfaceType04",
+        "DataCorePlugin.GameRawData.PlayerCarTelemetryData.m_surfaceType01",
+        "DataCorePlugin.GameRawData.PlayerCarTelemetryData.m_surfaceType02"
+      ],
+      "note": "Matches F12023 through F12099 (F1 23, F1 24, F1 25 and later), with or without a suffix such as F12026SeasonPack. The game sends RL, RR, FL, FR; listed here as FL, FR, RL, RR."
+    },
+    {
+      "id": "FM?|FH?",
+      "slipAngle": [
+        "DataCorePlugin.GameRawData.TireSlipAngleFrontLeft",
+        "DataCorePlugin.GameRawData.TireSlipAngleFrontRight",
+        "DataCorePlugin.GameRawData.TireSlipAngleRearLeft",
+        "DataCorePlugin.GameRawData.TireSlipAngleRearRight"
+      ],
+      "unit": "ratio1",
+      "note": "Matches FM plus one character (FM7, FM8) and FH plus one character (FH4, FH5, FH6 and later). Normalised slip angle: 0 = full grip, 1 = at the grip limit, above 1 = grip lost."
+    },
+    {
+      "id": "LFS",
+      "slipAngle": [
+        "DataCorePlugin.GameRawData.OutSim2.OSWheels03.TanSlipAngle",
+        "DataCorePlugin.GameRawData.OutSim2.OSWheels04.TanSlipAngle",
+        "DataCorePlugin.GameRawData.OutSim2.OSWheels01.TanSlipAngle",
+        "DataCorePlugin.GameRawData.OutSim2.OSWheels02.TanSlipAngle"
+      ],
+      "unit": "radians",
+      "transform": "atanOfTangent",
+      "note": "The game sends tan(slip angle) as RL, RR, FL, FR; listed here as FL, FR, RL, RR."
+    },
+    {
+      "id": "Wreckfest2",
+      "slipAngle": [
+        "DataCorePlugin.GameRawData.Main.carPlayer.tires01.slipAngle",
+        "DataCorePlugin.GameRawData.Main.carPlayer.tires02.slipAngle",
+        "DataCorePlugin.GameRawData.Main.carPlayer.tires03.slipAngle",
+        "DataCorePlugin.GameRawData.Main.carPlayer.tires04.slipAngle"
+      ],
+      "surface": [
+        "DataCorePlugin.GameRawData.Main.carPlayer.tires01.surfaceType",
+        "DataCorePlugin.GameRawData.Main.carPlayer.tires02.surfaceType",
+        "DataCorePlugin.GameRawData.Main.carPlayer.tires03.surfaceType",
+        "DataCorePlugin.GameRawData.Main.carPlayer.tires04.surfaceType"
+      ]
+    },
+    {
+      "id": "ProjectMotorRacing",
+      "slipAngle": [
+        "DataCorePlugin.GameRawData.PlayerTelemetry.m_wheels01.m_slipAngle",
+        "DataCorePlugin.GameRawData.PlayerTelemetry.m_wheels02.m_slipAngle",
+        "DataCorePlugin.GameRawData.PlayerTelemetry.m_wheels03.m_slipAngle",
+        "DataCorePlugin.GameRawData.PlayerTelemetry.m_wheels04.m_slipAngle"
+      ],
+      "surface": [
+        "DataCorePlugin.GameRawData.PlayerTelemetry.m_wheels01.m_contactMaterialHash",
+        "DataCorePlugin.GameRawData.PlayerTelemetry.m_wheels02.m_contactMaterialHash",
+        "DataCorePlugin.GameRawData.PlayerTelemetry.m_wheels03.m_contactMaterialHash",
+        "DataCorePlugin.GameRawData.PlayerTelemetry.m_wheels04.m_contactMaterialHash"
+      ],
+      "note": "Wheel order: SimHub feedback index (FL, FR, RL, RR)."
+    },
+    {
+      "id": "Drift21",
+      "slipAngle": [
+        "DataCorePlugin.GameRawData.RaceTelemetry.TireSlipAngleRadians_FrontLeft",
+        "DataCorePlugin.GameRawData.RaceTelemetry.TireSlipAngleRadians_FrontRight",
+        "DataCorePlugin.GameRawData.RaceTelemetry.TireSlipAngleRadians_BackLeft",
+        "DataCorePlugin.GameRawData.RaceTelemetry.TireSlipAngleRadians_BackRight"
+      ],
+      "unit": "radians"
+    },
+    {
+      "id": "KartKraft",
+      "slipAngle": [
+        "DataCorePlugin.GameRawData.Motion.WheelsArray01.SlipAngle",
+        "DataCorePlugin.GameRawData.Motion.WheelsArray02.SlipAngle",
+        "DataCorePlugin.GameRawData.Motion.WheelsArray03.SlipAngle",
+        "DataCorePlugin.GameRawData.Motion.WheelsArray04.SlipAngle"
+      ],
+      "unit": "degrees",
+      "surface": [
+        "DataCorePlugin.GameRawData.Motion.WheelsArray01.Surface",
+        "DataCorePlugin.GameRawData.Motion.WheelsArray02.Surface",
+        "DataCorePlugin.GameRawData.Motion.WheelsArray03.Surface",
+        "DataCorePlugin.GameRawData.Motion.WheelsArray04.Surface"
+      ],
+      "note": "Wheel order not confirmed (FL, FR, RL, RR assumed)."
+    },
+    {
+      "id": "BusBound",
+      "slipAngle": [
+        "DataCorePlugin.GameRawData.Telemetry.Bus.Wheels01.SlipAngle",
+        "DataCorePlugin.GameRawData.Telemetry.Bus.Wheels02.SlipAngle",
+        "DataCorePlugin.GameRawData.Telemetry.Bus.Wheels03.SlipAngle",
+        "DataCorePlugin.GameRawData.Telemetry.Bus.Wheels04.SlipAngle"
+      ],
+      "surface": [
+        "DataCorePlugin.GameRawData.Telemetry.Bus.Wheels01.Ground",
+        "DataCorePlugin.GameRawData.Telemetry.Bus.Wheels02.Ground",
+        "DataCorePlugin.GameRawData.Telemetry.Bus.Wheels03.Ground",
+        "DataCorePlugin.GameRawData.Telemetry.Bus.Wheels04.Ground"
+      ],
+      "note": "Wheel order not confirmed (FL, FR, RL, RR assumed)."
+    },
+    {
+      "id": "Rennsport",
+      "slipAngle": [
+        "DataCorePlugin.GameRawData.TelemetryPoint.LF.SlipAngle",
+        "DataCorePlugin.GameRawData.TelemetryPoint.RF.SlipAngle",
+        "DataCorePlugin.GameRawData.TelemetryPoint.LR.SlipAngle",
+        "DataCorePlugin.GameRawData.TelemetryPoint.RR.SlipAngle"
+      ],
+      "surface": [
+        "DataCorePlugin.GameRawData.TelemetryPoint.LF.ContactSurface",
+        "DataCorePlugin.GameRawData.TelemetryPoint.RF.ContactSurface",
+        "DataCorePlugin.GameRawData.TelemetryPoint.LR.ContactSurface",
+        "DataCorePlugin.GameRawData.TelemetryPoint.RR.ContactSurface"
+      ],
+      "verticalAcceleration": true,
+      "note": "The game id is not confirmed in SimHub's game list."
+    },
+    {
+      "id": "RFactor2",
+      "slipAngle": [
+        "DataCorePlugin.GameRawData.CurrentPlayerTelemetry.mWheels01.mLateralPatchVel",
+        "DataCorePlugin.GameRawData.CurrentPlayerTelemetry.mWheels02.mLateralPatchVel",
+        "DataCorePlugin.GameRawData.CurrentPlayerTelemetry.mWheels03.mLateralPatchVel",
+        "DataCorePlugin.GameRawData.CurrentPlayerTelemetry.mWheels04.mLateralPatchVel"
+      ],
+      "transform": "atan2PatchVelocity",
+      "longitudinal": [
+        "DataCorePlugin.GameRawData.CurrentPlayerTelemetry.mWheels01.mLongitudinalGroundVel",
+        "DataCorePlugin.GameRawData.CurrentPlayerTelemetry.mWheels02.mLongitudinalGroundVel",
+        "DataCorePlugin.GameRawData.CurrentPlayerTelemetry.mWheels03.mLongitudinalGroundVel",
+        "DataCorePlugin.GameRawData.CurrentPlayerTelemetry.mWheels04.mLongitudinalGroundVel"
+      ],
+      "surface": [
+        "DataCorePlugin.GameRawData.CurrentPlayerTelemetry.mWheels01.mSurfaceType",
+        "DataCorePlugin.GameRawData.CurrentPlayerTelemetry.mWheels02.mSurfaceType",
+        "DataCorePlugin.GameRawData.CurrentPlayerTelemetry.mWheels03.mSurfaceType",
+        "DataCorePlugin.GameRawData.CurrentPlayerTelemetry.mWheels04.mSurfaceType"
+      ],
+      "surfaceValues": {
+        "0": "sealed",
+        "2": "loose",
+        "3": "loose",
+        "4": "loose",
+        "5": "sealed"
+      },
+      "note": "Computed: atan2(lateral patch velocity, |longitudinal ground velocity|). Surface: 0 Dry, 2 Grass, 3 Dirt, 4 Gravel, 5 Kerb (1 Wet and 6 Special are left unknown)."
+    },
+    {
+      "id": "LMU",
+      "slipAngle": [
+        "DataCorePlugin.GameRawData.PlayerNativeTelemetry.mWheel01.mLateralPatchVel",
+        "DataCorePlugin.GameRawData.PlayerNativeTelemetry.mWheel02.mLateralPatchVel",
+        "DataCorePlugin.GameRawData.PlayerNativeTelemetry.mWheel03.mLateralPatchVel",
+        "DataCorePlugin.GameRawData.PlayerNativeTelemetry.mWheel04.mLateralPatchVel"
+      ],
+      "transform": "atan2PatchVelocity",
+      "longitudinal": [
+        "DataCorePlugin.GameRawData.PlayerNativeTelemetry.mWheel01.mLongitudinalGroundVel",
+        "DataCorePlugin.GameRawData.PlayerNativeTelemetry.mWheel02.mLongitudinalGroundVel",
+        "DataCorePlugin.GameRawData.PlayerNativeTelemetry.mWheel03.mLongitudinalGroundVel",
+        "DataCorePlugin.GameRawData.PlayerNativeTelemetry.mWheel04.mLongitudinalGroundVel"
+      ],
+      "surface": [
+        "DataCorePlugin.GameRawData.PlayerNativeTelemetry.mWheel01.mSurfaceType",
+        "DataCorePlugin.GameRawData.PlayerNativeTelemetry.mWheel02.mSurfaceType",
+        "DataCorePlugin.GameRawData.PlayerNativeTelemetry.mWheel03.mSurfaceType",
+        "DataCorePlugin.GameRawData.PlayerNativeTelemetry.mWheel04.mSurfaceType"
+      ],
+      "note": "Computed: atan2(lateral patch velocity, |longitudinal ground velocity|). Not confirmed that SimHub publishes these fields."
+    },
+    {
+      "id": "NASCARHeat4|NASCARHeat5|TonyStewartsAllAmericanRacing|TonyStewartsSprintCarRacing|SRXTheGame",
+      "slipAngle": [
+        "DataCorePlugin.GameRawData.LCarPacket.wheel_lf.lat_terrain_speed",
+        "DataCorePlugin.GameRawData.LCarPacket.wheel_rf.lat_terrain_speed",
+        "DataCorePlugin.GameRawData.LCarPacket.wheel_lr.lat_terrain_speed",
+        "DataCorePlugin.GameRawData.LCarPacket.wheel_rr.lat_terrain_speed"
+      ],
+      "transform": "atan2PatchVelocity",
+      "longitudinal": [
+        "DataCorePlugin.GameRawData.LCarPacket.wheel_lf.lon_terrain_speed",
+        "DataCorePlugin.GameRawData.LCarPacket.wheel_rf.lon_terrain_speed",
+        "DataCorePlugin.GameRawData.LCarPacket.wheel_lr.lon_terrain_speed",
+        "DataCorePlugin.GameRawData.LCarPacket.wheel_rr.lon_terrain_speed"
+      ],
+      "surface": [
+        "DataCorePlugin.GameRawData.LCarPacket.wheel_lf.surface",
+        "DataCorePlugin.GameRawData.LCarPacket.wheel_rf.surface",
+        "DataCorePlugin.GameRawData.LCarPacket.wheel_lr.surface",
+        "DataCorePlugin.GameRawData.LCarPacket.wheel_rr.surface"
+      ],
+      "provisional": true,
+      "note": "Provisional: the terrain speeds are not proven to be tyre patch velocities."
+    },
+    {
+      "id": "Automobilista2|PCars|PCars2|PCars3",
+      "surface": [
+        "DataCorePlugin.GameRawData.mTerrain01",
+        "DataCorePlugin.GameRawData.mTerrain02",
+        "DataCorePlugin.GameRawData.mTerrain03",
+        "DataCorePlugin.GameRawData.mTerrain04"
+      ]
+    },
+    {
+      "id": "RFactor1|StockCarExtreme|CopaPetrobrasDeMarcas|FormulaTruck2013|Automobilista|SIMBINGTR2",
+      "surface": [
+        "DataCorePlugin.GameRawData.Data.wheel01.surfaceType",
+        "DataCorePlugin.GameRawData.Data.wheel02.surfaceType",
+        "DataCorePlugin.GameRawData.Data.wheel03.surfaceType",
+        "DataCorePlugin.GameRawData.Data.wheel04.surfaceType"
+      ]
+    },
+    {
+      "id": "GranTurismo7",
+      "surface": [
+        "DataCorePlugin.GameRawData.surfaceType01",
+        "DataCorePlugin.GameRawData.surfaceType02",
+        "DataCorePlugin.GameRawData.surfaceType03",
+        "DataCorePlugin.GameRawData.surfaceType04"
+      ],
+      "surfaceValues": {
+        "tarmac": "sealed",
+        "kerb": "sealed",
+        "dirt": "loose",
+        "grass": "loose",
+        "sand": "loose",
+        "snow": "lowGrip"
+      },
+      "note": "Surface names only (their numbers are not documented)."
+    },
+    {
+      "id": "BeamNgDrive",
+      "surface": [
+        "DataCorePlugin.GameRawData.wheel_contactMaterial_fl",
+        "DataCorePlugin.GameRawData.wheel_contactMaterial_fr",
+        "DataCorePlugin.GameRawData.wheel_contactMaterial_rl",
+        "DataCorePlugin.GameRawData.wheel_contactMaterial_rr"
+      ]
+    },
+    {
+      "id": "F12019|F12020|F12021|F12022",
+      "surface": [
+        "DataCorePlugin.GameRawData.PlayerCarTelemetryData.m_surfaceType01",
+        "DataCorePlugin.GameRawData.PlayerCarTelemetryData.m_surfaceType02",
+        "DataCorePlugin.GameRawData.PlayerCarTelemetryData.m_surfaceType03",
+        "DataCorePlugin.GameRawData.PlayerCarTelemetryData.m_surfaceType04"
+      ]
+    },
+    {
+      "id": "IRacing",
+      "verticalAcceleration": true,
+      "note": "No per-wheel slip angle; SimHub's vertical acceleration is real (iRacing VertAccel, m/s2)."
+    }
+  ]
+}

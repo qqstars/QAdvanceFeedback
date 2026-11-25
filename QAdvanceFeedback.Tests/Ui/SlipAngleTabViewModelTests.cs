@@ -43,6 +43,8 @@ namespace QAdvanceFeedback.Tests.Ui
         public string Picked { get; set; }
         public Task<SourceEdit> EditSourceAsync(SourceButtonMode mode, string text, ScriptType type) =>
             Task.FromResult(Picked == null ? null : new SourceEdit(Picked, type));
+        /// <summary>Null unless a test gives the tab a source file (the telemetry editor is hidden then).</summary>
+        public SlipAngleSourceStore NativeSources { get; set; }
     }
 
     /// <summary>The plugin page's Slip Angle tab (docs\slip-angle-design.md 9.9).</summary>
@@ -66,12 +68,6 @@ namespace QAdvanceFeedback.Tests.Ui
                 0.63, ColdStartTier.Tier1, peakConfirmed, manualGateReady, game,
                 identity ?? (tier == SourceNativeness.Fallback ? SlipAngleFrameProcessor.FallbackIdentity : SlipAngleFrameProcessor.NativeIdentity),
                 faulted, quality);
-
-        private static string CustomIdentity(string fl) => SettingsHub.SlipAngleIdentity(new SlipAngleChannelSettings
-        {
-            SourceMode = SourceMode.Custom,
-            CustomSources = new WheelSourceSet { FrontLeft = fl, FrontRight = string.Empty, RearLeft = string.Empty, RearRight = string.Empty },
-        });
 
         private string Identity => SettingsHub.SlipAngleIdentity(_host.Settings.SlipAngle, _host.IdentityTier);
 
@@ -200,7 +196,7 @@ namespace QAdvanceFeedback.Tests.Ui
         }
 
         [Fact]
-        public void No_data_status_when_raw_all_is_null_but_not_for_custom_with_a_value()
+        public void No_data_status_when_raw_all_is_null_but_not_with_a_value()
         {
             _host.Status = Status(tier: SourceNativeness.Unknown, hasData: false);
             SlipAngleTabViewModel vm = NewVm();
@@ -247,10 +243,9 @@ namespace QAdvanceFeedback.Tests.Ui
             vm.HoldMs = 400;
             vm.MaxFlightMs = 900;
             vm.PulseEnabled = true;
-            vm.SourceMode = SourceMode.Custom;
-            vm.SourceRows[0].Text = "MyProp.FL";
+            vm.AngleSource = SlipAngleAngleSource.CarAngle;
             vm.Projector.Slightly.Output = 12;
-            Assert.Equal(8, edits);
+            Assert.Equal(7, edits);
             Assert.Equal(TriggerBy.Any, _host.Settings.SlipAngle.Gate.TriggerBy);   // not applied yet
 
             var target = new SlipAngleChannelSettings();
@@ -260,8 +255,7 @@ namespace QAdvanceFeedback.Tests.Ui
             Assert.Equal(0.4, target.Drift.HoldSeconds, 9);
             Assert.Equal(0.9, target.Gate.MaxFlightSeconds, 9);
             Assert.True(target.Pulse.Enabled);
-            Assert.Equal(SourceMode.Custom, target.SourceMode);
-            Assert.Equal("MyProp.FL", target.CustomSources.FrontLeft);
+            Assert.Equal(SlipAngleAngleSource.CarAngle, target.AngleSource);
             Assert.Equal(12.0, target.Projector.SlightlyOutput);
             Assert.Equal(ProjectorPreset.CurveCustom, target.Projector.Preset);
         }
@@ -338,82 +332,6 @@ namespace QAdvanceFeedback.Tests.Ui
         }
 
         [Fact]
-        public void Custom_learned_hints_wait_for_the_manual_warm_up_gate_like_lock()
-        {
-            // Lock's rule (RefreshKeyDataChannel): hintReady = knownSource || manualLive. Custom has no
-            // shipped default, so its hint waits for the gate, for THIS source.
-            string custom = CustomIdentity("My.FL");
-            _host.Settings.SlipAngle.SourceMode = SourceMode.Custom;
-            _host.Settings.SlipAngle.CustomSources = new WheelSourceSet { FrontLeft = "My.FL" };
-            _host.Settings.SlipAngle.KeyData.SetAutoGenerate(custom, false);
-            _host.Status = Status(tier: SourceNativeness.Unknown, pluginInternal: false, identity: custom, manualGateReady: false);
-            _host.Learned[custom] = new SlipAngleWindow(4.0, 7.0, 9.0);
-            SlipAngleTabViewModel vm = NewVm();
-            Assert.False(vm.Auto);
-            Assert.False(vm.ShowLearnedHints);
-
-            _host.Status = Status(tier: SourceNativeness.Unknown, pluginInternal: false, identity: custom, manualGateReady: true);
-            _ticker.Advance(TimeSpan.FromSeconds(1));
-            vm.RefreshKeyData();
-            Assert.True(vm.ShowLearnedHints);
-            Assert.Contains("9.0", vm.MaxLearnedText);
-
-            // A gate-ready snapshot of ANOTHER source is not this source's evidence.
-            _host.Status = Status(tier: SourceNativeness.Unknown, pluginInternal: false, identity: CustomIdentity("Other.FL"), manualGateReady: true);
-            vm.RefreshKeyData();
-            Assert.False(vm.ShowLearnedHints);
-        }
-
-        [Fact]
-        public void Key_data_follows_the_draft_source_before_apply()
-        {
-            // R35: like the Lock tab, switching the Source combo shows (and edits) that source's key data at once.
-            string custom = CustomIdentity("My.FL");
-            var k = _host.Settings.SlipAngle.KeyData;
-            k.SetAutoGenerate(custom, false);
-            Assert.True(k.TryCommitManual("game", custom, 3.0, 6.0, 8.0));
-            _host.Status = Status();   // the applied source is Plugin Internal (native)
-            _host.Learned[SlipAngleFrameProcessor.NativeIdentity] = new SlipAngleWindow(4.0, 7.0, 9.0);   // the exact key's window
-            SlipAngleTabViewModel vm = NewVm();
-            Assert.True(vm.Auto);
-            Assert.Equal(9.0, vm.Max);
-
-            vm.SourceMode = SourceMode.Custom;
-            vm.SourceRows[0].Text = "My.FL";
-            Assert.Equal(SourceMode.Manual, _host.Settings.SlipAngle.SourceMode);   // nothing applied
-            Assert.False(vm.Auto);
-            Assert.Equal(new double?[] { 3.0, 6.0, 8.0 }, new[] { vm.Min, vm.Best, vm.Max });
-            Assert.False(vm.ShowReset);   // Custom: nothing to restore to
-
-            // Edits go to the draft source's slot, not the applied one.
-            vm.Max = 8.5;
-            _ticker.Advance(TimeSpan.FromSeconds(1));
-            Assert.True(k.TryGetSlot("game", custom, out SlipAngleWindow w));
-            Assert.Equal(8.5, w.Max);
-            Assert.True(k.GetAutoGenerate(Identity));   // the native source untouched
-
-            // And back: the native source's key data again.
-            vm.SourceMode = SourceMode.Manual;
-            Assert.True(vm.Auto);
-            Assert.Equal(9.0, vm.Max);
-        }
-
-        [Fact]
-        public void A_pending_edit_lands_in_the_source_it_was_typed_for()
-        {
-            string custom = CustomIdentity("My.FL");
-            SlipAngleTabViewModel vm = NewVm();
-            vm.Auto = false;
-            vm.Min = 4.0; vm.Best = 7.0; vm.Max = 9.0;
-            vm.SourceMode = SourceMode.Custom;   // before the 700 ms debounce
-            vm.SourceRows[0].Text = "My.FL";
-            _ticker.Advance(TimeSpan.FromSeconds(1));
-            Assert.True(_host.Settings.SlipAngle.KeyData.TryGetSlot("game", Identity, out SlipAngleWindow w));
-            Assert.Equal(9.0, w.Max);
-            Assert.False(_host.Settings.SlipAngle.KeyData.TryGetSlot("game", custom, out _));
-        }
-
-        [Fact]
         public void Per_game_switch_is_saved_at_once()
         {
             SlipAngleTabViewModel vm = NewVm();
@@ -447,31 +365,6 @@ namespace QAdvanceFeedback.Tests.Ui
             vm.Auto = true;   // before the 700 ms debounce
             Assert.True(_host.Settings.SlipAngle.KeyData.TryGetSlot("game", Identity, out SlipAngleWindow w));
             Assert.Equal(9.0, w.Max);
-        }
-
-        [Fact]
-        public void Custom_rows_cycle_the_script_type_and_pick_a_property()
-        {
-            SlipAngleTabViewModel vm = NewVm();
-            vm.SourceMode = SourceMode.Custom;
-            SlipAngleSourceRowViewModel row = vm.SourceRows[1];
-            Assert.Equal("P", row.ScriptLetter);
-            row.CycleScriptTypeCommand.Execute(null);
-            Assert.Equal(ScriptType.JavaScript, row.ScriptType);
-            Assert.Equal("J", row.ScriptLetter);
-
-            _host.Picked = "Game.SlipAngleFR";
-            row.ActionCommand.Execute(null);
-            Assert.Equal("Game.SlipAngleFR", row.Text);
-        }
-
-        [Fact]
-        public void Custom_fields_show_only_for_custom()
-        {
-            SlipAngleTabViewModel vm = NewVm();
-            Assert.False(vm.IsCustom);
-            vm.SourceMode = SourceMode.Custom;
-            Assert.True(vm.IsCustom);
         }
 
         [Fact]

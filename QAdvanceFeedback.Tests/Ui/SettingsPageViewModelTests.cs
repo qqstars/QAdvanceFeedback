@@ -217,7 +217,6 @@ namespace QAdvanceFeedback.Tests.Ui
             s.Lock.KeyDataPoints.Values["g|lock"] = new KeyDataPointEntry { SMax = 8, S90 = 6, S75 = 5 };
             s.Slip.KeyDataPoints.Values["g|slip"] = new KeyDataPointEntry { SMax = 7, S90 = 5, S75 = 4 };
             s.Lock.CustomSources = new WheelSourceSet { FrontLeft = "my.fl" };
-            s.SlipAngle.CustomSources = new WheelSourceSet { FrontLeft = "my.sa" };
             KeyDataPointSettings lockKeyData = s.Lock.KeyDataPoints;
 
             // Today's rule, computed the way the old page did it: RestoreDefaults on the live settings.
@@ -230,7 +229,6 @@ namespace QAdvanceFeedback.Tests.Ui
             Assert.Equal(Json(expected), Json(_host.Settings));
             Assert.Equal(8, _host.Settings.Lock.KeyDataPoints.Values["g|lock"].SMax);
             Assert.Equal("my.fl", _host.Settings.Lock.CustomSources.FrontLeft);
-            Assert.Equal("my.sa", _host.Settings.SlipAngle.CustomSources.FrontLeft);
             Assert.Same(lockKeyData, _host.Settings.Lock.KeyDataPoints);   // carried data untouched in place
             // Immediate, like today: applied and saved, nothing left for Apply.
             Assert.Equal(1, _host.ApplyCalls);

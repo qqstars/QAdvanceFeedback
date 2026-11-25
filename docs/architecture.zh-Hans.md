@@ -36,7 +36,7 @@
 
 **禁止依赖：** 不依赖它上方的任何东西。它可以引用 SimHub/GameReaderCommon 的类型（它是唯一被允许这样做的地方），但第 3 层及以上永远不会反过来引用 SimHub 类型。
 
-**Slip Angle 输入：** `SlipAngleRawSources.cs` 是按游戏的 raw 数据表，`SlipAngleRawSourceReader` 通过查值委托读取它，因此数据表本身不依赖 SimHub、可链接编译进测试。`SimHubTelemetryAdapter` 在 `ITelemetryFrame` 上补充 Slip Angle 所需的车身输入（前向局部速度、偏航率、来自 `IsFlying` 的腾空、路肩、垂直 G、路面抓地提示）。
+**Slip Angle 输入：** `SlipAngleRawSources.cs` 是按游戏的 raw 数据表（1.2.1起只由`QAdvanceFeedback.SlipAngleSource.json`构建，见`SlipAngleSourceFile.cs`），`SlipAngleRawSourceReader` 通过查值委托读取它，因此数据表本身不依赖 SimHub、可链接编译进测试。`SimHubTelemetryAdapter` 在 `ITelemetryFrame` 上补充 Slip Angle 所需的车身输入（前向局部速度、偏航率、来自 `IsFlying` 的腾空、路肩、垂直 G、路面抓地提示）。
 
 ### 第 3 层——Raw 计算器
 
@@ -359,7 +359,15 @@ Slip Angle 的第 5 层是 `SlipAngleProjectedEngine`（同一个 `OutputProject
 
 **数据源分级。**
 
-- **原生**：`SlipAngleRawSources.cs`（项目根目录，属于第 2 层，但不依赖 SimHub，链接编译进测试）按游戏列出 raw 路径、轮序、单位与变换。
+- **原生**：`SlipAngleRawSources.cs`（项目根目录，属于第 2 层，但不依赖 SimHub，链接编译进测试）按游戏列出四个完整的SimHub属性名（左前、右前、左后、右后，原始索引已重排）、单位与变换。
+  - **1.2.1起数据表没有内置行，只由`QAdvanceFeedback.SlipAngleSource.json`构建**（`SlipAngleSourceFile.cs`）。解决方案根目录的副本作为嵌入资源编译进DLL（`SlipAngleSourceCompiled`），在`PluginsData\Common`中的文件缺失时用于创建它，也是页面「恢复默认」的依据。
+  - `SlipAngleSourceStore`在Init时以及运行的游戏变化时读取Common中的文件（手动修改无需重启SimHub即可生效；被删除的文件会重新创建），并通过`SlipAngleRawSourceTable.Use`启用解析后的`SlipAngleSourceCatalog`；数据表版本变化时，读取器会丢弃各游戏的缺失/失败判定。
+  - 无法解析或含有不完整条目的文件会被整体拒绝且绝不覆盖：本次会话使用自带副本，健康状况（`SlipAngleSourceFile`）说明原因，页面编辑器关闭。
+  - `id`指定游戏：`Game1|Game2`、通配符`*` / `?`，或从`regex:`到id末尾的正则表达式（`SlipAngleGameIdPattern`）；精确名称优先于模式，否则使用第一个匹配的条目；只有精确ID的条目表示“没有来源”。保存时，设置与另一条目相同的游戏会加入该条目的id，已被模式以相同设置覆盖的游戏不单独占用条目（`SlipAngleSourceStore.Place`）。
+  - 路面：读取器用`surfaceValues`翻译条目的`surface`数值（sealed / loose / lowGrip，`SlipAngleInput.WheelSurface`）；没有时，处理器使用SimHub的`WheelOnLooseSurface*`标志（`SurfaceBucketMap.FromSimHubLoose`：三个以上车轮为松散路面，本次会话见过松散路面后，0-1个车轮才视为柏油）；否则为未知并保持。
+  - 每个条目：`id`、`slipAngle`（四个属性名）、可选`unit`（degrees / radians / ratio1 / ratio100；省略为自动检测）、`transform`（direct / atanOfTangent / atan2PatchVelocity）及`longitudinal`、`surface`、`provisional`、`verticalAcceleration`、`note`。保存时保留未知字段。自带的单位即1.2.1之前代码中写明的单位：LFS、Drift21、rF2、LMU、NASCAR系列为弧度；KartKraft为度；Forza游戏为ratio1。代码中不再硬编码任何游戏相关内容（2026-11-24）：配置中的单位列表（`SlipAngleSourceUnits`）初始为空（已移除KartKraft / Forza默认条目，`SettingsHub.SlipAngleHardCodedUnit`即条目的`unit`）；只有条目写明`verticalAcceleration: true`时才读取SimHub的垂直加速度（Rennsport，以及只含该标志的`IRacing`条目）。Slip Angle的自定义来源（`SourceMode` / `CustomSources`、当前来源下拉框）已移除，插件内置是唯一来源。页签上的**恢复此游戏的来源**只对编译副本中有条目的游戏显示（`SlipAngleSourceStore.HasCompiledDefault`），并立即写入文件，无需应用。使用车身角度的原因（`SlipAngleSourceState`）：无来源、检查中、属性没有数据、用户选择了车身角度（不显示警告）。匹配级别（2026-11-24）：精确的单个游戏名、列表中的游戏名、`?`通配符、`*`通配符、正则，然后按文件顺序（`SlipAngleGameIdPattern.Level`）；保存时总会把游戏名写入第一个设置相同的条目。每轮角度的**来源单位**即条目的`unit`（应用时保存）；速度条目始终为弧度，没有`unit`。**此游戏的来源类型**是该游戏在插件配置中的覆盖设置（绝不写入JSON），默认值为JSON中的设置；JSON中注明的单位优先于配置列表。
+  - 设置页面的Slip Angle页签编辑当前游戏的条目（插件内置，「有每轮轮胎角度时使用」）：四个SimHub属性名（带属性选择器），由页面的应用写入（`SlipAngleTabViewModel.ApplyTelemetrySource`）。四个属性名设置该条目（新游戏得到不含单位的普通条目，即自动检测），四个全空则移除滑移角来源（有路面路径的条目保留路面路径），一到三个则拒绝保存。只有编译副本中有滑移角条目、且文件中的条目已不同的游戏才显示恢复默认。计算型条目在页面上只读。
+  - **角度来源**（`SlipAngleChannelSettings.AngleSource`，Hub字段`SlipAngleAngleSource`）：「始终使用车身角度」时读取器不读取任何游戏的轮胎字段（`SlipAngleRawSourceReader.AlwaysCarAngle`），关键数据按车身角度标识存取，页签与ShakeIt面板上的每轮来源和单位下拉框都会隐藏。
   - 原生直读：ACC、AC Rally、AC EVO、F1 23/24/25、Forza（FM7/FM8/FH4/FH5/FH6）、LFS（正切值）、Wreckfest 2、PMR、Drift21（弧度）、KartKraft、Bus Bound、Rennsport。
   - 原生计算：`atan2(横向接地点速度, |纵向地速|)`，适用于 rFactor 2、LMU，以及暂定的 NASCAR Heat 系列。
 - **原生晋升**（`SlipAngleNativeSupport`）：需要 5 秒行驶中（≥ 30 km/h）的有限、合理（≤ 45°）且非恒定的数值；会话内只晋升、不降级。**45° 规则（R14）**：
@@ -537,7 +545,8 @@ Slip Angle 的第 5 层是 `SlipAngleProjectedEngine`（同一个 `OutputProject
 | `QAdvanceFeedback.Clutch.cs` | 组合根（partial） | 离合器结合点：解析离合器输入、发布 `Clutch.Bite.Output`、学习结合点。 |
 | `SimHubTelemetryAdapter.cs` | 2 | 把 SimHub 的 `GameData` 映射为第 1 层的 `TelemetrySample`，捕获原始诊断快照，并提供 Slip Angle 所需的车身输入。 |
 | `ITelemetryAdapter.cs` | 2（契约） | `SimHubTelemetryAdapter` 实现的接口。 |
-| `SlipAngleRawSources.cs` | 2（纯净） | 按游戏的滑移角 raw 数据表（路径、轮序、单位、变换、raw 路面路径）及 `SlipAngleRawSourceReader`；不依赖 SimHub，链接编译进测试。 |
+| `SlipAngleRawSources.cs` | 2（纯净） | 按游戏的滑移角 raw 数据表（路径、单位、变换、raw 路面路径，只由来源文件构建）及 `SlipAngleRawSourceReader`；不依赖 SimHub，链接编译进测试。 |
+| `SlipAngleSourceFile.cs` | 2（纯净） | `QAdvanceFeedback.SlipAngleSource.json`（1.2.1）：条目/文档类型、经校验的`SlipAngleSourceCatalog`、编译进DLL的副本（`SlipAngleSourceCompiled`）及`SlipAngleSourceStore`（创建、游戏变化时重新读取、页面保存、无效文件回退）。只依赖Newtonsoft，链接编译进测试。 |
 | `KnownSourceColdStartReference.cs` | 第 4 层支持 | 依据组合 `SourceIdentity` 判断本插件对哪种输入源有冷启动实测依据。 |
 | `ViperAvailabilityProvider.cs` / `ViperStore.cs` | 设置相关 / 持久化 | viper4gh CalcLngWheelSlip 插件的实时检测（故障记入健康子系统 `ViperAvailability`）；`QAdvanceFeedback.Viper.json` 读写。 |
 | `WheelSourceResolver.cs` | 第 4 层输入 | 把数据源字段（属性、JavaScript 或 NCalc）解析为实时 0-100 读数。ShakeIt 内置数据源从不经过它（读 tap，或按通道回退到 Raw）。 |
@@ -750,3 +759,19 @@ Slip Angle 的第 5 层是 `SlipAngleProjectedEngine`（同一个 `OutputProject
 ## 「Private」曾经所在的位置
 
 `Core\RawCalculator\` 下的一切，加上 `SimHubTelemetryAdapter.cs`，曾经存放在一个被隐藏、被 git 忽略的 `Private\` 文件夹中，位于两个项目之外，并由一个基于反射的工厂（`AlgorithmFactory`/`PrivateTypeResolver`）在运行时解析它们，在其缺失时回退到惰性桩实现（`InertTelemetryAdapter`/`InertLegacyWheelLockSlipEngine`）。这种拆分方式，以及背后的整套机制，现在已经不存在了——完整的历史和理由见 `docs\clean-room-restructure-report.md`。
+
+## 模拟宿主（`tools\mock-host`）
+
+一个独立的WPF程序（net48），不需要SimHub即可运行真实插件。与`tools\screenshot-harness`不同，它属于`QAdvanceFeedback.sln`，并排在第一位，因此Visual Studio按F5时会启动并调试它。插件自身的DLL构建不变；模拟宿主只额外生成它自己的exe。它有四个页签：
+- **Plugin Settings**：`GetWPFSettingsControl`。
+- **ShakeIt Effects**：用**Add Effect**添加八个原生效果，显示每个效果自己的`EditControl`和图表，并保存到`PluginsData\Common\MockHost.ShakeItProfile.json`。
+- **Game Simulation**：游戏ID、车辆、踏板、速度、G值、偏航、每个车轮的速度 / 滑移 / 路面标志、游戏报告的能力，以及任意SimHub属性。这些数据以60 Hz在后台线程送入`DataUpdate`。
+- **Language**：插件页面和效果编辑器使用英文或简体中文（立即重建；页面唯一的视图模型会被释放并重新创建）。
+
+插件文件写入`<exe目录>\PluginsData\Common`（SimHub的相对存储路径）。
+
+SimHub的`PluginManager`和ShakeIt容器的构造函数需要只有SimHub才有的DLL，因此创建时不运行构造函数。`MockGameManager`提供`FeedbackCapabilities`。Init中的ShakeIt配置检查器需要GongSolutions.WPF.DragDrop，模拟宿主改用一个空的检查器来完成这一步。
+
+`MockHost.exe --capture <目录> [秒数]`会把每个页签及每个已添加的效果保存为PNG。
+
+完整说明、文件和限制见`docs\mock-host.md`。

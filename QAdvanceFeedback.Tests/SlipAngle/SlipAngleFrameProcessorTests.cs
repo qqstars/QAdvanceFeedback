@@ -90,41 +90,6 @@ namespace QAdvanceFeedback.Tests.SlipAngle
         }
 
         [Fact]
-        public void Custom_source_clamps_to_45_and_drops_unreadable_wheels()
-        {
-            var p = Processor();
-            SlipAngleFrameRequest req = Request(Frame());
-            req.UseCustomSource = true;
-            req.CustomSourceIdentity = "custom-id";
-            req.CustomWheelsDeg = new double?[] { null, null, -8.0, 50.0 };
-
-            SlipAngleFrameResult r = p.Process(req);
-
-            Assert.Null(r.Front);
-            Assert.Equal((8.0 + 45.0) / 2, r.Rear.Value, 9);
-            Assert.Equal(r.Rear.Value, r.RawAll.Value, 9);
-            Assert.Equal("custom-id", r.SourceIdentity);
-            Assert.False(r.SourceIsPluginInternal);
-        }
-
-        [Fact]
-        public void Custom_source_publishes_tier_unknown_but_never_the_no_data_status()
-        {
-            var p = Processor();
-            SlipAngleFrameRequest req = Request(Frame());
-            req.UseCustomSource = true;
-            req.CustomWheelsDeg = new double?[] { 3, 3, 4, 4 };
-
-            SlipAngleFrameResult r = p.Process(req);
-            SlipAngleStatus s = SlipAngleStatus.From(r, r.Tier, "G");
-
-            Assert.Equal(SourceNativeness.Unknown, r.Tier);
-            Assert.NotNull(r.RawAll);
-            Assert.False(s.NoSlipAngleData);
-            Assert.False(s.ShowFallbackWarning);
-        }
-
-        [Fact]
         public void Fault_status_shows_neither_no_data_nor_the_warning()
         {
             SlipAngleStatus s = SlipAngleStatus.Fault("G", sourceIsPluginInternal: true);
@@ -153,21 +118,6 @@ namespace QAdvanceFeedback.Tests.SlipAngle
             SlipAngleFrameResult r = p.Process(Request(Frame()));
             Assert.Equal(SurfaceBucket.Sealed, r.SurfaceBucket);
             Assert.Equal(1.0, r.SurfaceWeightSealed, 9);
-        }
-
-        [Fact]
-        public void Custom_source_with_no_readable_wheel_is_no_data()
-        {
-            var p = Processor();
-            SlipAngleFrameRequest req = Request(Frame());
-            req.UseCustomSource = true;
-            req.CustomWheelsDeg = new double?[] { null, null, null, double.NaN };
-
-            SlipAngleFrameResult r = p.Process(req);
-
-            Assert.Null(r.RawAll);
-            Assert.Equal(SourceNativeness.Unknown, r.Tier);
-            Assert.Equal(0.0, r.ProjectedAll);
         }
 
         [Fact]
@@ -203,7 +153,8 @@ namespace QAdvanceFeedback.Tests.SlipAngle
         public void A_car_switch_starts_the_surface_classifier_again()
         {
             var p = Processor();
-            var gravel = new SlipAngleInput("RFactor2", rawWheelSurface: new[] { "4", "4", "4", "4" });
+            var gravel = new SlipAngleInput("RFactor2", rawWheelSurface: new[] { "4", "4", "4", "4" },
+                wheelSurface: new SurfaceBucket?[] { SurfaceBucket.Loose, SurfaceBucket.Loose, SurfaceBucket.Loose, SurfaceBucket.Loose });
             SlipAngleFrameResult r = null;
             for (int i = 0; i < 300; i++)
                 r = p.Process(new SlipAngleFrameRequest { GameId = "RFactor2", CarId = "A", Frame = Frame(), Dt = Dt, Input = gravel });
@@ -220,6 +171,44 @@ namespace QAdvanceFeedback.Tests.SlipAngle
             Assert.Equal(SurfaceBucket.Sealed, r.SurfaceBucket);
             Assert.True(p.Learner.LearnedWindow("RFactor2", "B", SlipAngleFrameProcessor.FallbackIdentity, SlipAngleTarget.All, SurfaceBucket.Sealed).HasValue);
             Assert.False(p.Learner.LearnedWindow("RFactor2", "B", SlipAngleFrameProcessor.FallbackIdentity, SlipAngleTarget.All, SurfaceBucket.Loose).HasValue);
+        }
+
+        private static TelemetryFrame OnGrass(bool fl, bool fr, bool rl, bool rr)
+            => new TelemetryFrame(groundSpeedKmh: 100.0, brakePercent: 50, throttlePercent: 0,
+                lateralLocalVelocity: 2.0, forwardLocalVelocity: 27.8, lateralG: 1.0, longitudinalG: 0.0,
+                yawRateRadPerSec: 0.3, wheelOnLooseSurfaceFrontLeft: fl, wheelOnLooseSurfaceFrontRight: fr,
+                wheelOnLooseSurfaceRearLeft: rl, wheelOnLooseSurfaceRearRight: rr);
+
+        /// <summary>SIMHUB'S GRASS/GRAVEL FLAG (owner, 2026-11-23): a game with no surface translation (F1 25) goes Loose
+        /// while most wheels report it, and back to Sealed only because it has been seen reporting loose; a game that
+        /// never sets the flag stays Sealed (Unknown) for good.</summary>
+        [Fact]
+        public void SimHubs_grass_flag_drives_the_surface_when_the_game_gives_no_translated_surface()
+        {
+            var p = Processor();
+            SlipAngleFrameResult r = null;
+            Func<TelemetryFrame, SlipAngleFrameResult> step = f =>
+                p.Process(new SlipAngleFrameRequest { GameId = "F12025", CarId = "C", Frame = f, Dt = Dt, Input = new SlipAngleInput("F12025") });
+            for (int i = 0; i < 300; i++) r = step(OnGrass(true, true, true, false));
+            Assert.Equal(SurfaceBucket.Loose, r.SurfaceBucket);
+            for (int i = 0; i < 300; i++) r = step(OnGrass(false, false, false, false));
+            Assert.Equal(SurfaceBucket.Sealed, r.SurfaceBucket);
+
+            var never = Processor();
+            for (int i = 0; i < 300; i++)
+                r = never.Process(new SlipAngleFrameRequest { GameId = "FH6", CarId = "C", Frame = OnGrass(false, false, false, false), Dt = Dt, Input = new SlipAngleInput("FH6") });
+            Assert.Equal(SurfaceBucket.Sealed, r.SurfaceBucket);
+        }
+
+        [Fact]
+        public void The_games_own_translated_surface_wins_over_SimHubs_flag()
+        {
+            var p = Processor();
+            var tarmac = new SlipAngleInput("RFactor2", wheelSurface: new SurfaceBucket?[] { SurfaceBucket.Sealed, SurfaceBucket.Sealed, SurfaceBucket.Sealed, SurfaceBucket.Sealed });
+            SlipAngleFrameResult r = null;
+            for (int i = 0; i < 300; i++)
+                r = p.Process(new SlipAngleFrameRequest { GameId = "RFactor2", CarId = "C", Frame = OnGrass(true, true, true, true), Dt = Dt, Input = tarmac });
+            Assert.Equal(SurfaceBucket.Sealed, r.SurfaceBucket);
         }
 
         [Fact]
@@ -365,12 +354,6 @@ namespace QAdvanceFeedback.Tests.SlipAngle
             SlipAngleFrameResult fallback = p.Process(Request(Frame()));
             Assert.True(SlipAngleStatus.From(fallback, SourceNativeness.Fallback, "G").ShowFallbackWarning);
             Assert.False(SlipAngleStatus.From(fallback, SourceNativeness.Native, "G").ShowFallbackWarning);
-
-            SlipAngleFrameRequest req = Request(Frame());
-            req.UseCustomSource = true;
-            req.CustomWheelsDeg = new double?[] { 3, 3, 4, 4 };
-            SlipAngleFrameResult custom = p.Process(req);
-            Assert.False(SlipAngleStatus.From(custom, SourceNativeness.Fallback, "G").ShowFallbackWarning);
         }
 
         [Fact]

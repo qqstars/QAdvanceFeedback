@@ -37,12 +37,17 @@ namespace QAdvanceFeedback.Tests.SlipAngle
         }
 
         [Fact]
-        public void A_listed_game_is_read_as_its_list_says_even_when_the_table_states_a_unit()
+        public void A_unit_the_table_states_wins_over_the_lists_and_a_list_decides_only_an_unstated_game()
         {
+            // Owner, 2026-11-24: the source JSON's unit wins; the config lists only settle a game whose row states none.
             SlipAngleSourceUnits u = SlipAngleSourceUnits.CreateDefault();
             Assert.Equal(SlipAngleUnit.Radians, u.Resolve("LFS", SlipAngleUnit.Radians));
             u.SetChoice("LFS", SlipAngleUnitChoice.Degrees);   // a hand edit
-            Assert.Equal(SlipAngleUnit.Degrees, u.Resolve("LFS", SlipAngleUnit.Radians));
+            Assert.Equal(SlipAngleUnit.Radians, u.Resolve("LFS", SlipAngleUnit.Radians));
+            Assert.Equal(SlipAngleUnit.Radians, SettingsHub.NativeUnit("LFS", u));
+            u.SetChoice("ACC", SlipAngleUnitChoice.Degrees);
+            Assert.Equal(SlipAngleUnit.Degrees, u.Resolve("ACC", SlipAngleUnit.Unverified));
+            Assert.Equal(SlipAngleUnit.Degrees, SettingsHub.NativeUnit("ACC", u));
         }
 
         [Fact]
@@ -74,7 +79,7 @@ namespace QAdvanceFeedback.Tests.SlipAngle
             // ... and the key data follows the car-angle key and heading.
             var ch = new SlipAngleChannelSettings { SourceUnits = units };
             Assert.Equal(SlipAngleFrameProcessor.FallbackIdentity, SettingsHub.SlipAngleIdentity(ch, SourceNativeness.Native, "ACC"));
-            Assert.Equal("SlipAngle.KeyData.Header.CarAngle", SettingsHub.SlipAngleKeyDataHeaderKey(SourceMode.Manual, SourceNativeness.Native, "ACC", units));
+            Assert.Equal("SlipAngle.KeyData.Header.CarAngle", SettingsHub.SlipAngleKeyDataHeaderKey(SourceNativeness.Native, "ACC", units));
         }
 
         // ---------------- what is hard-coded ----------------
@@ -82,7 +87,7 @@ namespace QAdvanceFeedback.Tests.SlipAngle
         [Theory]
         [InlineData("LFS", true)]        // the table states the unit
         [InlineData("RFactor2", true)]   // computed by the plugin
-        [InlineData("FH6", true)]        // shipped in the lists
+        [InlineData("FH6", true)]        // its JSON row states the unit (ratio1)
         [InlineData("KartKraft", true)]
         [InlineData("NoSuchGame", true)] // no tyre field: nothing to choose
         [InlineData("ACC", false)]
@@ -107,18 +112,23 @@ namespace QAdvanceFeedback.Tests.SlipAngle
             Assert.Equal(new[] { SlipAngleUnitChoice.Degrees, SlipAngleUnitChoice.CarAngle }, SettingsHub.SlipAngleUnitOptions("KartKraft"));
             Assert.Equal(new[] { SlipAngleUnitChoice.Radians, SlipAngleUnitChoice.CarAngle }, SettingsHub.SlipAngleUnitOptions("LFS"));   // the table states it
             Assert.Equal(AllUnits, SettingsHub.SlipAngleUnitOptions("ACC"));
-            Assert.Equal(new[] { SlipAngleUnitChoice.CarAngle }, SettingsHub.SlipAngleUnitOptions("NoSuchGame"));   // no tyre field
+            Assert.Equal(new[] { SlipAngleUnitChoice.Radians, SlipAngleUnitChoice.CarAngle }, SettingsHub.SlipAngleUnitOptions("RFactor2"));   // atan2: always radians
+            Assert.Empty(SettingsHub.SlipAngleUnitOptions("NoSuchGame"));      // no per-wheel source: no dropdown
+            Assert.Empty(SettingsHub.SlipAngleUnitOptions("Automobilista2"));  // surface only
             Assert.Empty(SettingsHub.SlipAngleUnitOptions(null));
+            Assert.Null(SettingsHub.SlipAngleSelectedUnit("NoSuchGame", SlipAngleSourceUnits.CreateDefault()));
         }
 
         [Fact]
-        public void The_dropdown_always_shows_for_plugin_internal_with_a_game_and_never_for_custom()
+        public void The_dropdown_always_shows_with_a_game_unless_always_car_angle()
         {
             SlipAngleSourceUnits u = SlipAngleSourceUnits.CreateDefault();
-            Assert.True(SettingsHub.ShowSlipAngleUnitChoice(SourceMode.Manual, "ACC", u));   // still being checked
-            Assert.True(SettingsHub.ShowSlipAngleUnitChoice(SourceMode.Manual, "FH6", u));   // hard-coded
-            Assert.False(SettingsHub.ShowSlipAngleUnitChoice(SourceMode.Custom, "ACC", u));
-            Assert.False(SettingsHub.ShowSlipAngleUnitChoice(SourceMode.Manual, null, u));
+            Assert.True(SettingsHub.ShowSlipAngleUnitChoice("ACC", u));   // still being checked
+            Assert.True(SettingsHub.ShowSlipAngleUnitChoice("FH6", u));   // hard-coded
+            Assert.False(SettingsHub.ShowSlipAngleUnitChoice("ACC", u, SlipAngleAngleSource.CarAngle));
+            Assert.False(SettingsHub.ShowSlipAngleUnitChoice(null, u));
+            Assert.False(SettingsHub.ShowSlipAngleUnitChoice("NoSuchGame", u));       // no per-wheel source
+            Assert.False(SettingsHub.ShowSlipAngleUnitChoice("Automobilista2", u));   // surface only
         }
 
         [Fact]
@@ -137,8 +147,8 @@ namespace QAdvanceFeedback.Tests.SlipAngle
 
             Assert.True(SettingsHub.ApplySlipAngleUnitChoice(u, "FH6", null));   // Restore default
             Assert.False(u.ForcesCarAngle("FH6"));
-            Assert.Equal(SlipAngleUnit.Ratio1, u.Resolve("FH6", SlipAngleUnit.Unverified));
-            Assert.True(u.ExceedsFullScale("FH6"));
+            Assert.False(u.IsListed("FH6"));                                   // out of every list: the JSON's unit applies
+            Assert.Equal(SlipAngleUnit.Ratio1, SettingsHub.NativeUnit("FH6", u));
             Assert.Equal(SlipAngleUnitChoice.Ratio1, SettingsHub.SlipAngleSelectedUnit("FH6", u));
             Assert.True(SettingsHub.SlipAngleUnitIsDefault("FH6", u));
 
@@ -146,12 +156,14 @@ namespace QAdvanceFeedback.Tests.SlipAngle
             SettingsHub.ApplySlipAngleUnitChoice(u, "KartKraft", SlipAngleUnitChoice.CarAngle);
             Assert.True(SettingsHub.ApplySlipAngleUnitChoice(u, "KartKraft", SlipAngleUnitChoice.Degrees));
             Assert.True(SettingsHub.SlipAngleUnitIsDefault("KartKraft", u));
-            Assert.Equal(SlipAngleUnit.Degrees, u.Resolve("KartKraft", SlipAngleUnit.Unverified));
+            Assert.False(u.IsListed("KartKraft"));
+            Assert.Equal(SlipAngleUnit.Degrees, SettingsHub.NativeUnit("KartKraft", u));
 
-            // A table-stated game: restore clears any list entry, so the table's unit applies again.
+            // A table-stated game: a hand-edited list entry never changes its unit (the table wins); restore clears it.
             u.SetChoice("LFS", SlipAngleUnitChoice.Degrees);   // a hand edit
-            Assert.False(SettingsHub.SlipAngleUnitIsDefault("LFS", u));
+            Assert.Equal(SlipAngleUnit.Radians, SettingsHub.NativeUnit("LFS", u));
             Assert.True(SettingsHub.ApplySlipAngleUnitChoice(u, "LFS", null));
+            Assert.False(u.IsListed("LFS"));
             Assert.Equal(SlipAngleUnit.Radians, u.Resolve("LFS", SlipAngleUnit.Radians));
             Assert.True(SettingsHub.SlipAngleUnitIsDefault("LFS", u));
         }
@@ -227,7 +239,8 @@ namespace QAdvanceFeedback.Tests.SlipAngle
             Assert.True(u.ForcesCarAngle("FH6"));
             Assert.True(host.Hub.Set(SettingField.SlipAngleSourceUnit, null, SettingsOrigin.ShakeItPanel));
             Assert.False(u.ForcesCarAngle("FH6"));
-            Assert.Equal(SlipAngleUnitChoice.Ratio1, u.Choice("FH6"));
+            Assert.False(u.IsListed("FH6"));
+            Assert.Equal(SlipAngleUnitChoice.Ratio1, SettingsHub.SlipAngleSelectedUnit("FH6", u));
         }
 
         // ---------------- the view models ----------------
@@ -249,7 +262,7 @@ namespace QAdvanceFeedback.Tests.SlipAngle
             tab.RefreshKeyData();
             Assert.Equal(SlipAngleUnitChoice.AutoDetect, tab.SelectedUnitChoice);
             Assert.False(tab.ShowUnitReset);
-            Assert.Contains(Strings.Get("SlipAngle.Unit.Radians"), tab.UnitChoices[0].Label);
+            Assert.Equal(string.Format(Strings.Get("SlipAngle.Unit.AutoDetect.Found"), Strings.Get("SlipAngle.Unit.Short.Radians")), tab.UnitChoices[0].Label);
 
             tab.SelectedUnitChoice = SlipAngleUnitChoice.CarAngle;
             tab.RefreshFields(new[] { SettingField.SlipAngleSourceUnit });

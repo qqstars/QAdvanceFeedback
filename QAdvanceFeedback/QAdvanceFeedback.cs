@@ -437,6 +437,20 @@ namespace QAdvanceFeedback
             CreateSlipAngle();
         }
 
+        /// <summary>The per-wheel slip-angle source file (null before Init).</summary>
+        internal SlipAngleSourceStore SlipAngleSources => _slipAngleSources;
+        private SlipAngleSourceStore _slipAngleSources;
+        private string _slipAngleSourcesGame;
+
+        /// <summary>A game started (or changed): pick up a hand edit of the source file, or create it again if it was
+        /// deleted. A string compare per frame; the file is only touched when the game changes.</summary>
+        private void ReloadSlipAngleSourcesOnGameChange(string gameId)
+        {
+            if (string.Equals(gameId, _slipAngleSourcesGame, StringComparison.Ordinal)) return;
+            _slipAngleSourcesGame = gameId;
+            if (!string.IsNullOrEmpty(gameId)) _slipAngleSources?.ReloadIfChanged();
+        }
+
         private void NotifyNativenessChanged()
         {
             OnUiThread(() => Hub?.NotifyApplied(new[] { SettingField.SourceAvailability }, SettingsOrigin.Runtime));
@@ -640,7 +654,17 @@ namespace QAdvanceFeedback
             {
                 slipAngleAdapter.SlipAngleReader.Units = () => _settings?.SlipAngle?.SourceUnits;
                 slipAngleAdapter.SlipAngleReader.UnitsChanged += OnSlipAngleUnitsChanged;
+                // "Always car angle" (owner, 2026-11-23): no game's tyre field is read, even one with a source.
+                slipAngleAdapter.SlipAngleReader.AlwaysCarAngle = () => _settings?.SlipAngle?.AngleSource == SlipAngleAngleSource.CarAngle;
             }
+
+            // THE PER-WHEEL SLIP-ANGLE SOURCES (owner, 2026-11-23) come from PluginsData\Common\
+            // QAdvanceFeedback.SlipAngleSource.json ONLY - created from the copy compiled into this DLL when missing,
+            // re-read when the running game changes (DataUpdate), written by the settings page's Apply. A change is
+            // broadcast like a source-availability change, so the tab and the ShakeIt panel re-read the game's unit.
+            _slipAngleSources = new SlipAngleSourceStore(pluginManager.GetCommonStoragePath(SlipAngleSourceStore.FileName), LogWarning);
+            _slipAngleSources.Changed += NotifyNativenessChanged;
+            _slipAngleSources.Load();
 
             string parametersPath = pluginManager.GetCommonStoragePath(ParametersFileName);
             string legacyParametersPath = pluginManager.GetCommonStoragePath(LegacyParametersFileName);
@@ -851,6 +875,7 @@ namespace QAdvanceFeedback
                 // Cheap: a string compare per frame, and the dispatcher is only touched when the answer
                 // actually changes.
                 _currentGameId = data.GameName ?? string.Empty;
+                ReloadSlipAngleSourcesOnGameChange(_currentGameId);
                 FollowKeyDataDisplayContext(_currentGameId, data.NewData?.CarId);
                 FollowSlipAngleDisplayContext(_currentGameId, data.NewData?.CarId);
                 PushCurrentGameToSettingsUi(data.GameName ?? string.Empty);   // after: the page reads CurrentGameId

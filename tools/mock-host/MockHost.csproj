@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    A stand-alone WPF host that runs the REAL QAdvanceFeedback plugin without SimHub (docs\mock-host.md):
+      - Plugin Settings: the plugin's own settings page (GetWPFSettingsControl).
+      - ShakeIt Effects: "Add Effect" for the plugin's ShakeIt effects, each effect's own editor and graph.
+      - Game Simulation: a fake game (name, car, pedals, speed, G, per-wheel data, any SimHub property)
+        fed to the plugin's DataUpdate at 60 Hz on a background thread, as SimHub does.
+    Every file the plugin writes goes to <exe folder>\PluginsData\Common, exactly SimHub's relative layout.
+
+    PART OF QAdvanceFeedback.sln and listed FIRST there, so Visual Studio starts it on F5 (owner, 2026-11-24): debugging
+    the mock host debugs the plugin, built through the project reference below. Building the solution still produces the
+    plugin's own single DLL in QAdvanceFeedback\bin; this project only adds its exe in its own bin. Needs ..\..\lib\*.dll
+    (the same SimHub reference DLLs).
+
+    Usage: F5 in Visual Studio, or (from the repo root):
+      dotnet build tools\mock-host\MockHost.csproj -c Release
+      tools\mock-host\bin\Release\net48\MockHost.exe
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>MockHost</AssemblyName>
+    <RootNamespace>MockHost</RootNamespace>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <Nullable>disable</Nullable>
+    <StartupObject>MockHost.Program</StartupObject>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\QAdvanceFeedback\QAdvanceFeedback.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="SimHub.Plugins">
+      <HintPath>..\..\lib\SimHub.Plugins.dll</HintPath>
+    </Reference>
+    <Reference Include="GameReaderCommon">
+      <HintPath>..\..\lib\GameReaderCommon.dll</HintPath>
+    </Reference>
+    <Reference Include="SimHub.Logging">
+      <HintPath>..\..\lib\SimHub.Logging.dll</HintPath>
+    </Reference>
+    <Reference Include="log4net">
+      <HintPath>..\..\lib\log4net.dll</HintPath>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>..\..\lib\Newtonsoft.Json.dll</HintPath>
+    </Reference>
+    <Reference Include="MahApps.Metro">
+      <HintPath>..\..\lib\MahApps.Metro.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Windows.Interactivity">
+      <HintPath>..\..\lib\System.Windows.Interactivity.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

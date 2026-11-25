@@ -86,7 +86,10 @@ namespace QAdvanceFeedback.Settings
         SlipShakeItMuteWhileLockActive,
         // The current game's slip-angle unit dropdown (owner, 2026-11-21 / 2026-11-22): reads the selected
         // SlipAngleUnitChoice (SlipAngleSelectedUnit); writing a choice picks it, null restores the game's default.
-        SlipAngleSourceUnit
+        SlipAngleSourceUnit,
+        // Plugin Internal's angle source (owner, 2026-11-23): per-wheel tyre angle when available, or always the car
+        // angle (SlipAngleChannelSettings.AngleSource). Set by the plugin page's Apply; broadcast so the panel follows.
+        SlipAngleAngleSource
     }
 
     public enum SettingsOrigin
@@ -131,7 +134,7 @@ namespace QAdvanceFeedback.Settings
             SettingField.ClutchLearning,
             SettingField.SlipAngleTriggerBy, SettingField.SlipAngleBrakeThreshold, SettingField.SlipAngleThrottleThreshold,
             SettingField.SlipAngleKeyDataAuto, SettingField.SlipAngleKeyDataValues, SettingField.IntegrateSlipAngle,
-            SettingField.SlipAngleSourceUnit,
+            SettingField.SlipAngleSourceUnit, SettingField.SlipAngleAngleSource,
             SettingField.LockShakeItLegacyAlgorithm, SettingField.LockShakeItSensibility, SettingField.LockShakeItLockOnly,
             SettingField.SlipShakeItLegacyAlgorithm, SettingField.SlipShakeItMuteWhileLockActive
         };
@@ -240,8 +243,8 @@ namespace QAdvanceFeedback.Settings
             return result;
         }
 
-        /// <summary>The source identity the Slip Angle key data is keyed by for the APPLIED source: Custom uses its
-        /// composite identity; Plugin Internal uses the identity of the current identity tier (the
+        /// <summary>The source identity the Slip Angle key data is keyed by (Plugin Internal, the only source): the
+        /// identity of the current identity tier (the
         /// last in-session confirmed tier for the current game, kept across pause / menu -
         /// <see cref="SlipAngleIdentityTier"/>) -
         /// Fallback gives <see cref="SlipAngleFrameProcessor.FallbackIdentity"/>, Native and Unknown give
@@ -251,13 +254,8 @@ namespace QAdvanceFeedback.Settings
         public static string SlipAngleIdentity(SlipAngleChannelSettings ch, SourceNativeness tier = SourceNativeness.Unknown,
             string gameId = null, SlipAngleSourceUnits units = null)
         {
-            if (ch != null && ch.SourceMode == SourceMode.Custom)
-            {
-                WheelSourceSet c = ch.CustomSources ?? new WheelSourceSet();
-                return SourceIdentity.Compute(
-                    c.FrontLeft, c.ScriptTypeFrontLeft.ToString(), c.FrontRight, c.ScriptTypeFrontRight.ToString(),
-                    c.RearLeft, c.ScriptTypeRearLeft.ToString(), c.RearRight, c.ScriptTypeRearRight.ToString());
-            }
+            // "Always car angle" (General Source Type, owner 2026-11-23) wins over the game's own tyre angle.
+            if (ch?.AngleSource == SlipAngleAngleSource.CarAngle) return SlipAngleFrameProcessor.FallbackIdentity;
             if (tier == SourceNativeness.Fallback) return SlipAngleFrameProcessor.FallbackIdentity;
             if ((units ?? ch?.SourceUnits)?.ForcesCarAngle(gameId) == true) return SlipAngleFrameProcessor.FallbackIdentity;
             return SlipAngleFrameProcessor.NativeIdentityFor(NativeUnit(gameId, units ?? ch?.SourceUnits));
@@ -265,15 +263,16 @@ namespace QAdvanceFeedback.Settings
 
         /// <summary>
         /// THE UNIT-AWARE KEY DATA HEADING (owner, 2026-11-21): the string key naming what the Min/Best/Max numbers
-        /// are for the source on screen - every source is turned into degrees, but from different things: Custom
-        /// (read as degrees), the car-angle fallback (the body angle), and for Plugin Internal the game's native
+        /// are for the source on screen - every source is turned into degrees, but from different things: the
+        /// car-angle fallback (the body angle), or the game's native
         /// unit by the same rule the reader uses (a unit the table states is respected; else the game's list; else
         /// read as radians while the body-angle check runs). No game: the plain heading.
         /// </summary>
-        public static string SlipAngleKeyDataHeaderKey(SourceMode mode, SourceNativeness tier, string gameId, SlipAngleSourceUnits units)
+        public static string SlipAngleKeyDataHeaderKey(SourceNativeness tier, string gameId, SlipAngleSourceUnits units,
+            SlipAngleAngleSource angleSource = SlipAngleAngleSource.PerWheelWhenAvailable)
         {
             const string Head = "SlipAngle.KeyData.Header";
-            if (mode == SourceMode.Custom) return Head + ".Custom";
+            if (angleSource == SlipAngleAngleSource.CarAngle) return Head + ".CarAngle";
             if (tier == SourceNativeness.Fallback || (units != null && units.ForcesCarAngle(gameId))) return Head + ".CarAngle";
             if (string.IsNullOrEmpty(gameId) || !SlipAngleRawSourceTable.TryGet(gameId, out SlipAngleRawSourceEntry entry)) return Head;
             SlipAngleSourceUnits u = units ?? SlipAngleSourceUnits.CreateDefault();
@@ -287,25 +286,22 @@ namespace QAdvanceFeedback.Settings
             }
         }
 
-        /// <summary>True when a game's slip-angle unit is known for certain (owner, 2026-11-21) - the plugin's table
-        /// states it, or it ships hard-coded in the lists (KartKraft, the five Forza games). Its dropdown offers only
-        /// that unit and the car angle (<see cref="SlipAngleUnitOptions"/>). A game with no native field is treated
-        /// the same (its only source is the car angle).</summary>
+        /// <summary>True when a game's slip-angle unit is known for certain (owner, 2026-11-21): its row in
+        /// QAdvanceFeedback.SlipAngleSource.json states it (owner, 2026-11-24: the JSON is the only definition - nothing is
+        /// hard-coded in the plugin). Its dropdown offers only that unit and the car angle (<see cref="SlipAngleUnitOptions"/>).
+        /// A game with no native field is treated the same (its only source is the car angle).</summary>
         public static bool SlipAngleUnitIsHardCoded(string gameId)
         {
             if (string.IsNullOrEmpty(gameId) || !SlipAngleRawSourceTable.TryGet(gameId, out SlipAngleRawSourceEntry entry)) return true;
-            return entry.Unit != SlipAngleUnit.Unverified || SlipAngleSourceUnits.IsShippedDefault(gameId);
+            return entry.Unit != SlipAngleUnit.Unverified;
         }
 
-        /// <summary>The hard-coded unit of a game as a dropdown entry (the table's stated unit, else the shipped list's:
-        /// KartKraft degrees, Forza 0-1 ratio); null for a game with no native field or whose unit is detected.</summary>
+        /// <summary>The stated unit of a game as a dropdown entry (its JSON row's <c>unit</c>); null for a game with no
+        /// native field or whose unit is detected.</summary>
         public static SlipAngleUnitChoice? SlipAngleHardCodedUnit(string gameId)
         {
             if (string.IsNullOrEmpty(gameId) || !SlipAngleRawSourceTable.TryGet(gameId, out SlipAngleRawSourceEntry entry)) return null;
-            if (entry.Unit != SlipAngleUnit.Unverified) return ToChoice(entry.Unit);
-            if (SlipAngleSourceUnits.DefaultByAngle.Any(g => string.Equals(g, gameId, StringComparison.OrdinalIgnoreCase))) return SlipAngleUnitChoice.Degrees;
-            if (SlipAngleSourceUnits.DefaultRatio1.Any(g => string.Equals(g, gameId, StringComparison.OrdinalIgnoreCase))) return SlipAngleUnitChoice.Ratio1;
-            return null;
+            return entry.Unit != SlipAngleUnit.Unverified ? ToChoice(entry.Unit) : null;
         }
 
         private static SlipAngleUnitChoice? ToChoice(SlipAngleUnit unit)
@@ -321,18 +317,19 @@ namespace QAdvanceFeedback.Settings
         }
 
         /// <summary>
-        /// THE UNIT DROPDOWN'S ENTRIES (owner, 2026-11-22). The car angle is always available, so it is always offered:
+        /// "SOURCE TYPE FOR THIS GAME" - THE ENTRIES (owner, 2026-11-24). The game's own pick, saved to the plugin config
+        /// (never to the source JSON); the default is what the JSON says:
         /// <list type="bullet">
-        /// <item>a game whose unit is hard-coded: that unit, then Car angle - no Auto-detect;</item>
-        /// <item>any other game with a native field: Auto-detect (top), Degrees, Radians, Ratio 0-1, Ratio 0-100,
-        /// Car angle;</item>
-        /// <item>a game with no native field: Car angle only (its one source). No game: none.</item>
+        /// <item>a source whose unit is set (Per-Wheel Angle with a Source Unit, or Lateral + Longitudinal Velocity -
+        /// always radians): Per-Wheel Angle in that unit, then Car Angle;</item>
+        /// <item>Per-Wheel Angle on Auto Detect: Auto (top), Angle, Radian, Ratio 0-1, Ratio 0-100, Car Angle;</item>
+        /// <item>no per-wheel source (Telemetry Type None), or no game: none (the dropdown is hidden).</item>
         /// </list>
         /// </summary>
         public static IReadOnlyList<SlipAngleUnitChoice> SlipAngleUnitOptions(string gameId)
         {
             if (string.IsNullOrEmpty(gameId)) return Array.Empty<SlipAngleUnitChoice>();
-            if (!SlipAngleRawSourceTable.TryGet(gameId, out _)) return new[] { SlipAngleUnitChoice.CarAngle };
+            if (!SlipAngleRawSourceTable.TryGet(gameId, out _)) return Array.Empty<SlipAngleUnitChoice>();
             SlipAngleUnitChoice? hard = SlipAngleHardCodedUnit(gameId);
             if (hard.HasValue) return new[] { hard.Value, SlipAngleUnitChoice.CarAngle };
             return new[]
@@ -348,7 +345,7 @@ namespace QAdvanceFeedback.Settings
         public static SlipAngleUnitChoice? SlipAngleSelectedUnit(string gameId, SlipAngleSourceUnits units)
         {
             if (string.IsNullOrEmpty(gameId)) return null;
-            if (!SlipAngleRawSourceTable.TryGet(gameId, out _)) return SlipAngleUnitChoice.CarAngle;
+            if (!SlipAngleRawSourceTable.TryGet(gameId, out _)) return null;   // no source: no dropdown
             if (units != null && units.ForcesCarAngle(gameId)) return SlipAngleUnitChoice.CarAngle;
             SlipAngleUnitChoice? hard = SlipAngleHardCodedUnit(gameId);
             if (hard.HasValue) return hard.Value;
@@ -375,10 +372,13 @@ namespace QAdvanceFeedback.Settings
             return !hard.HasValue || ToChoice(units.Resolve(gameId, entry.Unit)) == hard;
         }
 
-        /// <summary>Whether the unit dropdown shows (owner, 2026-11-22: always, for Plugin Internal with a game - its
-        /// entries depend on the game, <see cref="SlipAngleUnitOptions"/>). Never for a Custom source.</summary>
-        public static bool ShowSlipAngleUnitChoice(SourceMode mode, string gameId, SlipAngleSourceUnits units) =>
-            mode != SourceMode.Custom && units != null && !string.IsNullOrEmpty(gameId);
+        /// <summary>Whether the "Source Type for this game" dropdown shows (owner, 2026-11-24): for a game with a per-wheel
+        /// source (Telemetry Type not None) - its entries depend on the source, <see cref="SlipAngleUnitOptions"/>. Never while the angle source is "Always car
+        /// angle" (owner, 2026-11-23: no game's tyre value is read then).</summary>
+        public static bool ShowSlipAngleUnitChoice(string gameId, SlipAngleSourceUnits units,
+            SlipAngleAngleSource angleSource = SlipAngleAngleSource.PerWheelWhenAvailable) =>
+            angleSource != SlipAngleAngleSource.CarAngle && units != null && !string.IsNullOrEmpty(gameId)
+            && SlipAngleRawSourceTable.TryGet(gameId, out _);   // Telemetry Type None: hidden (owner, 2026-11-24)
 
         /// <summary>Applies a dropdown write for <paramref name="gameId"/>: null, Auto-detect or the game's hard-coded
         /// unit restore the default (<see cref="SlipAngleSourceUnits.RestoreDefault"/>); any other offered entry is the
@@ -461,6 +461,7 @@ namespace QAdvanceFeedback.Settings
                     return s.SlipAngle?.SourceUnits == null || string.IsNullOrEmpty(gameId) ? null
                         : (object)new SlipAngleUnitState(SlipAngleSelectedUnit(gameId, s.SlipAngle.SourceUnits),
                             SlipAngleUnitIsDefault(gameId, s.SlipAngle.SourceUnits));
+                case SettingField.SlipAngleAngleSource: return s.SlipAngle?.AngleSource;
                 case SettingField.IntegrateSlipAngle: return s.GForce?.IntegrateSlipAngle;
                 case SettingField.LockShakeItLegacyAlgorithm: return s.Lock?.ShakeItAlgorithm?.UseLegacyIracingAlgorithm;
                 case SettingField.LockShakeItSensibility: return s.Lock?.ShakeItAlgorithm?.LockSensibility;
@@ -519,6 +520,7 @@ namespace QAdvanceFeedback.Settings
                         ApplySlipAngleUnitChoice(s.SlipAngle.SourceUnits, gameId, value as SlipAngleUnitChoice?);
                     }
                     break;
+                case SettingField.SlipAngleAngleSource: if (s.SlipAngle != null) s.SlipAngle.AngleSource = (SlipAngleAngleSource)value; break;
                 case SettingField.IntegrateSlipAngle: if (s.GForce != null) s.GForce.IntegrateSlipAngle = (bool)value; break;
                 case SettingField.ClutchApply: if (s.Clutch != null) s.Clutch.Apply = (ClutchApplyDirection)value; break;
                 case SettingField.ClutchBiteMode: if (s.Clutch != null) s.Clutch.Mode = (ClutchBiteMode)value; break;

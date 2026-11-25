@@ -53,14 +53,25 @@
     <!-- Key data points: Min/Best/Max on Raw.All, read-only (text box AND +/-) under Auto -->
     <StackPanel Margin="0,6,0,0">
       <TextBlock Text="{Binding KeyDataHeader}" FontWeight="Bold" Margin="0,0,0,4" TextWrapping="Wrap"/>
-      <!-- Unit dropdown (owner, 2026-11-22): always shown; entries depend on the game. Restore default only when changed. -->
-      <StackPanel Orientation="Horizontal" Margin="0,0,0,6" Visibility="{Binding ShowUnitChoice, Converter={StaticResource VisibleWhen}}">
-        <ComboBox ItemsSource="{Binding UnitChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedUnitChoice}"
-                  MinWidth="240" ToolTip="{v:Loc SlipAngle.Unit.ToolTip}"/>
-        <Button Content="{v:Loc SlipAngle.Unit.Reset}" Command="{Binding ResetUnitCommand}" Margin="6,0,0,0" Padding="12,2"
-                Visibility="{Binding ShowUnitReset, Converter={StaticResource VisibleWhen}}"
-                ToolTip="{v:Loc SlipAngle.Unit.Reset.ToolTip}"/>
-      </StackPanel>
+      <!-- The surface whose learning key is in use (owner, 2026-11-23), and what a new surface starts from. -->
+      <TextBlock Text="{Binding SurfaceText}" Visibility="{Binding SurfaceText, Converter={StaticResource VisibleWhen}}"
+                 TextWrapping="Wrap" Margin="0,0,0,2"/>
+      <TextBlock Text="{Binding SurfaceBorrowText}" Visibility="{Binding SurfaceBorrowText, Converter={StaticResource VisibleWhen}}"
+                 TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,4"/>
+      <!-- "Source Type for this game" (owner, 2026-11-24): the same entries as the plugin page's, shown for a game with a
+           per-wheel source; saved to the plugin config. Restore default only when it differs from the source JSON's. -->
+      <!-- In the panel's one label column (SharedSizeGroup "Label"), so the dropdown starts where every other one does. -->
+      <Grid Style="{StaticResource RowGrid}" Visibility="{Binding ShowUnitChoice, Converter={StaticResource VisibleWhen}}">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <TextBlock Text="{v:Loc SlipAngle.Unit.PanelLabel}" Style="{StaticResource RowLabel}"/>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
+          <ComboBox ItemsSource="{Binding UnitChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedUnitChoice}"
+                    MinWidth="240" ToolTip="{v:Loc SlipAngle.Unit.ToolTip}"/>
+          <Button Content="{v:Loc SlipAngle.Unit.Reset}" Command="{Binding ResetUnitCommand}" Margin="6,0,0,0" Padding="12,2"
+                  Visibility="{Binding ShowUnitReset, Converter={StaticResource VisibleWhen}}"
+                  ToolTip="{v:Loc SlipAngle.Unit.Reset.ToolTip}"/>
+        </StackPanel>
+      </Grid>
       <Grid Style="{StaticResource RowGrid}">
         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
         <TextBlock Text="{v:Loc KeyData.AutoGenerate.Label}" Style="{StaticResource RowLabel}"/>

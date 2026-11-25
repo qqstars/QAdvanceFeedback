@@ -39,11 +39,7 @@ namespace QAdvanceFeedback.Ui.ViewModels
             _apply = new RelayCommand(() => Context.Guard(Apply), () => IsDirty);
             ApplyCommand = _apply;
             RestoreDefaultsCommand = new RelayCommand(RestoreDefaults);
-            _draft.DirtyChanged += (s, e) =>
-            {
-                OnPropertyChanged(nameof(IsDirty));
-                _apply.RaiseCanExecuteChanged();
-            };
+            _draft.DirtyChanged += (s, e) => RaiseDirtyChanged();
 
             LockTab = new WheelChannelPageViewModel(Context, isLock: true);
             SlipTab = new WheelChannelPageViewModel(Context, isLock: false);
@@ -59,6 +55,7 @@ namespace QAdvanceFeedback.Ui.ViewModels
                 SlipAngleTab = new SlipAngleTabViewModel(slipAngleHost, ticker);
                 SlipAngleTab.Load(_draft.Settings.SlipAngle);
                 SlipAngleTab.Edited += OnSlipAngleEdited;
+                SlipAngleTab.TelemetryPendingChanged += RaiseDirtyChanged;
             }
             if (host is IClutchHost clutchHost)
             {
@@ -77,8 +74,15 @@ namespace QAdvanceFeedback.Ui.ViewModels
         public SettingsPageContext Context { get; }
 
         /// <summary>The page holds edits not yet applied: enables Apply and shows the banner - one fact,
-        /// so the two can never disagree.</summary>
-        public bool IsDirty => _draft.IsDirty;
+        /// so the two can never disagree. The Slip Angle tab's per-wheel telemetry source is not a setting (it lives in
+        /// QAdvanceFeedback.SlipAngleSource.json), so its pending edit counts here too.</summary>
+        public bool IsDirty => _draft.IsDirty || (SlipAngleTab?.HasPendingTelemetry ?? false);
+
+        private void RaiseDirtyChanged()
+        {
+            OnPropertyChanged(nameof(IsDirty));
+            _apply.RaiseCanExecuteChanged();
+        }
 
         /// <summary>Writes the page's edits into the live settings, then the plugin applies, saves and
         /// broadcasts them (the plugin's own broadcast - it knows the game and the Slip Angle tier).</summary>
@@ -172,6 +176,9 @@ namespace QAdvanceFeedback.Ui.ViewModels
             // 1.1.0 rule: a Custom channel's shown stand-in cold-start reference is saved by this Apply.
             LockTab.CustomReference.StoreShownDefaultIfMissing();
             SlipTab.CustomReference.StoreShownDefaultIfMissing();
+            // The Slip Angle per-wheel telemetry source goes to its own file (a refused one stays on the tab, red;
+            // the rest of the Apply goes through).
+            SlipAngleTab?.ApplyTelemetrySource();
             _draft.Apply();
             // The plugin applies, saves and broadcasts the diff against what it last applied, with the
             // running game and the Slip Angle identity tier (ruling: the page does not broadcast again).
@@ -179,6 +186,7 @@ namespace QAdvanceFeedback.Ui.ViewModels
             // Whatever the plugin normalised while applying, and any change made live since the last
             // sync that was not edited here (Apply left it alone), comes back into the draft.
             _draft.AdoptExternal();
+            RaiseDirtyChanged();
         }
 
         // TODAY'S RULE (Settings\SettingsControl.xaml.cs RestoreAllDefaults): confirm, then

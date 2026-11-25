@@ -8,15 +8,21 @@ using Xunit;
 namespace QAdvanceFeedback.Tests.SlipAngle
 {
     /// <summary>
-    /// The slip-angle raw-source table against docs\slip-angle-spike-report.md, row by row. Every
-    /// expected value below is transcribed from the spike's per-game table, with SimHub's own array
+    /// The slip-angle source table built from the compiled QAdvanceFeedback.SlipAngleSource.json (1.2.1: the JSON is
+    /// the only definition) against docs\slip-angle-spike-report.md, row by row - the same rows the built-in table
+    /// had. Every expected value below is transcribed from the spike's per-game table, with SimHub's own array
     /// naming applied (an array member <c>name[i]</c> is published as <c>name01</c>..<c>name04</c>,
-    /// 1-based, two digits - DataCorePlugin.DeclareObject). Paths are listed in FL, FR, RL, RR order.
+    /// 1-based, two digits - DataCorePlugin.DeclareObject). Paths are listed in FL, FR, RL, RR order, relative
+    /// here; the file holds the full names (<see cref="SlipAngleRawSourceTable.RawDataPrefix"/>). Units are the ones
+    /// the code stated before 1.2.1: the table's (LFS, Drift21, rF2, LMU, NASCAR radians) and the hard-coded lists'
+    /// (KartKraft degrees, the five Forza games' 0-1 ratio).
     /// </summary>
     public class SlipAngleRawSourcesTableTests
     {
         private static string[] Arr(string prefix, string suffix, params int[] rawIndices)
             => rawIndices.Select(i => prefix + (i + 1).ToString("00") + suffix).ToArray();
+
+        private static string[] Full(IEnumerable<string> relative) => relative.Select(SlipAngleRawSourceTable.FullPropertyName).ToArray();
 
         // Raw RL,RR,FL,FR (F1 23+ and LFS): FL is raw 2, FR raw 3, RL raw 0, RR raw 1.
         private static readonly int[] F1Remap = { 2, 3, 0, 1 };
@@ -29,7 +35,6 @@ namespace QAdvanceFeedback.Tests.SlipAngle
             public string[] LongitudinalPaths;
             public SlipAngleUnit Unit;
             public SlipAngleTransform Transform;
-            public SlipAngleWheelOrderBasis Order;
             public string[] Surface;
             public bool Provisional;
         }
@@ -37,15 +42,15 @@ namespace QAdvanceFeedback.Tests.SlipAngle
         private static IEnumerable<Row> SpikeRows()
         {
             // ---- Native (direct) ----
-            yield return new Row { Id = "ACC", Paths = Arr("Physics.slipAngle", "", Identity), Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct, Order = SlipAngleWheelOrderBasis.FeedbackDataIndex };
-            yield return new Row { Id = "AssettoCorsaRally", Paths = Arr("Physics.slipAngle", "", Identity), Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct, Order = SlipAngleWheelOrderBasis.Unverified };
-            yield return new Row { Id = "AssettoCorsaEVO", Paths = Arr("Physics.slipAngle", "", Identity), Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct, Order = SlipAngleWheelOrderBasis.Unverified };
+            yield return new Row { Id = "ACC", Paths = Arr("Physics.slipAngle", "", Identity), Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct };
+            yield return new Row { Id = "AssettoCorsaRally", Paths = Arr("Physics.slipAngle", "", Identity), Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct };
+            yield return new Row { Id = "AssettoCorsaEVO", Paths = Arr("Physics.slipAngle", "", Identity), Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct };
             foreach (string f1 in new[] { "F12023", "F12024", "F12025" })
             {
                 yield return new Row
                 {
                     Id = f1, Paths = Arr("PacketMotionExData.m_wheelSlipAngle", "", F1Remap), Unit = SlipAngleUnit.Unverified,
-                    Transform = SlipAngleTransform.Direct, Order = SlipAngleWheelOrderBasis.ReaderRemap,
+                    Transform = SlipAngleTransform.Direct,
                     Surface = Arr("PlayerCarTelemetryData.m_surfaceType", "", F1Remap),
                 };
             }
@@ -55,25 +60,25 @@ namespace QAdvanceFeedback.Tests.SlipAngle
                 {
                     Id = forza,
                     Paths = new[] { "TireSlipAngleFrontLeft", "TireSlipAngleFrontRight", "TireSlipAngleRearLeft", "TireSlipAngleRearRight" },
-                    Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct, Order = SlipAngleWheelOrderBasis.Named,
+                    Unit = SlipAngleUnit.Ratio1, Transform = SlipAngleTransform.Direct,
                 };
             }
-            yield return new Row { Id = "LFS", Paths = Arr("OutSim2.OSWheels", ".TanSlipAngle", F1Remap), Unit = SlipAngleUnit.Radians, Transform = SlipAngleTransform.AtanOfTangent, Order = SlipAngleWheelOrderBasis.ReaderRemap };
-            yield return new Row { Id = "Wreckfest2", Paths = Arr("Main.carPlayer.tires", ".slipAngle", Identity), Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct, Order = SlipAngleWheelOrderBasis.Named, Surface = Arr("Main.carPlayer.tires", ".surfaceType", Identity) };
-            yield return new Row { Id = "ProjectMotorRacing", Paths = Arr("PlayerTelemetry.m_wheels", ".m_slipAngle", Identity), Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct, Order = SlipAngleWheelOrderBasis.FeedbackDataIndex, Surface = Arr("PlayerTelemetry.m_wheels", ".m_contactMaterialHash", Identity) };
+            yield return new Row { Id = "LFS", Paths = Arr("OutSim2.OSWheels", ".TanSlipAngle", F1Remap), Unit = SlipAngleUnit.Radians, Transform = SlipAngleTransform.AtanOfTangent };
+            yield return new Row { Id = "Wreckfest2", Paths = Arr("Main.carPlayer.tires", ".slipAngle", Identity), Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct, Surface = Arr("Main.carPlayer.tires", ".surfaceType", Identity) };
+            yield return new Row { Id = "ProjectMotorRacing", Paths = Arr("PlayerTelemetry.m_wheels", ".m_slipAngle", Identity), Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct, Surface = Arr("PlayerTelemetry.m_wheels", ".m_contactMaterialHash", Identity) };
             yield return new Row
             {
                 Id = "Drift21",
                 Paths = new[] { "RaceTelemetry.TireSlipAngleRadians_FrontLeft", "RaceTelemetry.TireSlipAngleRadians_FrontRight", "RaceTelemetry.TireSlipAngleRadians_BackLeft", "RaceTelemetry.TireSlipAngleRadians_BackRight" },
-                Unit = SlipAngleUnit.Radians, Transform = SlipAngleTransform.Direct, Order = SlipAngleWheelOrderBasis.Named,
+                Unit = SlipAngleUnit.Radians, Transform = SlipAngleTransform.Direct,
             };
-            yield return new Row { Id = "KartKraft", Paths = Arr("Motion.WheelsArray", ".SlipAngle", Identity), Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct, Order = SlipAngleWheelOrderBasis.Unverified, Surface = Arr("Motion.WheelsArray", ".Surface", Identity) };
-            yield return new Row { Id = "BusBound", Paths = Arr("Telemetry.Bus.Wheels", ".SlipAngle", Identity), Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct, Order = SlipAngleWheelOrderBasis.Unverified, Surface = Arr("Telemetry.Bus.Wheels", ".Ground", Identity) };
+            yield return new Row { Id = "KartKraft", Paths = Arr("Motion.WheelsArray", ".SlipAngle", Identity), Unit = SlipAngleUnit.Degrees, Transform = SlipAngleTransform.Direct, Surface = Arr("Motion.WheelsArray", ".Surface", Identity) };
+            yield return new Row { Id = "BusBound", Paths = Arr("Telemetry.Bus.Wheels", ".SlipAngle", Identity), Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct, Surface = Arr("Telemetry.Bus.Wheels", ".Ground", Identity) };
             yield return new Row
             {
                 Id = "Rennsport",
                 Paths = new[] { "TelemetryPoint.LF.SlipAngle", "TelemetryPoint.RF.SlipAngle", "TelemetryPoint.LR.SlipAngle", "TelemetryPoint.RR.SlipAngle" },
-                Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct, Order = SlipAngleWheelOrderBasis.Named,
+                Unit = SlipAngleUnit.Unverified, Transform = SlipAngleTransform.Direct,
                 Surface = new[] { "TelemetryPoint.LF.ContactSurface", "TelemetryPoint.RF.ContactSurface", "TelemetryPoint.LR.ContactSurface", "TelemetryPoint.RR.ContactSurface" },
             };
 
@@ -82,14 +87,14 @@ namespace QAdvanceFeedback.Tests.SlipAngle
             {
                 Id = "RFactor2", Paths = Arr("CurrentPlayerTelemetry.mWheels", ".mLateralPatchVel", Identity),
                 LongitudinalPaths = Arr("CurrentPlayerTelemetry.mWheels", ".mLongitudinalGroundVel", Identity),
-                Unit = SlipAngleUnit.Radians, Transform = SlipAngleTransform.Atan2PatchVelocity, Order = SlipAngleWheelOrderBasis.FeedbackDataIndex,
+                Unit = SlipAngleUnit.Radians, Transform = SlipAngleTransform.Atan2PatchVelocity,
                 Surface = Arr("CurrentPlayerTelemetry.mWheels", ".mSurfaceType", Identity),
             };
             yield return new Row
             {
                 Id = "LMU", Paths = Arr("PlayerNativeTelemetry.mWheel", ".mLateralPatchVel", Identity),
                 LongitudinalPaths = Arr("PlayerNativeTelemetry.mWheel", ".mLongitudinalGroundVel", Identity),
-                Unit = SlipAngleUnit.Radians, Transform = SlipAngleTransform.Atan2PatchVelocity, Order = SlipAngleWheelOrderBasis.FeedbackDataIndex,
+                Unit = SlipAngleUnit.Radians, Transform = SlipAngleTransform.Atan2PatchVelocity,
                 Surface = Arr("PlayerNativeTelemetry.mWheel", ".mSurfaceType", Identity),
             };
             foreach (string nascar in new[] { "NASCARHeat4", "NASCARHeat5", "TonyStewartsAllAmericanRacing", "TonyStewartsSprintCarRacing", "SRXTheGame" })
@@ -99,7 +104,7 @@ namespace QAdvanceFeedback.Tests.SlipAngle
                     Id = nascar,
                     Paths = new[] { "LCarPacket.wheel_lf.lat_terrain_speed", "LCarPacket.wheel_rf.lat_terrain_speed", "LCarPacket.wheel_lr.lat_terrain_speed", "LCarPacket.wheel_rr.lat_terrain_speed" },
                     LongitudinalPaths = new[] { "LCarPacket.wheel_lf.lon_terrain_speed", "LCarPacket.wheel_rf.lon_terrain_speed", "LCarPacket.wheel_lr.lon_terrain_speed", "LCarPacket.wheel_rr.lon_terrain_speed" },
-                    Unit = SlipAngleUnit.Radians, Transform = SlipAngleTransform.Atan2PatchVelocity, Order = SlipAngleWheelOrderBasis.Named,
+                    Unit = SlipAngleUnit.Radians, Transform = SlipAngleTransform.Atan2PatchVelocity,
                     Surface = new[] { "LCarPacket.wheel_lf.surface", "LCarPacket.wheel_rf.surface", "LCarPacket.wheel_lr.surface", "LCarPacket.wheel_rr.surface" },
                     Provisional = true,
                 };
@@ -114,27 +119,45 @@ namespace QAdvanceFeedback.Tests.SlipAngle
         {
             Row expected = SpikeRows().Single(r => r.Id == id);
             Assert.True(SlipAngleRawSourceTable.TryGet(id, out SlipAngleRawSourceEntry e));
-            Assert.Equal(id, e.GameId);
-            Assert.Equal(expected.Paths, e.PropertyPaths);
+            Assert.True(SlipAngleGameIdPattern.Parse(e.GameId).Matches(id));   // the row's id (maybe Game1|Game2 or a pattern)
+            Assert.Equal(Full(expected.Paths), e.PropertyPaths);
             if (expected.LongitudinalPaths == null) Assert.Null(e.LongitudinalPaths);
-            else Assert.Equal(expected.LongitudinalPaths, e.LongitudinalPaths);
+            else Assert.Equal(Full(expected.LongitudinalPaths), e.LongitudinalPaths);
             Assert.Equal(expected.Unit, e.Unit);
             Assert.Equal(expected.Transform, e.Transform);
-            Assert.Equal(expected.Order, e.WheelOrderBasis);
-            Assert.Equal(expected.Order != SlipAngleWheelOrderBasis.Unverified, e.WheelOrderVerified);
-            Assert.False(string.IsNullOrWhiteSpace(e.WheelOrder));
             if (expected.Surface == null) Assert.Null(e.SurfacePaths);
-            else Assert.Equal(expected.Surface, e.SurfacePaths);
+            else Assert.Equal(Full(expected.Surface), e.SurfacePaths);
             Assert.Equal(expected.Provisional, e.Provisional);
         }
 
         [Fact]
         public void Table_has_exactly_the_spike_native_rows()
         {
-            var expected = SpikeRows().Select(r => r.Id).OrderBy(x => x, StringComparer.Ordinal).ToArray();
-            var actual = SlipAngleRawSourceTable.NativeGameIds.OrderBy(x => x, StringComparer.Ordinal).ToArray();
-            Assert.Equal(expected, actual);
+            // Every spike game resolves (above); the shipped file keeps games with the same source in one row.
+            Assert.Equal(13, SlipAngleRawSourceTable.NativeGameIds.Count);
+            Assert.All(SpikeRows(), r => Assert.True(SlipAngleRawSourceTable.TryGet(r.Id, out _)));
         }
+
+        [Theory]
+        [InlineData("F12026")]
+        [InlineData("F12030")]
+        [InlineData("F12099")]
+        [InlineData("F12026SeasonPack")]   // SimHub 9.13.2's GameRegistry already lists it
+        [InlineData("FH7")]
+        [InlineData("FM9")]
+        public void Future_titles_of_a_pattern_row_get_its_source(string id)
+        {
+            Assert.True(SlipAngleRawSourceTable.TryGet(id, out SlipAngleRawSourceEntry e));
+            Assert.True(SlipAngleRawSourceTable.TryGet(id.StartsWith("F1") ? "F12025" : "FH6", out SlipAngleRawSourceEntry known));
+            Assert.Same(known, e);
+        }
+
+        [Theory]
+        [InlineData("F12022")]   // named exactly by the surface-only row: exact wins over the regex
+        [InlineData("F12100")]
+        [InlineData("FH10")]
+        [InlineData("FH")]
+        public void A_pattern_never_takes_a_game_it_does_not_match(string id) => Assert.False(SlipAngleRawSourceTable.TryGet(id, out _));
 
         [Theory]
         [InlineData("AssettoCorsa")]
@@ -170,20 +193,9 @@ namespace QAdvanceFeedback.Tests.SlipAngle
         }
 
         [Fact]
-        public void Only_Rennsport_is_flagged_as_an_unconfirmed_game_id_and_only_LMU_as_unconfirmed_exposure()
-        {
-            foreach (string id in SlipAngleRawSourceTable.NativeGameIds)
-            {
-                SlipAngleRawSourceTable.TryGet(id, out SlipAngleRawSourceEntry e);
-                Assert.Equal(id == "Rennsport", e.GameIdUnverified);
-                Assert.Equal(id == "LMU", e.ExposureUnconfirmed);
-            }
-        }
-
-        [Fact]
         public void Every_native_row_has_four_paths()
         {
-            foreach (string id in SlipAngleRawSourceTable.NativeGameIds)
+            foreach (string id in SpikeRows().Select(r => r.Id))
             {
                 SlipAngleRawSourceTable.TryGet(id, out SlipAngleRawSourceEntry e);
                 Assert.Equal(4, e.PropertyPaths.Count);
@@ -202,38 +214,36 @@ namespace QAdvanceFeedback.Tests.SlipAngle
         // ---- Surface-only rows (fallback games; ruling R13 - raw value only, no mapping) ----
 
         [Theory]
-        [InlineData("Automobilista2", "mTerrain01", "mTerrain02", "mTerrain03", "mTerrain04", SlipAngleWheelOrderBasis.FeedbackDataIndex)]
-        [InlineData("PCars", "mTerrain01", "mTerrain02", "mTerrain03", "mTerrain04", SlipAngleWheelOrderBasis.Unverified)]
-        [InlineData("PCars2", "mTerrain01", "mTerrain02", "mTerrain03", "mTerrain04", SlipAngleWheelOrderBasis.Unverified)]
-        [InlineData("PCars3", "mTerrain01", "mTerrain02", "mTerrain03", "mTerrain04", SlipAngleWheelOrderBasis.Unverified)]
-        [InlineData("RFactor1", "Data.wheel01.surfaceType", "Data.wheel02.surfaceType", "Data.wheel03.surfaceType", "Data.wheel04.surfaceType", SlipAngleWheelOrderBasis.Unverified)]
-        [InlineData("StockCarExtreme", "Data.wheel01.surfaceType", "Data.wheel02.surfaceType", "Data.wheel03.surfaceType", "Data.wheel04.surfaceType", SlipAngleWheelOrderBasis.Unverified)]
-        [InlineData("CopaPetrobrasDeMarcas", "Data.wheel01.surfaceType", "Data.wheel02.surfaceType", "Data.wheel03.surfaceType", "Data.wheel04.surfaceType", SlipAngleWheelOrderBasis.Unverified)]
-        [InlineData("FormulaTruck2013", "Data.wheel01.surfaceType", "Data.wheel02.surfaceType", "Data.wheel03.surfaceType", "Data.wheel04.surfaceType", SlipAngleWheelOrderBasis.Unverified)]
-        [InlineData("Automobilista", "Data.wheel01.surfaceType", "Data.wheel02.surfaceType", "Data.wheel03.surfaceType", "Data.wheel04.surfaceType", SlipAngleWheelOrderBasis.Unverified)]
-        [InlineData("SIMBINGTR2", "Data.wheel01.surfaceType", "Data.wheel02.surfaceType", "Data.wheel03.surfaceType", "Data.wheel04.surfaceType", SlipAngleWheelOrderBasis.Unverified)]
-        [InlineData("GranTurismo7", "surfaceType01", "surfaceType02", "surfaceType03", "surfaceType04", SlipAngleWheelOrderBasis.FeedbackDataIndex)]
-        [InlineData("BeamNgDrive", "wheel_contactMaterial_fl", "wheel_contactMaterial_fr", "wheel_contactMaterial_rl", "wheel_contactMaterial_rr", SlipAngleWheelOrderBasis.Named)]
-        [InlineData("F12019", "PlayerCarTelemetryData.m_surfaceType01", "PlayerCarTelemetryData.m_surfaceType02", "PlayerCarTelemetryData.m_surfaceType03", "PlayerCarTelemetryData.m_surfaceType04", SlipAngleWheelOrderBasis.Unverified)]
-        [InlineData("F12020", "PlayerCarTelemetryData.m_surfaceType01", "PlayerCarTelemetryData.m_surfaceType02", "PlayerCarTelemetryData.m_surfaceType03", "PlayerCarTelemetryData.m_surfaceType04", SlipAngleWheelOrderBasis.Unverified)]
-        [InlineData("F12021", "PlayerCarTelemetryData.m_surfaceType01", "PlayerCarTelemetryData.m_surfaceType02", "PlayerCarTelemetryData.m_surfaceType03", "PlayerCarTelemetryData.m_surfaceType04", SlipAngleWheelOrderBasis.Unverified)]
-        [InlineData("F12022", "PlayerCarTelemetryData.m_surfaceType01", "PlayerCarTelemetryData.m_surfaceType02", "PlayerCarTelemetryData.m_surfaceType03", "PlayerCarTelemetryData.m_surfaceType04", SlipAngleWheelOrderBasis.Unverified)]
-        public void Surface_only_rows_match_the_spike(string id, string fl, string fr, string rl, string rr, SlipAngleWheelOrderBasis order)
+        [InlineData("Automobilista2", "mTerrain01", "mTerrain02", "mTerrain03", "mTerrain04")]
+        [InlineData("PCars", "mTerrain01", "mTerrain02", "mTerrain03", "mTerrain04")]
+        [InlineData("PCars2", "mTerrain01", "mTerrain02", "mTerrain03", "mTerrain04")]
+        [InlineData("PCars3", "mTerrain01", "mTerrain02", "mTerrain03", "mTerrain04")]
+        [InlineData("RFactor1", "Data.wheel01.surfaceType", "Data.wheel02.surfaceType", "Data.wheel03.surfaceType", "Data.wheel04.surfaceType")]
+        [InlineData("StockCarExtreme", "Data.wheel01.surfaceType", "Data.wheel02.surfaceType", "Data.wheel03.surfaceType", "Data.wheel04.surfaceType")]
+        [InlineData("CopaPetrobrasDeMarcas", "Data.wheel01.surfaceType", "Data.wheel02.surfaceType", "Data.wheel03.surfaceType", "Data.wheel04.surfaceType")]
+        [InlineData("FormulaTruck2013", "Data.wheel01.surfaceType", "Data.wheel02.surfaceType", "Data.wheel03.surfaceType", "Data.wheel04.surfaceType")]
+        [InlineData("Automobilista", "Data.wheel01.surfaceType", "Data.wheel02.surfaceType", "Data.wheel03.surfaceType", "Data.wheel04.surfaceType")]
+        [InlineData("SIMBINGTR2", "Data.wheel01.surfaceType", "Data.wheel02.surfaceType", "Data.wheel03.surfaceType", "Data.wheel04.surfaceType")]
+        [InlineData("GranTurismo7", "surfaceType01", "surfaceType02", "surfaceType03", "surfaceType04")]
+        [InlineData("BeamNgDrive", "wheel_contactMaterial_fl", "wheel_contactMaterial_fr", "wheel_contactMaterial_rl", "wheel_contactMaterial_rr")]
+        [InlineData("F12019", "PlayerCarTelemetryData.m_surfaceType01", "PlayerCarTelemetryData.m_surfaceType02", "PlayerCarTelemetryData.m_surfaceType03", "PlayerCarTelemetryData.m_surfaceType04")]
+        [InlineData("F12020", "PlayerCarTelemetryData.m_surfaceType01", "PlayerCarTelemetryData.m_surfaceType02", "PlayerCarTelemetryData.m_surfaceType03", "PlayerCarTelemetryData.m_surfaceType04")]
+        [InlineData("F12021", "PlayerCarTelemetryData.m_surfaceType01", "PlayerCarTelemetryData.m_surfaceType02", "PlayerCarTelemetryData.m_surfaceType03", "PlayerCarTelemetryData.m_surfaceType04")]
+        [InlineData("F12022", "PlayerCarTelemetryData.m_surfaceType01", "PlayerCarTelemetryData.m_surfaceType02", "PlayerCarTelemetryData.m_surfaceType03", "PlayerCarTelemetryData.m_surfaceType04")]
+        public void Surface_only_rows_match_the_spike(string id, string fl, string fr, string rl, string rr)
         {
             Assert.False(SlipAngleRawSourceTable.TryGet(id, out _));
-            Assert.True(SlipAngleRawSourceTable.TryGetSurfacePaths(id, out IReadOnlyList<string> paths, out SlipAngleWheelOrderBasis basis));
-            Assert.Equal(new[] { fl, fr, rl, rr }, paths);
-            Assert.Equal(order, basis);
+            Assert.True(SlipAngleRawSourceTable.TryGetSurfacePaths(id, out IReadOnlyList<string> paths));
+            Assert.Equal(Full(new[] { fl, fr, rl, rr }), paths);
         }
 
         [Fact]
         public void Native_row_surface_paths_are_reachable_through_the_surface_lookup()
         {
-            Assert.True(SlipAngleRawSourceTable.TryGetSurfacePaths("F12024", out IReadOnlyList<string> paths, out SlipAngleWheelOrderBasis basis));
-            Assert.Equal(Arr("PlayerCarTelemetryData.m_surfaceType", "", F1Remap), paths);
-            Assert.Equal(SlipAngleWheelOrderBasis.ReaderRemap, basis);
-            Assert.False(SlipAngleRawSourceTable.TryGetSurfacePaths("ACC", out _, out _)); // spike: none (searched)
-            Assert.False(SlipAngleRawSourceTable.TryGetSurfacePaths("AssettoCorsa", out _, out _));
+            Assert.True(SlipAngleRawSourceTable.TryGetSurfacePaths("F12024", out IReadOnlyList<string> paths));
+            Assert.Equal(Full(Arr("PlayerCarTelemetryData.m_surfaceType", "", F1Remap)), paths);
+            Assert.False(SlipAngleRawSourceTable.TryGetSurfacePaths("ACC", out _)); // spike: none (searched)
+            Assert.False(SlipAngleRawSourceTable.TryGetSurfacePaths("AssettoCorsa", out _));
         }
 
         [Theory]

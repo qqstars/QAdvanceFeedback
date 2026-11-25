@@ -36,6 +36,7 @@ namespace QAdvanceFeedback.Tests.Ui.Page
         public SourceNativeness IdentityTier { get; set; } = SourceNativeness.Native;
         public SlipAngleWindow? LearnedWindow(string sourceIdentity) => null;
         public void SaveLiveSettings() => ApplySettings();
+        public SlipAngleSourceStore NativeSources { get; set; }
 
         // ---- IWheelChannelPageHost (+ the Slip Angle tab's picker / editor) ----
         public bool EvaluatorAvailable { get; set; } = true;
@@ -255,6 +256,21 @@ namespace QAdvanceFeedback.Tests.Ui.Page
             double shipped = QAdvanceFeedbackSettings.CreateDefault().SlipAngle.Gate.BrakeThreshold;
             Assert.Equal(shipped, page.SlipAngleTab.BrakeThreshold);
             Assert.Equal(shipped, _host.Settings.SlipAngle.Gate.BrakeThreshold);
+            Assert.False(page.IsDirty);
+        }
+
+        [Fact]
+        public void Restore_defaults_puts_the_global_source_type_mode_back_to_per_wheel()
+        {
+            SettingsPageViewModel page = NewPage();
+            page.SlipAngleTab.AngleSource = SlipAngleAngleSource.CarAngle;
+            page.ApplyCommand.Execute(null);
+            Assert.Equal(SlipAngleAngleSource.CarAngle, _host.Settings.SlipAngle.AngleSource);   // applied (and saved)
+
+            page.RestoreDefaultsCommand.Execute(null);
+
+            Assert.Equal(SlipAngleAngleSource.PerWheelWhenAvailable, page.SlipAngleTab.AngleSource);
+            Assert.Equal(SlipAngleAngleSource.PerWheelWhenAvailable, _host.Settings.SlipAngle.AngleSource);
             Assert.False(page.IsDirty);
         }
 

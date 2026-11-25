@@ -384,12 +384,14 @@ namespace QAdvanceFeedback.Tests.SlipAngle
             Assert.Equal(SourceNativeness.Unknown, context.Current.Tier);
         }
 
-        /// <summary>NEVER GUESS (owner, 2026-11-22): a game that reports no surface (FH6) keeps all its learning in one
-        /// bucket, so its saved Loose / Low-grip buckets - windows, k and speed bands - could only come from the old
-        /// guessing: dropped on load and from the next save. Its Sealed data stays; a surface-reporting game keeps all.</summary>
+        /// <summary>NEVER GUESS (owner, 2026-11-22): a saved bucket the game could never have reported can only come from
+        /// the old guessing and is dropped on load and from the next save. Since SimHub's grass/gravel flag (2026-11-23)
+        /// any game can report Loose, so that is only a Low-grip bucket of a game whose source row cannot report it
+        /// (FH6). Its Sealed and Loose data stay; GT7 (snow) keeps Low-grip.</summary>
         [Fact]
         public void Buckets_reached_only_by_the_old_surface_guessing_are_dropped_on_load()
         {
+            SurfaceBucketMap.ReportsLowGrip = g => SlipAngleSourceCompiled.Catalog.ReportsLowGrip(g);
             string fh6Sealed = KeyedSlipAngleLearner.MakeKey("FH6", Car, Src, SlipAngleTarget.All, SurfaceBucket.Sealed);
             string fh6Loose = KeyedSlipAngleLearner.MakeKey("FH6", Car, Src, SlipAngleTarget.All, SurfaceBucket.Loose);
             string fh6LowGrip = KeyedSlipAngleLearner.MakeKey("FH6", Car, Src, SlipAngleTarget.Front, SurfaceBucket.LowGrip);
@@ -407,7 +409,7 @@ namespace QAdvanceFeedback.Tests.SlipAngle
             Assert.True(k.SaveIfDue(KeyedSlipAngleLearner.PersistIntervalSeconds, s => saved = s));   // rewritten without them
             Assert.Contains(fh6Sealed, saved.Keys);
             Assert.Contains(rf2Loose, saved.Keys);
-            Assert.DoesNotContain(fh6Loose, saved.Keys);
+            Assert.Contains(fh6Loose, saved.Keys);
             Assert.DoesNotContain(fh6LowGrip, saved.Keys);
 
             var bands = new SlipAngleSpeedBands();
@@ -418,11 +420,13 @@ namespace QAdvanceFeedback.Tests.SlipAngle
                 [SlipAngleSpeedBands.MakeKey("FH6", Car, Src, SurfaceBucket.Sealed)] = set,
                 [SlipAngleSpeedBands.MakeKey("FH6", Car, Src, SurfaceBucket.Loose)] = set,
                 [SlipAngleSpeedBands.MakeKey("RFactor2", Car, Src, SurfaceBucket.Loose)] = set,
+                [SlipAngleSpeedBands.MakeKey("FH6", Car, Src, SurfaceBucket.LowGrip)] = set,
             });
             Assert.True(bands.Changed);
             Dictionary<string, SlipAngleSpeedBandSetState> keptBands = bands.Export();
-            Assert.Equal(2, keptBands.Count);
-            Assert.DoesNotContain(SlipAngleSpeedBands.MakeKey("FH6", Car, Src, SurfaceBucket.Loose), keptBands.Keys);
+            Assert.Equal(3, keptBands.Count);
+            Assert.Contains(SlipAngleSpeedBands.MakeKey("FH6", Car, Src, SurfaceBucket.Loose), keptBands.Keys);
+            Assert.DoesNotContain(SlipAngleSpeedBands.MakeKey("FH6", Car, Src, SurfaceBucket.LowGrip), keptBands.Keys);
         }
 
         [Fact]

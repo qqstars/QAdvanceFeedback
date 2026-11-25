@@ -101,7 +101,6 @@ namespace QAdvanceFeedback.Settings
             // than either outcome.
             WheelSourceSet lockCustom = Lock?.CustomSources;
             WheelSourceSet slipCustom = Slip?.CustomSources;
-            WheelSourceSet slipAngleCustom = SlipAngle?.CustomSources;   // same rule for Slip Angle (R36)
 
             SlipAngleKeyDataSettings slipAngleKeyData = SlipAngle?.KeyData;
             Core.SlipAngle.SlipAngleSourceUnits slipAngleUnits = SlipAngle?.SourceUnits;   // per-game units: learned, not a setting
@@ -122,7 +121,6 @@ namespace QAdvanceFeedback.Settings
             if (defaults != null) KeyDataPointDefaults = defaults;
             if (lockCustom != null) Lock.CustomSources = lockCustom;
             if (slipCustom != null) Slip.CustomSources = slipCustom;
-            if (slipAngleCustom != null) SlipAngle.CustomSources = slipAngleCustom;
         }
     }
 }

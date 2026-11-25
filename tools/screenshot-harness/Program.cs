@@ -221,7 +221,12 @@ namespace ScreenshotHarness
 
             CaptureTabContent(page, mainTabs, "WheelLockTab", Path.Combine(outDir, "settings-wheel-lock.png"));
             CaptureTabContent(page, mainTabs, "WheelSlipTab", Path.Combine(outDir, "settings-wheel-slip.png"));
-            CaptureTabContent(page, mainTabs, "SlipAngleTab", Path.Combine(outDir, "settings-slip-angle.png"));
+            // The Slip Angle tab with its Plugin Internal source block filled in (1.2.1): a running game (AC EVO) and the
+            // per-wheel source file (a temp copy of the shipped JSON), so the angle source, the game's four telemetry
+            // properties and the "Used for this game" unit dropdown show. Only for this capture - the other tabs are taken
+            // with no game, as before.
+            using (ShowSlipAngleSource(plugin, "AssettoCorsaEVO"))
+                CaptureTabContent(page, mainTabs, "SlipAngleTab", Path.Combine(outDir, "settings-slip-angle.png"));
             // Filename is "settings-gforce.png" (NOT "settings-g-force.png") - see docs\architecture.md's
             // own "Settings screenshot capture rule" remarks: the README links (and every other
             // settings-*.png in this folder) already use the no-hyphen form.
@@ -275,6 +280,38 @@ namespace ScreenshotHarness
 
         // Wheel Lock / Wheel Slip / G-Force: selected tab's own ScrollViewer content only (no tab
         // strip, no Apply/Restore row) - see docs\architecture.md's capture rule.
+        private sealed class Restore : IDisposable
+        {
+            private readonly Action _undo;
+            public Restore(Action undo) { _undo = undo; }
+            public void Dispose() => _undo();
+        }
+
+        /// <summary>Gives the plugin a running game and a per-wheel source file in a temp folder (the plugin's own
+        /// Init, which creates the real one in PluginsData\Common, does not run here); undone on dispose.</summary>
+        private static IDisposable ShowSlipAngleSource(QAdvanceFeedback.QAdvanceFeedback plugin, string gameId)
+        {
+            const BindingFlags Field = BindingFlags.NonPublic | BindingFlags.Instance;
+            FieldInfo game = typeof(QAdvanceFeedback.QAdvanceFeedback).GetField("_currentGameId", Field);
+            FieldInfo sources = typeof(QAdvanceFeedback.QAdvanceFeedback).GetField("_slipAngleSources", Field);
+            if (game == null || sources == null)
+                throw new InvalidOperationException("QAdvanceFeedback._currentGameId / _slipAngleSources not found - update this harness.");
+
+            string dir = Path.Combine(Path.GetTempPath(), "qaf-shots-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var store = new QAdvanceFeedback.SlipAngleSourceStore(Path.Combine(dir, QAdvanceFeedback.SlipAngleSourceStore.FileName));
+            store.Load();
+            object oldGame = game.GetValue(plugin), oldSources = sources.GetValue(plugin);
+            game.SetValue(plugin, gameId);
+            sources.SetValue(plugin, store);
+            return new Restore(() =>
+            {
+                game.SetValue(plugin, oldGame);
+                sources.SetValue(plugin, oldSources);
+                try { Directory.Delete(dir, true); } catch (IOException) { }
+            });
+        }
+
         private static void CaptureTabContent(UserControl control, TabControl mainTabs, string tabName, string outputPath)
         {
             var tab = (TabItem)control.FindName(tabName);

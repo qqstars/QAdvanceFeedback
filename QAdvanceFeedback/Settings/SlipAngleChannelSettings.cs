@@ -4,6 +4,17 @@ using QAdvanceFeedback.Core.SlipAngle;
 
 namespace QAdvanceFeedback.Settings
 {
+    /// <summary>Plugin Internal's Slip Angle source (the "Angle source" dropdown). Saved as its number, so the values never change.</summary>
+    public enum SlipAngleAngleSource
+    {
+        /// <summary>The game's per-wheel tyre slip angle when the game has a per-wheel telemetry source; otherwise the
+        /// car angle.</summary>
+        PerWheelWhenAvailable = 0,
+
+        /// <summary>The car angle (body motion) for every game, even one with a per-wheel telemetry source.</summary>
+        CarAngle = 1,
+    }
+
     /// <summary>
     /// Everything the Slip Angle channel needs (docs\slip-angle-design.md §9): source, gate, weights,
     /// key data, curve, pulse, drift. Source modes are Plugin Internal
@@ -16,10 +27,10 @@ namespace QAdvanceFeedback.Settings
         private double _weightMax = DefaultWeightMax;
         private double _weightMin = DefaultWeightMin;
 
-        /// <summary>Manual = Plugin Internal; Custom = driver-defined sources. Anything else normalises to Manual.</summary>
-        public SourceMode SourceMode { get; set; } = SourceMode.Manual;
-
-        public WheelSourceSet CustomSources { get; set; }
+        /// <summary>Plugin Internal's angle source (owner, 2026-11-23): the game's per-wheel tyre angle when the game has
+        /// a per-wheel telemetry source (QAdvanceFeedback.SlipAngleSource.json), else the car angle - or always the car
+        /// angle. Applied with the page's Apply.</summary>
+        public SlipAngleAngleSource AngleSource { get; set; } = SlipAngleAngleSource.PerWheelWhenAvailable;
 
         public SlipAngleGateSettings Gate { get; set; } = new SlipAngleGateSettings();
 
@@ -79,7 +90,7 @@ namespace QAdvanceFeedback.Settings
         /// <summary>Load-time repair: null sub-objects become defaults, Drift is clamped, unsupported modes become Manual.</summary>
         public void Normalise()
         {
-            if (SourceMode != SourceMode.Manual && SourceMode != SourceMode.Custom) SourceMode = SourceMode.Manual;
+            if (AngleSource != SlipAngleAngleSource.CarAngle) AngleSource = SlipAngleAngleSource.PerWheelWhenAvailable;
             if (Gate == null) Gate = new SlipAngleGateSettings();
             if (KeyData == null) KeyData = new SlipAngleKeyDataSettings();
             if (Projector == null) Projector = ProjectorSettings.CreateShippedDefault(ProjectionChannel.SlipAngle);

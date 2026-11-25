@@ -1,6 +1,27 @@
 namespace QAdvanceFeedback.Core.SlipAngle
 {
     /// <summary>
+    /// Where the game's per-wheel slip angle stands (owner, 2026-11-24) - what the orange line under Slip Angle says
+    /// while the car angle is used. It is what is APPLIED for the projection, not what the game's source defines:
+    /// </summary>
+    public enum SlipAngleSourceState
+    {
+        /// <summary>The game has no per-wheel source in QAdvanceFeedback.SlipAngleSource.json.</summary>
+        NoSource = 0,
+        /// <summary>A source is set and read; it is not confirmed yet (it is promoted after a few seconds of driving
+        /// and cornering).</summary>
+        Checking = 1,
+        /// <summary>A source is set but its properties are not reported (none of the four for 10 s while moving).</summary>
+        NotReported = 2,
+        /// <summary>The game's own per-wheel angle is in use.</summary>
+        Native = 3,
+        /// <summary>The car angle because Global Source Type Mode is "Always car angle".</summary>
+        CarAngleAlways = 4,
+        /// <summary>The car angle because "Source Type for this game" is Car Angle.</summary>
+        CarAngleForGame = 5,
+    }
+
+    /// <summary>
     /// One frame's Slip Angle inputs that do not belong on <see cref="ITelemetryFrame"/> because they
     /// come from a game's own raw data (docs\slip-angle-design.md §9.1). Built per frame by Layer 2
     /// (<c>SlipAngleRawSourceReader</c>); body motion (local velocity, yaw rate, lateral G, airborne,
@@ -15,6 +36,10 @@ namespace QAdvanceFeedback.Core.SlipAngle
         /// <summary>True when the game has a native slip-angle row and its paths have not been ruled
         /// missing this session.</summary>
         public bool HasNativeSource { get; }
+
+        /// <summary>See <see cref="SlipAngleSourceState"/>. Unless given, it follows <see cref="HasNativeSource"/> and
+        /// <see cref="IsNative"/>.</summary>
+        public SlipAngleSourceState SourceState { get; }
 
         /// <summary>
         /// Per-wheel tyre slip angle in degrees, FL/FR/RL/RR, signed as the game reports it after the
@@ -53,6 +78,12 @@ namespace QAdvanceFeedback.Core.SlipAngle
         /// </summary>
         public string[] RawWheelSurface { get; }
 
+        /// <summary>
+        /// <see cref="RawWheelSurface"/> translated by the game's source row (<c>surfaceValues</c>), FL/FR/RL/RR, with a
+        /// null entry for a wheel whose value is not listed; null when the row has no surface translation.
+        /// </summary>
+        public SurfaceBucket?[] WheelSurface { get; }
+
         public static readonly SlipAngleInput Empty = new SlipAngleInput(string.Empty);
 
         public SlipAngleInput(
@@ -64,16 +95,21 @@ namespace QAdvanceFeedback.Core.SlipAngle
             bool isProvisionalSource = false,
             bool[] kerbWheels = null,
             string[] rawWheelSurface = null,
-            bool? ratioExceedsFullScale = null)
+            bool? ratioExceedsFullScale = null,
+            SurfaceBucket?[] wheelSurface = null,
+            SlipAngleSourceState? sourceState = null)
         {
             GameId = gameId ?? string.Empty;
             HasNativeSource = hasNativeSource;
+            SourceState = sourceState ?? (!hasNativeSource ? SlipAngleSourceState.NoSource
+                : isNative ? SlipAngleSourceState.Native : SlipAngleSourceState.Checking);
             NativeWheelDeg = nativeWheelDeg;
             IsNative = isNative;
             Unit = unit;
             IsProvisionalSource = isProvisionalSource;
             KerbWheels = kerbWheels;
             RawWheelSurface = rawWheelSurface;
+            WheelSurface = wheelSurface;
             RatioExceedsFullScale = ratioExceedsFullScale;
         }
     }

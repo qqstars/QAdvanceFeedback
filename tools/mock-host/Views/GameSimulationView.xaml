@@ -1,0 +1,256 @@
+<UserControl x:Class="MockHost.Views.GameSimulationView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <DockPanel>
+        <Border DockPanel.Dock="Bottom" Padding="0,8,0,0">
+            <StackPanel>
+                <TextBlock Text="{Binding Status}" FontFamily="Consolas" />
+                <TextBlock Text="{Binding Health}" Foreground="#FFE08A3C" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding SourceHint}" Foreground="#FFE08A3C" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding StoragePath, StringFormat=Plugin files: {0}}" Opacity="0.7" TextWrapping="Wrap" />
+            </StackPanel>
+        </Border>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel MaxWidth="1100" HorizontalAlignment="Left" Margin="0,0,12,0">
+            <GroupBox Header="Game" Margin="0,0,0,12">
+                <StackPanel Margin="4">
+                    <CheckBox Content="Game running" IsChecked="{Binding GameRunning}" Margin="0,2" />
+                    <CheckBox Content="Game paused" IsChecked="{Binding GamePaused}" Margin="0,2" />
+                    <CheckBox Content="In menu" IsChecked="{Binding GameInMenu}" Margin="0,2" />
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Game name (SimHub game id)" VerticalAlignment="Center" />
+                        <ComboBox Grid.Column="1" IsEditable="True" ItemsSource="{Binding GameNames}" Text="{Binding GameName, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Car id" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="1" Text="{Binding CarId, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Car model" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="1" Text="{Binding CarModel, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Track id" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="1" Text="{Binding TrackId, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Header="Driving" Margin="0,0,0,12">
+                <StackPanel Margin="4">
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Speed (km/h)" VerticalAlignment="Center" />
+                        <Slider Grid.Column="1" Minimum="0" Maximum="350" Value="{Binding SpeedKmh}" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="2" Margin="8,0,0,0" Text="{Binding SpeedKmh, StringFormat={}{0:0.##}, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="RPM" VerticalAlignment="Center" />
+                        <Slider Grid.Column="1" Minimum="0" Maximum="12000" Value="{Binding Rpm}" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="2" Margin="8,0,0,0" Text="{Binding Rpm, StringFormat={}{0:0}, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Max RPM" VerticalAlignment="Center" />
+                        <Slider Grid.Column="1" Minimum="1000" Maximum="12000" Value="{Binding MaxRpm}" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="2" Margin="8,0,0,0" Text="{Binding MaxRpm, StringFormat={}{0:0}, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Gear" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="1" Text="{Binding Gear, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Throttle (%)" VerticalAlignment="Center" />
+                        <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding Throttle}" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="2" Margin="8,0,0,0" Text="{Binding Throttle, StringFormat={}{0:0.##}, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Brake (%)" VerticalAlignment="Center" />
+                        <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding Brake}" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="2" Margin="8,0,0,0" Text="{Binding Brake, StringFormat={}{0:0.##}, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Clutch (%)" VerticalAlignment="Center" />
+                        <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding Clutch}" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="2" Margin="8,0,0,0" Text="{Binding Clutch, StringFormat={}{0:0.##}, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Header="Car dynamics" Margin="0,0,0,12">
+                <StackPanel Margin="4">
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Lateral G" VerticalAlignment="Center" />
+                        <Slider Grid.Column="1" Minimum="-4" Maximum="4" Value="{Binding LateralG}" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="2" Margin="8,0,0,0" Text="{Binding LateralG, StringFormat={}{0:0.00}, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Longitudinal G" VerticalAlignment="Center" />
+                        <Slider Grid.Column="1" Minimum="-4" Maximum="4" Value="{Binding LongitudinalG}" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="2" Margin="8,0,0,0" Text="{Binding LongitudinalG, StringFormat={}{0:0.00}, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Yaw rate (deg/s)" VerticalAlignment="Center" />
+                        <Slider Grid.Column="1" Minimum="-120" Maximum="120" Value="{Binding YawRate}" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="2" Margin="8,0,0,0" Text="{Binding YawRate, StringFormat={}{0:0.0}, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Lateral velocity (m/s)" VerticalAlignment="Center" />
+                        <Slider Grid.Column="1" Minimum="-15" Maximum="15" Value="{Binding LateralVelocity}" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="2" Margin="8,0,0,0" Text="{Binding LateralVelocity, StringFormat={}{0:0.00}, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                    <CheckBox Content="Auto wave: swing lateral G, yaw rate and lateral velocity between -value and +value" IsChecked="{Binding AutoWave}" Margin="0,2" />
+                    <CheckBox Content="Also swing the numeric extra properties below" IsChecked="{Binding WaveProperties}" Margin="0,2" />
+                    <Grid Margin="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="80" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Wave period (s)" VerticalAlignment="Center" />
+                        <Slider Grid.Column="1" Minimum="0.5" Maximum="20" Value="{Binding WavePeriod}" VerticalAlignment="Center" />
+                        <TextBox Grid.Column="2" Margin="8,0,0,0" Text="{Binding WavePeriod, StringFormat={}{0:0.0}, UpdateSourceTrigger=LostFocus}" />
+                    </Grid>
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Header="Wheels" Margin="0,0,0,12">
+                <StackPanel Margin="4">
+                    <ItemsControl ItemsSource="{Binding Wheels}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="100" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="60" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="60" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="Speed %" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <Slider Grid.Column="2" Minimum="0" Maximum="200" Value="{Binding SpeedPercent}" VerticalAlignment="Center" />
+                                    <TextBox Grid.Column="3" Margin="6,0,12,0" Text="{Binding SpeedPercent, StringFormat={}{0:0.#}, UpdateSourceTrigger=LostFocus}" />
+                                    <TextBlock Grid.Column="4" Text="Slip" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <Slider Grid.Column="5" Minimum="0" Maximum="2" Value="{Binding Slip}" VerticalAlignment="Center" />
+                                    <TextBox Grid.Column="6" Margin="6,0,12,0" Text="{Binding Slip, StringFormat={}{0:0.###}, UpdateSourceTrigger=LostFocus}" />
+                                    <CheckBox Grid.Column="7" Content="Grass / gravel" IsChecked="{Binding OnLooseSurface}" Margin="0,0,12,0" />
+                                    <CheckBox Grid.Column="8" Content="Kerb" IsChecked="{Binding OnKerb}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Opacity="0.7" TextWrapping="Wrap" Margin="0,4,0,4"
+                               Text="Speed %: the wheel's speed as a share of the car's speed - 100 rolls freely, 0 is locked, over 100 spins." />
+                    <Button Content="Reset wheels" Command="{Binding ResetWheelsCommand}" HorizontalAlignment="Left" MinWidth="120" />
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Header="Reported by the simulated game" Margin="0,0,0,12">
+                <StackPanel Margin="4">
+                    <CheckBox Content="Wheel speed" IsChecked="{Binding ReportsWheelSpeed}" Margin="0,2" />
+                    <CheckBox Content="Wheel rotation (RPS)" IsChecked="{Binding ReportsWheelRps}" Margin="0,2" />
+                    <CheckBox Content="Wheel slip" IsChecked="{Binding ReportsWheelSlip}" Margin="0,2" />
+                    <CheckBox Content="Ground speed" IsChecked="{Binding ReportsGroundSpeed}" Margin="0,2" />
+                    <CheckBox Content="Yaw rate" IsChecked="{Binding ReportsYawRate}" Margin="0,2" />
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Header="Extra SimHub properties" Margin="0,0,0,12">
+                <StackPanel Margin="4">
+                    <TextBlock Opacity="0.7" TextWrapping="Wrap" Margin="0,0,0,6"
+                               Text="Any SimHub property by its full name (DataCorePlugin.GameRawData.X). A value is a number, true / false, or text. Use them for a per-wheel slip-angle source, a surface field or a Custom source expression." />
+                    <ItemsControl ItemsSource="{Binding Properties}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="160" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Text="{Binding Name, UpdateSourceTrigger=LostFocus}" />
+                                    <TextBox Grid.Column="1" Margin="8,0" Text="{Binding Value, UpdateSourceTrigger=LostFocus}" />
+                                    <Button Grid.Column="2" Content="Remove" Command="{Binding RemoveCommand}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <Button Content="Add property" Command="{Binding AddPropertyCommand}" MinWidth="120" Margin="0,0,8,0" />
+                        <Button Content="Add this game's slip-angle source properties" Command="{Binding AddSourcePropertiesCommand}" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Opacity="0.8" Margin="0,6,0,0" />
+                </StackPanel>
+            </GroupBox>
+        </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</UserControl>
