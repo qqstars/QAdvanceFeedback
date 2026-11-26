@@ -399,7 +399,7 @@ namespace QAdvanceFeedback.Core.Localization
             ["Update.Notice.Line1"] = "检测到新版本{0}。",
             ["Update.Notice.Line1.Package"] = "检测到新版本{0}（{1}）。",
             ["Update.Notice.Line2"] = "请前往QAdvanceFeedback插件的“常规”标签页进行更新。",
-            ["Update.Error.NoPackage"] = "最新发布中没有安装包（Release_x.x.x.zip、QAdvanceFeedback_x.x.x.zip或QAdvanceFeedback.dll）。",
+            ["Update.Error.NoPackage"] = "最新发布中没有安装包（Release_x.x.x.zip或QAdvanceFeedback_x.x.x.zip）。",
             ["Update.Error.NoDll"] = "最新发布的安装包中没有QAdvanceFeedback.dll。",
             ["Update.Error.Check"] = "检查更新失败：{0}",
             ["Update.Error.Apply"] = "更新失败：{0}",

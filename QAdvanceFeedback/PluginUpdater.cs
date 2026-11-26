@@ -47,16 +47,12 @@ namespace QAdvanceFeedback
         /// <summary>Whether a release asset is a zipped plugin package.</summary>
         public static bool IsZipPackage(string assetName) => ZipPackageName.IsMatch(assetName ?? string.Empty);
 
-        /// <summary>Whether a release asset is the plugin DLL itself (<c>QAdvanceFeedback.dll</c>, case ignored).</summary>
-        public static bool IsDllPackage(string assetName) => string.Equals(assetName, DllName, StringComparison.OrdinalIgnoreCase);
+        /// <summary>Whether a release asset is usable. ZIPS ONLY (owner, 2026-11-25): a bare <c>QAdvanceFeedback.dll</c> asset is
+        /// NOT downloaded - Windows Defender reports a downloaded DLL as a virus.</summary>
+        public static bool IsReleasePackage(string assetName) => IsZipPackage(assetName);
 
-        /// <summary>Whether a release asset is usable: a zipped package or the DLL itself.</summary>
-        public static bool IsReleasePackage(string assetName) => IsZipPackage(assetName) || IsDllPackage(assetName);
-
-        /// <summary>The release asset used: a zipped package first (in the release's order), else the bare DLL; null when
-        /// the release has neither.</summary>
-        public static JToken PickPackage(JArray assets) =>
-            assets?.FirstOrDefault(a => IsZipPackage((string)a["name"])) ?? assets?.FirstOrDefault(a => IsDllPackage((string)a["name"]));
+        /// <summary>The release asset used: the first zipped package in the release's order; null when it has none.</summary>
+        public static JToken PickPackage(JArray assets) => assets?.FirstOrDefault(a => IsZipPackage((string)a["name"]));
 
         /// <summary>The file in <see cref="LatestFolder"/> that remembers which release asset was downloaded.</summary>
         private const string PackageNoteFile = "_package.txt";
@@ -182,17 +178,15 @@ namespace QAdvanceFeedback
             string url = (string)asset?["browser_download_url"];
             if (string.IsNullOrEmpty(url) || !IsTrustedUrl(url)) return Strings.Get("Update.Error.NoPackage");
 
-            string download = Path.Combine(Path.GetTempPath(), "QAdvanceFeedbackLatest.download");
+            string download = Path.Combine(Path.GetTempPath(), "QAdvanceFeedbackLatest.zip");
             try
             {
                 using (var web = NewClient()) web.DownloadFile(url, download);
 
-                // %TEMP%\QAdvanceFeedbackLatest is deleted, then created, then filled: a zip is unpacked, the bare DLL
-                // asset is put in as QAdvanceFeedback.dll.
+                // %TEMP%\QAdvanceFeedbackLatest is deleted, then created, then the zip is unpacked into it.
                 if (Directory.Exists(LatestFolder)) Directory.Delete(LatestFolder, recursive: true);
                 Directory.CreateDirectory(LatestFolder);
-                if (IsDllPackage(name)) File.Copy(download, Path.Combine(LatestFolder, DllName));
-                else ExtractSafely(download, LatestFolder);
+                ExtractSafely(download, LatestFolder);
                 File.WriteAllText(Path.Combine(LatestFolder, PackageNoteFile), name ?? string.Empty);
             }
             finally
