@@ -64,7 +64,12 @@ namespace QAdvanceFeedback.Tests
             Assert.True(s.HasNewVersion);
             Assert.False(s.IsLatest);
             Assert.Equal(string.Format(Strings.Get("Update.NewVersion"), "1.3.1.0"), s.NewVersionText);
-            Assert.Equal(string.Format(Strings.Get("Update.Notice.Line1"), "1.3.1.0"), s.NoticeLine1);
+            Assert.Equal(string.Format(Strings.Get("Update.Notice.Line1"), "1.3.1.0"), s.NoticeLine1);   // package unknown
+            s.Set("1.3.0.0", "1.3.1.0", false, string.Empty, "QAdvanceFeedback_1.3.1.zip");
+            Assert.Equal("QAdvanceFeedback_1.3.1.zip", s.PackageName);
+            Assert.Equal(string.Format(Strings.Get("Update.Notice.Line1.Package"), "1.3.1.0", "QAdvanceFeedback_1.3.1.zip"), s.NoticeLine1);
+            Assert.Equal("New version 1.3.1.0 detected (QAdvanceFeedback_1.3.1.zip).",
+                string.Format(StringTableEn.Create()["Update.Notice.Line1.Package"], "1.3.1.0", "QAdvanceFeedback_1.3.1.zip"));
             Assert.Equal("New version 1.3.1.0 detected.", string.Format(StringTableEn.Create()["Update.Notice.Line1"], "1.3.1.0"));
         }
 
@@ -90,11 +95,28 @@ namespace QAdvanceFeedback.Tests
         [Fact]
         public void Only_a_Release_zip_from_GitHub_over_https_is_used()
         {
-            Assert.True(PluginUpdater.IsReleasePackage("Release_1.3.0.zip"));
-            Assert.True(PluginUpdater.IsReleasePackage("release_1.3.0.1.ZIP"));
-            Assert.False(PluginUpdater.IsReleasePackage("Source code.zip"));
-            Assert.False(PluginUpdater.IsReleasePackage("Release_notes.txt"));
-            Assert.False(PluginUpdater.IsReleasePackage(null));
+            foreach (string ok in new[]
+            {
+                "Release_1.3.0.zip", "release_1.3.0.1.ZIP", "Release 1.3.0.zip", "Release.1.3.0.zip",
+                "QAdvanceFeedback_1.2.1.zip", "qadvancefeedback 1.3.0.0.zip", "QAdvanceFeedback.1.3.0.zip",
+                "QAdvanceFeedback.dll", "qadvancefeedback.DLL",
+            })
+                Assert.True(PluginUpdater.IsReleasePackage(ok), ok);
+            foreach (string no in new[]
+            {
+                "Source code.zip", "Release_notes.txt", "Release_1.3.zip", "Release_1.3.0.0.0.zip", "Release-1.3.0.zip",
+                "QAdvanceFeedback_1.3.0.rar", "QAdvanceFeedback.Tests.dll", null,
+            })
+                Assert.False(PluginUpdater.IsReleasePackage(no), no ?? "null");
+
+            // A zipped package wins over the bare DLL, in the release's order otherwise.
+            var assets = new Newtonsoft.Json.Linq.JArray(
+                new Newtonsoft.Json.Linq.JObject { ["name"] = "QAdvanceFeedback.dll" },
+                new Newtonsoft.Json.Linq.JObject { ["name"] = "Release 1.3.0.zip" },
+                new Newtonsoft.Json.Linq.JObject { ["name"] = "QAdvanceFeedback_1.3.0.zip" });
+            Assert.Equal("Release 1.3.0.zip", (string)PluginUpdater.PickPackage(assets)["name"]);
+            Assert.Equal("QAdvanceFeedback.dll", (string)PluginUpdater.PickPackage(new Newtonsoft.Json.Linq.JArray(assets[0]))["name"]);
+            Assert.Null(PluginUpdater.PickPackage(new Newtonsoft.Json.Linq.JArray()));
 
             Assert.True(PluginUpdater.IsTrustedUrl("https://github.com/qqstars/QAdvanceFeedback/releases/download/v1.3.0/Release_1.3.0.zip"));
             Assert.True(PluginUpdater.IsTrustedUrl("https://objects.githubusercontent.com/x"));

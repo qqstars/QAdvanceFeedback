@@ -35,11 +35,42 @@ namespace QAdvanceFeedback
         public const string NewSuffix = ".new";
         public const string OldSuffix = ".old";
 
-        /// <summary>A release package: <c>Release_1.3.0.zip</c> (case ignored).</summary>
-        private static readonly Regex PackageName = new Regex(@"^Release_[0-9][0-9A-Za-z.\-]*\.zip$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        /// <summary>
+        /// A release package (owner, 2026-11-25): <c>Release_x.x.x.zip</c>, <c>Release_x.x.x.x.zip</c>,
+        /// <c>QAdvanceFeedback_x.x.x.zip</c> or <c>QAdvanceFeedback_x.x.x.x.zip</c> - case ignored, the "_" may be a space.
+        /// A dot is accepted there too, because GitHub renames a space in an uploaded asset's name to a dot
+        /// (<c>Release 1.3.0.zip</c> is published as <c>Release.1.3.0.zip</c>).
+        /// </summary>
+        private static readonly Regex ZipPackageName = new Regex(@"^(Release|QAdvanceFeedback)[_ .][0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?\.zip$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-        /// <summary>Whether a release asset is the plugin's package (<c>Release_1.3.0.zip</c>).</summary>
-        public static bool IsReleasePackage(string assetName) => PackageName.IsMatch(assetName ?? string.Empty);
+        /// <summary>Whether a release asset is a zipped plugin package.</summary>
+        public static bool IsZipPackage(string assetName) => ZipPackageName.IsMatch(assetName ?? string.Empty);
+
+        /// <summary>Whether a release asset is the plugin DLL itself (<c>QAdvanceFeedback.dll</c>, case ignored).</summary>
+        public static bool IsDllPackage(string assetName) => string.Equals(assetName, DllName, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>Whether a release asset is usable: a zipped package or the DLL itself.</summary>
+        public static bool IsReleasePackage(string assetName) => IsZipPackage(assetName) || IsDllPackage(assetName);
+
+        /// <summary>The release asset used: a zipped package first (in the release's order), else the bare DLL; null when
+        /// the release has neither.</summary>
+        public static JToken PickPackage(JArray assets) =>
+            assets?.FirstOrDefault(a => IsZipPackage((string)a["name"])) ?? assets?.FirstOrDefault(a => IsDllPackage((string)a["name"]));
+
+        /// <summary>The file in <see cref="LatestFolder"/> that remembers which release asset was downloaded.</summary>
+        private const string PackageNoteFile = "_package.txt";
+
+        /// <summary>The name of the release asset last downloaded into <see cref="LatestFolder"/>, or null.</summary>
+        public static string DownloadedPackageName()
+        {
+            try
+            {
+                string note = Path.Combine(LatestFolder, PackageNoteFile);
+                return File.Exists(note) ? File.ReadAllText(note).Trim() : null;
+            }
+            catch (Exception) { return null; }
+        }
 
         private const int TimeoutMs = 30000;
         private static int _running;
@@ -95,7 +126,7 @@ namespace QAdvanceFeedback
 
         /// <summary>Shows what is already downloaded (no network) - e.g. at start, before the check finishes.</summary>
         public static void ShowDownloaded() =>
-            UpdateStatusViewModel.Current.Set(CurrentVersion, DownloadedVersion(), Volatile.Read(ref _running) != 0, string.Empty);
+            UpdateStatusViewModel.Current.Set(CurrentVersion, DownloadedVersion(), Volatile.Read(ref _running) != 0, string.Empty, DownloadedPackageName());
 
         /// <summary>
         /// Runs the check on a new background thread (below-normal priority) and returns at once. A check already running
@@ -104,7 +135,7 @@ namespace QAdvanceFeedback
         public static void CheckInBackground(Action<string> logWarning = null)
         {
             if (Interlocked.Exchange(ref _running, 1) != 0) return;
-            UpdateStatusViewModel.Current.Set(CurrentVersion, DownloadedVersion(), true, string.Empty);
+            UpdateStatusViewModel.Current.Set(CurrentVersion, DownloadedVersion(), true, string.Empty, DownloadedPackageName());
             var thread = new Thread(() => Run(logWarning))
             {
                 IsBackground = true,
@@ -129,7 +160,7 @@ namespace QAdvanceFeedback
             finally
             {
                 Volatile.Write(ref _running, 0);
-                UpdateStatusViewModel.Current.Set(CurrentVersion, DownloadedVersion(), false, message);
+                UpdateStatusViewModel.Current.Set(CurrentVersion, DownloadedVersion(), false, message, DownloadedPackageName());
             }
         }
 
@@ -146,24 +177,27 @@ namespace QAdvanceFeedback
             }
 
             JObject release = JObject.Parse(json);
-            JToken asset = (release["assets"] as JArray)?
-                .FirstOrDefault(a => IsReleasePackage((string)a["name"]));
+            JToken asset = PickPackage(release["assets"] as JArray);
+            string name = (string)asset?["name"];
             string url = (string)asset?["browser_download_url"];
             if (string.IsNullOrEmpty(url) || !IsTrustedUrl(url)) return Strings.Get("Update.Error.NoPackage");
 
-            string zip = Path.Combine(Path.GetTempPath(), "QAdvanceFeedbackLatest.zip");
+            string download = Path.Combine(Path.GetTempPath(), "QAdvanceFeedbackLatest.download");
             try
             {
-                using (var web = NewClient()) web.DownloadFile(url, zip);
+                using (var web = NewClient()) web.DownloadFile(url, download);
 
-                // %TEMP%\QAdvanceFeedbackLatest is deleted, then created, then filled.
+                // %TEMP%\QAdvanceFeedbackLatest is deleted, then created, then filled: a zip is unpacked, the bare DLL
+                // asset is put in as QAdvanceFeedback.dll.
                 if (Directory.Exists(LatestFolder)) Directory.Delete(LatestFolder, recursive: true);
                 Directory.CreateDirectory(LatestFolder);
-                ExtractSafely(zip, LatestFolder);
+                if (IsDllPackage(name)) File.Copy(download, Path.Combine(LatestFolder, DllName));
+                else ExtractSafely(download, LatestFolder);
+                File.WriteAllText(Path.Combine(LatestFolder, PackageNoteFile), name ?? string.Empty);
             }
             finally
             {
-                try { if (File.Exists(zip)) File.Delete(zip); } catch (Exception) { }
+                try { if (File.Exists(download)) File.Delete(download); } catch (Exception) { }
             }
 
             return FindDownloadedDll() == null ? Strings.Get("Update.Error.NoDll") : string.Empty;

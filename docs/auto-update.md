@@ -8,9 +8,11 @@ Owner request, 2026-11-25. The design is modelled on the AZOM plugin's updater.
   a new background thread at below-normal priority. Nothing waits for it, and one check never runs twice at once.
 - **Steps:**
   1. Read `https://api.github.com/repos/qqstars/QAdvanceFeedback/releases/latest`.
-  2. Take the release's asset named `Release_<version>.zip`. Only https URLs on GitHub's hosts are used.
-  3. Download it, delete `%TEMP%\QAdvanceFeedbackLatest`, create it again, and unpack the package into it. An entry
-     that would land outside the folder is refused.
+  2. Take the release's package (see Releases below): a zipped package first, otherwise the bare `QAdvanceFeedback.dll`.
+     Only https URLs on GitHub's hosts are used.
+  3. Download it, delete `%TEMP%\QAdvanceFeedbackLatest`, and create it again. A zip is unpacked into it (an entry that
+     would land outside the folder is refused); a bare DLL is put in as `QAdvanceFeedback.dll`. The asset's name is kept
+     in `_package.txt` there, for the notice.
   4. The package may hold other files. The `QAdvanceFeedback.dll` found at any depth is the one compared.
 - **Comparison:** the DLL's file version is compared with the running DLL's. Any difference, larger or smaller, is a
   new version. `1.3.0` and `1.3.0.0` are the same version.
@@ -21,8 +23,9 @@ Owner request, 2026-11-25. The design is modelled on the AZOM plugin's updater.
 
 - **Shared status:** one `UpdateStatusViewModel.Current`. The check thread only calls `Set`, and every view binds to it
   one-way.
-- **Green notice** (`UpdateNoticeBar`): *New version x.x.x.x detected.*, with a smaller second line saying to go to the
-  General tab to update.
+- **Green notice** (`UpdateNoticeBar`): *New version x.x.x.x detected (QAdvanceFeedback_x.x.x.zip).*, with a smaller
+  second line saying to go to the General tab to update. The version is the downloaded DLL's, and the name in brackets is
+  the release file it came from (left out when unknown).
   - It appears on top of the Wheel Lock, Wheel Slip, Slip Angle and G-Force tabs, and of every ShakeIt panel: Wheel
     Lock / Slip, G-Force and Slip Angle. The Clutch view carries it too, so it shows on both the Clutch tab and the
     Clutch panel.
@@ -39,8 +42,12 @@ Owner request, 2026-11-25. The design is modelled on the AZOM plugin's updater.
 1. The downloaded DLL is copied next to the running one as `QAdvanceFeedback.dll.new`.
 2. The running DLL is renamed to `QAdvanceFeedback.dll.old`. Windows allows renaming a loaded DLL, not overwriting it.
 3. The new DLL takes the name `QAdvanceFeedback.dll`.
-4. SimHub restarts. A hidden helper waits for this SimHub process to exit and starts the same executable again; SimHub
-   is then closed normally, so every plugin's `End` still runs and saves.
+4. The config and the learned data are saved now, then SimHub is asked to restart itself:
+   `PluginManager.RequestApplicationExit(restart: true)`, the same call AZOM makes. It raises SimHub's
+   `ApplicationExitRequested`, and the SimHub application runs its normal exit (every plugin's `End`) and starts again.
+   The first version closed the WPF application itself and relied on a detached helper process to start SimHub again.
+   SimHub did not come back (owner-reported); the helper may die with SimHub, wait for a process that never exits, or
+   hit SimHub's single-instance check. So that approach was dropped.
 
 If a step fails, the running DLL keeps its name and the page shows the error.
 
@@ -49,8 +56,14 @@ next start deletes both (`PluginUpdater.DeleteLeftovers`).
 
 ## Releases
 
-A release must carry the package as an asset named `Release_<version>.zip`, holding `QAdvanceFeedback.dll`. The
-release `release-1.2.1` (asset `QAdvanceFeedback_1.2.1.zip`) predates this naming, so it is not picked up.
+A release carries the plugin as one of these assets (owner, 2026-11-25), case ignored:
+- `Release_x.x.x.zip` or `Release_x.x.x.x.zip`;
+- `QAdvanceFeedback_x.x.x.zip` or `QAdvanceFeedback_x.x.x.x.zip`;
+- `QAdvanceFeedback.dll` itself.
+
+The `_` may be a space. A dot is accepted there too, because GitHub renames a space in an uploaded asset's name to a dot
+(`Release 1.3.0.zip` is published as `Release.1.3.0.zip`). A zip is used before the bare DLL; within each, the
+release's own order decides. The existing `release-1.2.1` (asset `QAdvanceFeedback_1.2.1.zip`) is therefore picked up.
 
 ## Code and tests
 

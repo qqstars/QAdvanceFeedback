@@ -1753,6 +1753,24 @@ namespace QAdvanceFeedback
 
         /// <summary>The same save, synchronously on the caller - plugin Init, the settings page's Apply, End (never the data
         /// thread). Serialised with the background writes by the scheduler's write lock.</summary>
+        /// <summary>
+        /// Before an update restarts SimHub (UI thread; AZOM persists first too): the config and the learned data are
+        /// written now, so nothing depends on how SimHub's exit runs. Best effort - End saves again during the exit.
+        /// </summary>
+        internal void SaveBeforeRestart()
+        {
+            try
+            {
+                SaveConfigNow();
+                lock (_engineLock) SaveLearningSnapshotNow();
+                _runtimeStore?.Flush();
+            }
+            catch (Exception e)
+            {
+                LogWarning("QAdvanceFeedback: saving before the restart failed - " + e.Message);
+            }
+        }
+
         private void SaveConfigNow()
         {
             if (_configSaver != null) _configSaver.SaveNow();
