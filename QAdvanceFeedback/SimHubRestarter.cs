@@ -1,38 +1,29 @@
 using System;
-using System.Diagnostics;
 using QAdvanceFeedback.Core.Localization;
+using SimHub.Plugins;
 
 namespace QAdvanceFeedback
 {
-    /// <summary>Restarts SimHub after an update (owner, 2026-11-25, 1.3.0) - apart from <see cref="PluginUpdater"/>
-    /// because it needs WPF (the application to close).</summary>
+    /// <summary>
+    /// Restarts SimHub after an update (owner, 2026-11-25, 1.3.0) - THE WAY AZOM DOES IT: SimHub's own
+    /// <see cref="PluginManager.RequestApplicationExit"/> with <c>restart: true</c>, which raises SimHub's
+    /// <c>ApplicationExitRequested</c>; the SimHub application then runs its normal exit (every plugin's End - this one's
+    /// final saves included) and starts itself again. The first version closed the WPF application itself and relied on a
+    /// detached helper process to start SimHub again; SimHub did not come back (owner-reported).
+    /// </summary>
     public static class SimHubRestarter
     {
-        /// <summary>
-        /// Starts a hidden helper that waits for this SimHub process to exit and then starts the same SimHub executable
-        /// again, then closes SimHub normally (so every plugin's End - this one's final saves included - still runs).
-        /// Returns an error message, or null.
-        /// </summary>
+        /// <summary>Asks SimHub to restart. Returns an error message, or null when the restart was requested.</summary>
         public static string Restart()
         {
             try
             {
-                Process current = Process.GetCurrentProcess();
-                string exe = current.MainModule?.FileName;
-                if (string.IsNullOrEmpty(exe)) return string.Format(Strings.Get("Update.Error.Apply"), "SimHub's executable was not found");
-                string command = "Wait-Process -Id " + current.Id + " -ErrorAction SilentlyContinue; Start-Process -FilePath '"
-                    + exe.Replace("'", "''") + "'";
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "powershell.exe",
-                    Arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -Command \"" + command + "\"",
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                    WindowStyle = ProcessWindowStyle.Hidden,
-                });
-                System.Windows.Application app = System.Windows.Application.Current;
-                if (app == null) return string.Format(Strings.Get("Update.Error.Apply"), "no application to close");
-                app.Dispatcher.BeginInvoke(new Action(() => app.Shutdown()));
+                QAdvanceFeedback plugin = QAdvanceFeedback.Instance;
+                PluginManager pm = plugin?.PluginManager;
+                if (pm == null) return string.Format(Strings.Get("Update.Error.Apply"), "SimHub's plugin manager is not available");
+                plugin.SaveBeforeRestart();   // best effort; End saves again during SimHub's exit
+                SimHub.Logging.Current.Info("QAdvanceFeedback: update installed - asking SimHub to restart");
+                pm.RequestApplicationExit(true);
                 return null;
             }
             catch (Exception e)
@@ -40,6 +31,5 @@ namespace QAdvanceFeedback
                 return string.Format(Strings.Get("Update.Error.Apply"), e.Message);
             }
         }
-
     }
 }

@@ -18,6 +18,10 @@ namespace QAdvanceFeedback.Ui.ViewModels
         private string _latestVersion;
         private bool _isChecking;
         private string _message = string.Empty;
+        private string _packageName;
+
+        /// <summary>The release file the downloaded DLL came from (e.g. <c>QAdvanceFeedback_1.3.0.zip</c>); null when unknown.</summary>
+        public string PackageName => _packageName;
 
         /// <summary>The running plugin DLL's file version.</summary>
         public string CurrentVersion => _currentVersion;
@@ -49,8 +53,11 @@ namespace QAdvanceFeedback.Ui.ViewModels
         /// <summary>" (new version: x.x.x.x)" - shown in green beside <see cref="VersionLine"/> while <see cref="HasNewVersion"/>.</summary>
         public string NewVersionText => HasNewVersion ? string.Format(Strings.Get("Update.NewVersion"), _latestVersion) : string.Empty;
 
-        /// <summary>The notice's first line: "New version x.x.x.x detected."</summary>
-        public string NoticeLine1 => HasNewVersion ? string.Format(Strings.Get("Update.Notice.Line1"), _latestVersion) : string.Empty;
+        /// <summary>The notice's first line: "New version x.x.x.x detected (QAdvanceFeedback_x.x.x.zip)." - the package name
+        /// only when it is known (owner, 2026-11-25).</summary>
+        public string NoticeLine1 => !HasNewVersion ? string.Empty
+            : string.IsNullOrEmpty(_packageName) ? string.Format(Strings.Get("Update.Notice.Line1"), _latestVersion)
+            : string.Format(Strings.Get("Update.Notice.Line1.Package"), _latestVersion, _packageName);
 
         /// <summary>The notice's second (smaller) line: where to update.</summary>
         public string NoticeLine2 => Strings.Get("Update.Notice.Line2");
@@ -59,15 +66,16 @@ namespace QAdvanceFeedback.Ui.ViewModels
         /// Sets the state (any thread) and raises every derived property. <paramref name="latestVersion"/> null: no
         /// downloaded DLL.
         /// </summary>
-        public void Set(string currentVersion, string latestVersion, bool isChecking, string message)
+        public void Set(string currentVersion, string latestVersion, bool isChecking, string message, string packageName = null)
         {
+            _packageName = string.IsNullOrWhiteSpace(packageName) ? null : packageName.Trim();
             _currentVersion = currentVersion ?? string.Empty;
             _latestVersion = string.IsNullOrEmpty(latestVersion) ? null : latestVersion;
             _isChecking = isChecking;
             _message = message ?? string.Empty;
             foreach (string name in new[]
             {
-                nameof(CurrentVersion), nameof(LatestVersion), nameof(IsChecking), nameof(IsNotChecking), nameof(Message),
+                nameof(CurrentVersion), nameof(LatestVersion), nameof(PackageName), nameof(IsChecking), nameof(IsNotChecking), nameof(Message),
                 nameof(HasMessage), nameof(HasNewVersion), nameof(IsLatest), nameof(VersionLine), nameof(NewVersionText),
                 nameof(NoticeLine1), nameof(NoticeLine2),
             })
@@ -75,7 +83,7 @@ namespace QAdvanceFeedback.Ui.ViewModels
         }
 
         /// <summary>Re-raises the texts (the language changed).</summary>
-        public void RefreshTexts() => Set(_currentVersion, _latestVersion, _isChecking, _message);
+        public void RefreshTexts() => Set(_currentVersion, _latestVersion, _isChecking, _message, _packageName);
 
         /// <summary>Two versions are the same when they parse to the same <see cref="Version"/> (1.3.0 = 1.3.0.0), or are
         /// the same text otherwise.</summary>
