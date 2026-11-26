@@ -89,7 +89,9 @@ namespace QAdvanceFeedback.Settings
         SlipAngleSourceUnit,
         // Plugin Internal's angle source (owner, 2026-11-23): per-wheel tyre angle when available, or always the car
         // angle (SlipAngleChannelSettings.AngleSource). Set by the plugin page's Apply; broadcast so the panel follows.
-        SlipAngleAngleSource
+        SlipAngleAngleSource,
+        // "Persist Calibration data?" (owner, 2026-11-25): applied at once by the plugin; broadcast so both tabs follow.
+        SlipLockCalibrationPersist
     }
 
     public enum SettingsOrigin

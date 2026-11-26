@@ -107,6 +107,7 @@ namespace QAdvanceFeedback
         {
             Volatile.Write(ref _catalog, catalog);
             Interlocked.Increment(ref _revision);
+            Core.KeyRules.SourceKeys.SlipAngleDefinitionChanged();   // Version 21: a game's definition is part of its key
             // Which games can report Low-grip now decides which saved Low-grip buckets are kept (SurfaceBucketMap).
             SurfaceBucketMap.ReportsLowGrip = g => Catalog.ReportsLowGrip(g);
         }

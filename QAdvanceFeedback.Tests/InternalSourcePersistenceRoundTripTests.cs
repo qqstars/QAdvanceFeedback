@@ -60,11 +60,23 @@ namespace QAdvanceFeedback.Tests
         private static string Json<T>(Dictionary<string, T> d)
             => JsonConvert.SerializeObject(d.OrderBy(kv => kv.Key, StringComparer.Ordinal).ToList());
 
+        /// <summary>The Slip Angle keys the file keeps: a key never taught (its state = KeyedSlipAngleLearner.FreshState)
+        /// is not saved (parameters Version 19) - it is rebuilt when it is needed.</summary>
+        private static Dictionary<string, SlipAngleKeyState> Taught(Dictionary<string, SlipAngleKeyState> d)
+            => d.Where(kv => !KeyedSlipAngleLearner.TryParseKey(kv.Key, out _, out _, out string s, out _, out _)
+                    || JsonConvert.SerializeObject(kv.Value) != JsonConvert.SerializeObject(KeyedSlipAngleLearner.FreshState(s)))
+                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+
         private static string GripCore(Dictionary<string, GripLearnerState> d)
             => string.Join("\n", d.OrderBy(kv => kv.Key, StringComparer.Ordinal)
                 .Select(kv => kv.Key + " " + kv.Value.PeakG.ToString("R") + " " + kv.Value.Samples));
 
-        private static string[] Segments(string key) => key.Split(new[] { "|#|" }, StringSplitOptions.None);
+        private static string[] Segments(string key)
+        {
+            string[] parts = key.Split(new[] { "|#|" }, StringSplitOptions.None);
+            if (parts.Length > 2) parts[2] = QAdvanceFeedback.Core.KeyRules.SourceKeys.FromKey(parts[2]);   // v21: hashed source
+            return parts;
+        }
 
         [Fact]
         public void A_multi_source_state_survives_save_and_reload_with_its_full_keys()
@@ -161,7 +173,7 @@ namespace QAdvanceFeedback.Tests
                 Assert.Equal(Json(slipScale), Json(ss));
                 Assert.Equal(Json(anchors), Json(la));
                 Assert.Equal(Json(lockPhysical), Json(lp));
-                Assert.Equal(Json(slipAngleState), Json(sa));
+                Assert.Equal(Json(Taught(slipAngleState)), Json(sa));
             }
 
             // 2. Loaded back into fresh learners, every key comes back under the same full key with its
@@ -196,7 +208,7 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(Json(slipScale), Json(reloaded.SlipScaleLearner.ExportAll()));
             Assert.Equal(Json(anchors), Json(reloaded.LockAnchors.ExportAll()));
             Assert.Equal(GripCore(lockPhysical), GripCore(reloaded.LockPhysicalReference.ExportAll()));
-            Assert.Equal(Json(slipAngleState), Json(reloadedSlipAngle.Export()));
+            Assert.Equal(Json(Taught(slipAngleState)), Json(reloadedSlipAngle.Export()));
         }
     }
 }

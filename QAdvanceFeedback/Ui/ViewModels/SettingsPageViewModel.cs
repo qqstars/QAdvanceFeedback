@@ -43,6 +43,8 @@ namespace QAdvanceFeedback.Ui.ViewModels
 
             LockTab = new WheelChannelPageViewModel(Context, isLock: true);
             SlipTab = new WheelChannelPageViewModel(Context, isLock: false);
+            // ONE "Persist Calibration data?" for both tabs (owner, 2026-11-25): a change on one shows on the other at once.
+            SlipTab.CalibrationPersist = LockTab.CalibrationPersist;
             // THE VIPER GAME BUTTON MOVES BOTH CHANNELS onto another source (the supported-game list is not
             // per channel): a pending key data edit on EITHER tab belongs to the source being left, so both
             // are written first (the old page's FlushKeyDataPersistNow before the list changed).

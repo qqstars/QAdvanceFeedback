@@ -317,7 +317,8 @@ namespace QAdvanceFeedback.Tests
                 "LockShakeItLegacyAlgorithm", "LockShakeItSensibility", "LockShakeItLockOnly",
                 "SlipShakeItLegacyAlgorithm", "SlipShakeItMuteWhileLockActive",
                 "SlipAngleSourceUnit",  // the unit dropdown (owner, 2026-11-21)
-                "SlipAngleAngleSource"  // the angle source dropdown (owner, 2026-11-23)
+                "SlipAngleAngleSource",  // the angle source dropdown (owner, 2026-11-23)
+                "SlipLockCalibrationPersist"  // "Persist Calibration data?" (owner, 2026-11-25)
             };
             for (int i = 0; i < expected.Length; i++)
                 Assert.Equal(i, (int)Enum.Parse(typeof(SettingField), expected[i]));

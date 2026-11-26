@@ -115,7 +115,7 @@ namespace QAdvanceFeedback.Core.Runtime
         /// one-time, silent, safe drop, not a throw. No NEW field/dictionary was needed for the tiered
         /// resolver itself, since it deliberately reuses state this class already persists.
         /// </remarks>
-        /// <remarks>Version 11 (1.0.7.1) adds <see cref="ShakeItCalibration"/> and
+        /// <remarks>Version 11 (1.0.7.1) adds <see cref="SlipLockCalibration"/> (then named ShakeItCalibration) and
         /// <see cref="ShakeItPrecalibration"/> - additive, so no migration is needed (the same reasoning
         /// as every earlier additive bump): a Version-9-or-earlier file simply has neither section, both
         /// deserialise to empty dictionaries, and Layer 3 then behaves as a first run - which is exactly
@@ -135,7 +135,27 @@ namespace QAdvanceFeedback.Core.Runtime
         /// from then on; a loaded file is stamped with the current version when it is next written.</remarks>
         /// <remarks>Version 16 (2026-11-22): the slip-ratio scale changed to 10 points per degree (was 5) - an older file's
         /// slip-ratio Slip Angle windows are dropped on load (<c>KeyedSlipAngleLearner.DropSource</c>); nothing else changes.</remarks>
-        public int Version = 16;
+        /// <remarks>Version 17 (2026-11-25, 1.2.2): a FINISHED ShakeIt calibration (more than 7000 points, never fed
+        /// again) is saved as its table of percentiles 1..100 (<c>pt</c>) instead of its histogram (<c>v</c>) - see
+        /// <see cref="RawCalculator.Calibration.CalibrationData.PercentileTable"/>. Every value the plugin reads from it is
+        /// unchanged. An older file's histograms load as before and are written compact from then on; an older plugin
+        /// reading a compact entry sees no histogram and starts that calibration again.</remarks>
+        /// <remarks>Version 18 (2026-11-25, 1.2.2): <c>ShakeItCalibration</c> is renamed <see cref="SlipLockCalibration"/> -
+        /// learned by the plugin, used for slip and lock only. An older file's section is moved on load and written under
+        /// the new name. The <see cref="ShakeItSourceTimestamps"/> section is no longer written: ShakeIt's preset files are
+        /// read and upserted on every start.</remarks>
+        /// <remarks>Version 19 (2026-11-25, 1.2.2): the Slip Angle states (<see cref="SlipAngleLearners"/>,
+        /// <see cref="SlipAngleSpeedBands"/>) are saved LEAN - a field only when it differs from a fresh instance's, and a
+        /// learner key that was never taught not at all. Loading fills both back exactly; an older plugin reads the same.</remarks>
+        /// <remarks>Version 20 (2026-11-25, 1.2.2): a finished calibration keeps only what the plugin reads - the point
+        /// counter, Sum and Count, plus Slip's 15th / 99th percentiles (<c>p15</c>, <c>p99</c>) - instead of Version 17's
+        /// 100-value table (see <see cref="RawCalculator.Calibration.CalibrationData.Compact"/>). A Version 17-19 table and
+        /// an older histogram both load and are written in the new form.</remarks>
+        /// <remarks>Version 21 (2026-11-25, 1.2.2): the source part of every learner key is hashed - "21:&lt;number&gt;", see
+        /// <see cref="KeyRules.KeysDefinition"/> - and the calibration key starts with the game
+        /// (<c>game;track;car;metric</c>, a SimHub-generated <c>DT_</c> track / <c>DC_</c> car left out). The version
+        /// number itself is <see cref="KeyRules.KeyRule.LatestVersion"/>.</remarks>
+        public int Version = KeyRules.KeyRule.LatestVersionNumber;
 
         /// <summary>Per (gameId, carId) Lock-channel learner state - key format matches
         /// <see cref="KeyedGripLearner.MakeKey"/>.</summary>
@@ -221,8 +241,18 @@ namespace QAdvanceFeedback.Core.Runtime
         /// resuming a histogram cannot produce a transition artefact, which an earlier
         /// reference-and-blend design demonstrably could.
         /// </summary>
-        public Dictionary<string, RawCalculator.Calibration.CalibrationData> ShakeItCalibration =
+        /// <remarks>Named <c>ShakeItCalibration</c> until Version 18 (owner, 2026-11-25): the plugin LEARNS it (it only
+        /// borrows ShakeIt's method), and it is used for wheel slip (<c>Slip</c>) and wheel lock (<c>RPSToSpeed</c>) only.
+        /// The sections read from ShakeIt's own files keep their ShakeIt names (<see cref="ShakeItPrecalibration"/>,
+        /// <see cref="ShakeItGameBounds"/>).</remarks>
+        public Dictionary<string, RawCalculator.Calibration.CalibrationData> SlipLockCalibration =
             new Dictionary<string, RawCalculator.Calibration.CalibrationData>();
+
+        /// <summary>READ ONLY: an older file's <see cref="SlipLockCalibration"/>, under its old name. <c>RuntimeStore</c>
+        /// moves it on load; it is never written (<see cref="ShouldSerializeShakeItCalibration"/>).</summary>
+        public Dictionary<string, RawCalculator.Calibration.CalibrationData> ShakeItCalibration;
+
+        public bool ShouldSerializeShakeItCalibration() => false;
 
         /// <summary>
         /// Version 11 (1.0.7.1): SHIPPED ShakeIt precalibration, converted from SimHub's own
@@ -248,8 +278,11 @@ namespace QAdvanceFeedback.Core.Runtime
         /// <summary>Version 11: source file name to its last-write time in UTC ticks. The ShakeIt import
         /// runs on EVERY launch so a SimHub update that ships new games is picked up automatically; this
         /// is what keeps that cheap, since an unchanged file is never opened.</summary>
-        public Dictionary<string, long> ShakeItSourceTimestamps = new Dictionary<string, long>();
+        /// <summary>READ ONLY (owner, 2026-11-25, Version 18): the start-up sync no longer checks file times - it reads
+        /// ShakeIt's three preset files on every start - so an older file's timestamps are read and dropped, never written.</summary>
+        public Dictionary<string, long> ShakeItSourceTimestamps;
 
+        public bool ShouldSerializeShakeItSourceTimestamps() => false;
         /// <summary>Version 12 (docs\slip-angle-design.md 9.5.9): every Slip Angle window learner, keyed
         /// <c>game|#|car|#|source/target|#|surface</c> (<c>SlipAngle.KeyedSlipAngleLearner.MakeKey</c>).</summary>
         public Dictionary<string, SlipAngle.SlipAngleKeyState> SlipAngleLearners =

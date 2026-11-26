@@ -78,28 +78,40 @@
     <TabControl x:Name="MainTabs">
 
       <TabItem x:Name="WheelLockTab" Header="{v:Loc Tab.WheelLock}">
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <v:WheelChannelPageView DataContext="{Binding LockTab}" Grid.IsSharedSizeScope="True"/>
-        </ScrollViewer>
+        <DockPanel>
+          <v:UpdateNoticeBar DockPanel.Dock="Top"/>
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <v:WheelChannelPageView DataContext="{Binding LockTab}" Grid.IsSharedSizeScope="True"/>
+          </ScrollViewer>
+        </DockPanel>
       </TabItem>
 
       <TabItem x:Name="WheelSlipTab" Header="{v:Loc Tab.WheelSlip}">
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <v:WheelChannelPageView DataContext="{Binding SlipTab}" Grid.IsSharedSizeScope="True"/>
-        </ScrollViewer>
+        <DockPanel>
+          <v:UpdateNoticeBar DockPanel.Dock="Top"/>
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <v:WheelChannelPageView DataContext="{Binding SlipTab}" Grid.IsSharedSizeScope="True"/>
+          </ScrollViewer>
+        </DockPanel>
       </TabItem>
 
       <!-- SLIP ANGLE (docs\slip-angle-design.md 9.9): laid out exactly like the Wheel Lock tab. -->
       <TabItem x:Name="SlipAngleTab" Header="{v:Loc Tab.SlipAngle}">
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <v:SlipAngleTabView x:Name="SlipAngleTabView" DataContext="{Binding SlipAngleTab}"/>
-        </ScrollViewer>
+        <DockPanel>
+          <v:UpdateNoticeBar DockPanel.Dock="Top"/>
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <v:SlipAngleTabView x:Name="SlipAngleTabView" DataContext="{Binding SlipAngleTab}"/>
+          </ScrollViewer>
+        </DockPanel>
       </TabItem>
 
       <TabItem x:Name="GForceTab" Header="{v:Loc Tab.GForce}">
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <v:GForcePageView DataContext="{Binding GForceTab}" Grid.IsSharedSizeScope="True"/>
-        </ScrollViewer>
+        <DockPanel>
+          <v:UpdateNoticeBar DockPanel.Dock="Top"/>
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <v:GForcePageView DataContext="{Binding GForceTab}" Grid.IsSharedSizeScope="True"/>
+          </ScrollViewer>
+        </DockPanel>
       </TabItem>
 
       <!-- CLUTCH BITE (docs\clutch-bite-design.md): the shared view, the same view model shape as the

@@ -1,0 +1,20 @@
+<UserControl x:Class="QAdvanceFeedbackViews.UpdateNoticeBar"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:v="clr-namespace:QAdvanceFeedbackViews"
+             xmlns:vm="clr-namespace:QAdvanceFeedback.Ui.ViewModels"
+             DataContext="{x:Static vm:UpdateStatusViewModel.Current}">
+  <!-- THE NEW-VERSION NOTICE (owner, 2026-11-25, 1.3.0): on top of every settings tab (except General) and every ShakeIt
+       panel. ONE-WAY bindings to the one shared UpdateStatusViewModel: the update check (its own thread) only sets the
+       view model, and this shows itself when a different version was downloaded. -->
+  <UserControl.Resources>
+    <v:VisibleWhenConverter x:Key="VisibleWhen"/>
+  </UserControl.Resources>
+  <Border x:Name="UpdateNotice" Background="#2E7D32" CornerRadius="3" Padding="10,6" Margin="0,0,0,8"
+          Visibility="{Binding HasNewVersion, Mode=OneWay, Converter={StaticResource VisibleWhen}}">
+    <StackPanel>
+      <TextBlock Text="{Binding NoticeLine1, Mode=OneWay}" Foreground="White" FontWeight="Bold" TextWrapping="Wrap"/>
+      <TextBlock Text="{Binding NoticeLine2, Mode=OneWay}" Foreground="White" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0"/>
+    </StackPanel>
+  </Border>
+</UserControl>

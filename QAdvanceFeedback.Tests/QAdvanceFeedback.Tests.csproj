@@ -42,6 +42,8 @@
     <Compile Include="..\QAdvanceFeedback\Settings\WheelSourceSet.cs" LinkBase="Settings" />
     <Compile Include="..\QAdvanceFeedback\Settings\QAdvanceFeedbackSettings.cs" LinkBase="Settings" />
     <Compile Include="..\QAdvanceFeedback\ConfigStore.cs" LinkBase="Adapters" />
+    <Compile Include="..\QAdvanceFeedback\ConfigSaveScheduler.cs" LinkBase="Adapters" />
+    <Compile Include="..\QAdvanceFeedback\PluginUpdater.cs" LinkBase="Adapters" />
     <Compile Include="..\QAdvanceFeedback\ViperStore.cs" LinkBase="Adapters" />
     <Compile Include="..\QAdvanceFeedback\RuntimeStore.cs" LinkBase="Adapters" />
     <Compile Include="..\QAdvanceFeedback\RuntimeDocumentWriter.cs" LinkBase="Adapters" />

@@ -104,21 +104,24 @@ namespace QAdvanceFeedback.Tests.Clutch
         public void Runtime_store_round_trips_clutch_learners_and_last_key()
         {
             _store = new RuntimeStore(_path, flushInterval: TimeSpan.FromHours(1));
+            // As the plugin builds them (Version 21: the source part hashed) - readable ones are converted on load.
+            string car = ClutchBiteLearner.Key("g", "car", "GameClutch");
+            string other = ClutchBiteLearner.Key("g", "other", "GameClutch");
             var learners = new Dictionary<string, ClutchBiteLearnerState>
             {
-                ["g|#|car|#|GameClutch"] = new ClutchBiteLearnerState { Samples = new List<double> { 44, 46 }, TotalCount = 2 },
-                ["g|#|other|#|GameClutch"] = new ClutchBiteLearnerState { TotalCount = 9, Matured = 51 },
+                [car] = new ClutchBiteLearnerState { Samples = new List<double> { 44, 46 }, TotalCount = 2 },
+                [other] = new ClutchBiteLearnerState { TotalCount = 9, Matured = 51 },
             };
             _store.SaveClutchBiteLearners(learners);
-            _store.SaveLastClutchKey("g|#|car|#|GameClutch");
+            _store.SaveLastClutchKey(car);
             _store.Flush();
             _store.Dispose();
 
             _store = new RuntimeStore(_path, flushInterval: TimeSpan.FromHours(1));
             _store.LoadClutchBiteLearners(out var back);
-            Assert.Equal(new List<double> { 44, 46 }, back["g|#|car|#|GameClutch"].Samples);
-            Assert.Equal(51.0, back["g|#|other|#|GameClutch"].Matured);
-            Assert.Equal("g|#|car|#|GameClutch", _store.LoadLastClutchKey());
+            Assert.Equal(new List<double> { 44, 46 }, back[car].Samples);
+            Assert.Equal(51.0, back[other].Matured);
+            Assert.Equal(car, _store.LoadLastClutchKey());
         }
 
         [Fact]

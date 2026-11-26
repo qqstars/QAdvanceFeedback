@@ -71,7 +71,7 @@ namespace QAdvanceFeedback.Tests
             ColdStartTier tier = store.Resolve("GameA", "CarA", ShakeIt, surface, out string key, out double ceiling);
 
             Assert.Equal(expected, tier);
-            Assert.Equal(expectedKey, key);
+            Assert.Equal(QAdvanceFeedback.Core.KeyRules.SourceKeys.RekeyLearnerKey(expectedKey), key);
             Assert.Equal(expectedCeiling, ceiling);
         }
 
@@ -87,7 +87,7 @@ namespace QAdvanceFeedback.Tests
             // ...and a Raw candidate is found for a Raw key even when a richer ShakeIt one exists.
             store.Add("GameC", "CarQ", Raw, "", 1, 7.0);
             Assert.Equal(ColdStartTier.Tier2, store.Resolve("GameA", "CarA", Raw, "Wet", out key, out ceiling));
-            Assert.Equal("GameC|#|CarQ|#|Raw|#|", key);
+            Assert.Equal(QAdvanceFeedback.Core.KeyRules.SourceKeys.RekeyLearnerKey("GameC|#|CarQ|#|Raw|#|"), key);
             Assert.Equal(7.0, ceiling);
         }
 
@@ -118,7 +118,7 @@ namespace QAdvanceFeedback.Tests
                 .Add("GameA", "CarB", ShakeIt, "", 20, 2.0)
                 .Add("GameA", "CarD", ShakeIt, "", 20, 3.0);
             Assert.Equal(ColdStartTier.Tier3, store.Resolve("GameA", "CarA", ShakeIt, "", out string key, out double ceiling));
-            Assert.Equal("GameA|#|CarB|#|ShakeIt|#|", key);
+            Assert.Equal(QAdvanceFeedback.Core.KeyRules.SourceKeys.RekeyLearnerKey("GameA|#|CarB|#|ShakeIt|#|"), key);
             Assert.Equal(2.0, ceiling);
         }
 
@@ -130,7 +130,7 @@ namespace QAdvanceFeedback.Tests
                 .Add("GameA", "CarC", ShakeIt, "", 5, null)   // evidence, no average
                 .Add("GameB", "CarX", ShakeIt, "", 1, 4.0);
             Assert.Equal(ColdStartTier.Tier2, store.Resolve("GameA", "CarA", ShakeIt, "", out string key, out _));
-            Assert.Equal("GameB|#|CarX|#|ShakeIt|#|", key);
+            Assert.Equal(QAdvanceFeedback.Core.KeyRules.SourceKeys.RekeyLearnerKey("GameB|#|CarX|#|ShakeIt|#|"), key);
         }
 
         [Fact]

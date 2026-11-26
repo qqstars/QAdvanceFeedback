@@ -12,8 +12,8 @@
     <RootNamespace>QAdvanceFeedback</RootNamespace>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <SimHubRefPath Condition="'$(SimHubRefPath)' == ''">$(MSBuildThisFileDirectory)..\lib</SimHubRefPath>
-    <AssemblyVersion>1.2.1.0</AssemblyVersion>
-    <FileVersion>1.2.1.0</FileVersion>
+    <AssemblyVersion>1.3.0.0</AssemblyVersion>
+    <FileVersion>1.3.0.0</FileVersion>
     <!-- Single-DLL distribution (hard requirement): every SimHub/GameReaderCommon/MahApps reference
          below is <Private>false</Private>, so none of them are copied into bin\Release\net48 - only
          QAdvanceFeedback.dll and its .pdb land there. -->
@@ -25,6 +25,9 @@
     <EmbeddedResource Include="..\QAdvanceFeedback.SlipAngleSource.json" LogicalName="QAdvanceFeedback.SlipAngleSource.json" Link="QAdvanceFeedback.SlipAngleSource.json" />
   </ItemGroup>
   <ItemGroup>
+    <!-- 1.3.0 auto-update: the release package is a zip. -->
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
     <Reference Include="SimHub.Plugins">
       <HintPath>$(SimHubRefPath)\SimHub.Plugins.dll</HintPath><Private>false</Private>
     </Reference>

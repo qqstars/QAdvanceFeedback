@@ -68,6 +68,135 @@ namespace QAdvanceFeedback.Core.RawCalculator.Calibration
 
         private readonly Dictionary<string, double?> _average = new Dictionary<string, double?>();
 
+        /// <summary>
+        /// COMPACT FORM (owner, 2026-11-25, parameters Version 20: "makes the parameters.json as small as possible after
+        /// learned"). A calibration is FINISHED once it has more than <see cref="ReadySamples"/> positive points:
+        /// <c>CalibrationDataProvider</c> never feeds it again. The plugin then reads only two things from it - Slip's
+        /// <see cref="SlipLowPercentile"/> / <see cref="SlipHighPercentile"/> (<c>DispatchBranchFormulas</c>) and
+        /// RPS-to-speed's average (Sum / Count) - so a finished entry is COMPACTED (<see cref="Compact"/>): its histogram
+        /// and Max are dropped, in memory and in the file, and it keeps the point counter (which marks it finished),
+        /// Sum, Count and - for Slip only (<see cref="KeepsPercentiles"/>) - the two percentiles.
+        /// <para/>
+        /// Any OTHER percentile asked of a compact entry is not known any more: the entry starts learning again from
+        /// nothing (<see cref="RestartLearning"/>) rather than answering a wrong value. Nothing asks for one today.
+        /// </summary>
+        public const double SlipLowPercentile = 15.0;
+
+        /// <summary>See <see cref="SlipLowPercentile"/>.</summary>
+        public const double SlipHighPercentile = 99.0;
+
+        /// <summary>True once no more points are fed (<c>CalibrationDataProvider.UpdateData</c>'s own cap).</summary>
+        public bool IsFinished => CalibrationPointsAdded > ReadySamples;
+
+        /// <summary>A finished entry whose histogram was dropped: it answers from its kept percentiles.</summary>
+        public bool IsCompact => IsFinished && Values.Count == 0;
+
+        /// <summary>Whether a compact entry keeps the two Slip percentiles - false for the RPS-to-speed metrics, which are
+        /// only averaged. Set by <c>CalibrationDataProvider</c> from the entry's key; never saved.</summary>
+        public bool KeepsPercentiles { get; private set; } = true;
+
+        private double? _low;
+        private double? _high;
+
+        /// <summary>The saved <see cref="SlipLowPercentile"/> of a compact entry (null otherwise - not written).</summary>
+        public double? Percentile15
+        {
+            get => IsCompact && KeepsPercentiles ? _low : null;
+            set => _low = value;
+        }
+
+        /// <summary>The saved <see cref="SlipHighPercentile"/> of a compact entry (null otherwise - not written).</summary>
+        public double? Percentile99
+        {
+            get => IsCompact && KeepsPercentiles ? _high : null;
+            set => _high = value;
+        }
+
+        /// <summary>READ ONLY FROM A VERSION 17-19 FILE: the 100-value percentile table those versions saved for a
+        /// finished entry. Its 15th and 99th values become the kept percentiles; it is never written.</summary>
+        public double[] PercentileTable
+        {
+            set
+            {
+                if (value == null || value.Length != 100) return;
+                _low = value[(int)SlipLowPercentile - 1];
+                _high = value[(int)SlipHighPercentile - 1];
+            }
+        }
+
+        /// <summary>The histogram and Max are saved only while the entry is still being fed.</summary>
+        public bool ShouldSerializeValues() => !IsCompact;
+
+        /// <summary>See <see cref="ShouldSerializeValues"/>.</summary>
+        public bool ShouldSerializeMax() => !IsCompact;
+
+        /// <summary>Tells the entry which metric it is (by the provider, from the key): an RPS-to-speed entry keeps no
+        /// percentiles. Data thread only.</summary>
+        public void SetKeepsPercentiles(bool keeps)
+        {
+            KeepsPercentiles = keeps;
+            if (keeps) return;
+            _low = null;
+            _high = null;
+        }
+
+        /// <summary>
+        /// Drops the histogram of a FINISHED entry, keeping what the plugin reads. The kept percentiles are the very
+        /// values the next read would have returned (memoised ones included), so the published value does not move.
+        /// A no-op for an unfinished or already compact entry. Data thread only (the thread that feeds and reads it).
+        /// </summary>
+        public void Compact()
+        {
+            if (!IsFinished || Values.Count == 0) return;
+            if (KeepsPercentiles)
+            {
+                _low = GetPercentileInternal(SlipLowPercentile, false);
+                _high = GetPercentileInternal(SlipHighPercentile, false);
+            }
+            Values.Clear();
+            Max = 0.0;
+            _percentiles.Clear();
+            _average.Clear();
+            Revision++;
+        }
+
+        /// <summary>A compact entry asked for something it no longer knows: it learns again from nothing.</summary>
+        private void RestartLearning()
+        {
+            Values.Clear();
+            Max = 0.0;
+            Sum = 0.0;
+            Count = 0;
+            CalibrationPointsAdded = 1.0;
+            _low = null;
+            _high = null;
+            _percentiles.Clear();
+            _average.Clear();
+            Revision++;
+        }
+
+        /// <summary>Bumped on every change (a point fed, compacted, restarted) - the provider copies an entry for the
+        /// writer only when this moved. In memory only.</summary>
+        public int Revision { get; private set; }
+
+        /// <summary>A deep, independent copy - what the parameters writer serialises, so it never reads an entry the
+        /// data thread is still feeding. Data thread only.</summary>
+        public CalibrationData Copy()
+        {
+            var copy = new CalibrationData
+            {
+                Max = Max,
+                Sum = Sum,
+                Count = Count,
+                CalibrationPointsAdded = CalibrationPointsAdded,
+                KeepsPercentiles = KeepsPercentiles,
+                _low = _low,
+                _high = _high,
+            };
+            foreach (KeyValuePair<double, int> kv in Values) copy.Values[kv.Key] = kv.Value;
+            return copy;
+        }
+
         public bool IsReady => Count >= ReadySamples;
 
         public double Completion => (double)Count / ReadySamples * 100.0;
@@ -78,6 +207,7 @@ namespace QAdvanceFeedback.Core.RawCalculator.Calibration
 
         public void AddValue(double value)
         {
+            if (IsCompact) return;   // a compact (finished) entry is never fed - the provider's cap already says so
             if (double.IsNaN(value) || double.IsPositiveInfinity(value) || double.IsNegativeInfinity(value)) return;
 
             Max = Math.Max(Math.Abs(value), Max);
@@ -96,6 +226,7 @@ namespace QAdvanceFeedback.Core.RawCalculator.Calibration
 
             Values.TryGetValue(value, out int existing);
             Values[value] = existing + 1;
+            Revision++;
 
             if (value > 0.0 && CalibrationPointsAdded < CountSaturationCap) CalibrationPointsAdded += 1.0;
 
@@ -125,6 +256,13 @@ namespace QAdvanceFeedback.Core.RawCalculator.Calibration
 
         private double? GetPercentileInternal(double percentile, bool includeZero)
         {
+            if (IsCompact)
+            {
+                if (!includeZero && KeepsPercentiles && percentile == SlipLowPercentile && _low.HasValue) return _low;
+                if (!includeZero && KeepsPercentiles && percentile == SlipHighPercentile && _high.HasValue) return _high;
+                RestartLearning();
+                return null;
+            }
             string key = includeZero + "," + percentile;
             if (_percentiles.TryGetValue(key, out double? cached)) return cached;
 

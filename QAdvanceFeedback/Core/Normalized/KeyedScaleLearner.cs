@@ -1373,7 +1373,7 @@ namespace QAdvanceFeedback.Core.Normalized
         {
             string[] parts = (key ?? string.Empty).Split(new[] { "|#|" }, StringSplitOptions.None);
             gameId = parts.Length > 0 ? parts[0] : string.Empty;
-            sourceIdentity = parts.Length > 2 ? parts[2] : string.Empty;
+            sourceIdentity = parts.Length > 2 ? KeyRules.SourceKeys.FromKey(parts[2]) : string.Empty;   // Version 21: hashed
         }
 
         private static OnlineDistributionLearner Find(Dictionary<string, OnlineDistributionLearner> store, string key)

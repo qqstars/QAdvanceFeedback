@@ -43,6 +43,9 @@ namespace QAdvanceFeedback
         private const string LegacyParametersFileName = "plugin.QAdvanceFeedback.runtime.json";
 
         private string _configPath;
+
+        /// <summary>Writes the config file off the data thread (owner, 2026-11-25) - see <see cref="ConfigSaveScheduler"/>.</summary>
+        private ConfigSaveScheduler _configSaver;
         private string _viperPath;
 
         /// <summary>The supported-game list for viper4gh's plugin - see
@@ -123,12 +126,6 @@ namespace QAdvanceFeedback
         /// set is resolved once per title rather than every frame.</summary>
         private string _precalibrationInstalledForGame;
 
-        /// <summary>Frames remaining before the calibration histogram is handed to the runtime cache.
-        /// Throttled because the histogram changes slowly and copying it is far more expensive than the
-        /// small dictionaries the other per-frame saves push.</summary>
-        private int _calibrationSaveCountdown;
-
-        private const int CalibrationSaveIntervalFrames = 300;
         /// <summary>
         /// Turn one channel's persisted key data points into the plain triple the engine consumes.
         /// <para/>
@@ -448,7 +445,15 @@ namespace QAdvanceFeedback
         {
             if (string.Equals(gameId, _slipAngleSourcesGame, StringComparison.Ordinal)) return;
             _slipAngleSourcesGame = gameId;
-            if (!string.IsNullOrEmpty(gameId)) _slipAngleSources?.ReloadIfChanged();
+            // The data thread reads the catalog in memory (SlipAngleRawSourceTable.Catalog, lock-free); whether the
+            // file changed on disk is checked on a pool thread (owner, 2026-11-25: no file read on the data thread).
+            SlipAngleSourceStore sources = _slipAngleSources;
+            if (string.IsNullOrEmpty(gameId) || sources == null) return;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try { sources.ReloadIfChanged(); }
+                catch (Exception e) { LogWarning("QAdvanceFeedback: Slip Angle source file check failed - " + e.Message); }
+            });
         }
 
         private void NotifyNativenessChanged()
@@ -626,6 +631,8 @@ namespace QAdvanceFeedback
             _viperDocument = ViperStore.Load(_viperPath, LogWarning);
 
             _configPath = pluginManager.GetCommonStoragePath(ConfigFileName);
+            _configSaver?.Dispose();
+            _configSaver = new ConfigSaveScheduler(WriteConfigFile, LogWarning);
             string legacyConfigPath = pluginManager.GetCommonStoragePath(LegacyConfigFileName);
             _settings = ConfigStore.Load(_configPath, LogWarning, legacyPath: legacyConfigPath);
 
@@ -639,7 +646,7 @@ namespace QAdvanceFeedback
             bool repairedSlip = _settings.Slip?.RepairPresetSourcesIfStale(false) ?? false;
             if (repairedLock || repairedSlip)
             {
-                SaveConfig();
+                SaveConfigNow();
                 LogWarning("QAdvanceFeedback: repaired stored source configuration for "
                     + (repairedLock && repairedSlip ? "both channels"
                         : repairedLock ? "Wheel Lock" : "Wheel Slip")
@@ -649,7 +656,13 @@ namespace QAdvanceFeedback
             // SLIP ANGLE UNIT LISTS (owner, 2026-11-20): a config without them gets the hard-coded lists, written
             // at once so the file shows them; the reader reads the live lists every frame and reports the
             // games it detects (degrees / a grip ratio / "over 100%"), which are saved the same way.
-            if (_settings.SlipAngle?.EnsureSourceUnits() == true) SaveConfig();
+            if (_settings.SlipAngle?.EnsureSourceUnits() == true) SaveConfigNow();
+
+            // VERSION 21 (owner, 2026-11-25): the key data slots and per-source flags store a source by its hashed key,
+            // like the parameters file - a config from before is converted once and saved.
+            bool rekeyedLock = _settings.Lock?.KeyDataPoints?.RekeySources() ?? false;
+            bool rekeyedSlip = _settings.Slip?.KeyDataPoints?.RekeySources() ?? false;
+            if (rekeyedLock || rekeyedSlip) SaveConfigNow();
             if (_adapter is SimHubTelemetryAdapter slipAngleAdapter)
             {
                 slipAngleAdapter.SlipAngleReader.Units = () => _settings?.SlipAngle?.SourceUnits;
@@ -665,6 +678,11 @@ namespace QAdvanceFeedback
             _slipAngleSources = new SlipAngleSourceStore(pluginManager.GetCommonStoragePath(SlipAngleSourceStore.FileName), LogWarning);
             _slipAngleSources.Changed += NotifyNativenessChanged;
             _slipAngleSources.Load();
+            // VERSION 21 SLIP ANGLE SOURCE KEYS (owner, 2026-11-25): a Slip Angle learner's source key hashes the game's
+            // whole definition - the row's settings (sources, transform, surface, unit, vertical flag; id and note
+            // excluded) and the unit in use - so a changed definition learns under a new key.
+            Core.KeyRules.SourceKeys.SlipAngleDefinition = SlipAngleDefinitionText;
+            Core.KeyRules.SourceKeys.SlipAngleDefinitionChanged();
 
             string parametersPath = pluginManager.GetCommonStoragePath(ParametersFileName);
             string legacyParametersPath = pluginManager.GetCommonStoragePath(LegacyParametersFileName);
@@ -680,11 +698,13 @@ namespace QAdvanceFeedback
             // INTERNAL SOURCE ALWAYS LEARNS (docs\internal-source-learning-design.md): every source-keyed
             // family also folds the retired hidden "__layer3_raw_fallback__" key into the channel's own
             // internal key once (InternalSourceKeyMigration) - each channel to its OWN internal identity.
-            _normalizedEngine.LockLearners.ImportAll(InternalSourceKeyMigration.MigrateGrip(
-                GripLearnerKeyMigration.MigrateLegacyKeys(lockLearnerData), RawSourceFallback.RawIdentity(true)));
+            // VERSION 21 (owner, 2026-11-25): every loaded learner key gets its source part in the hashed form
+            // (Core.KeyRules.SourceKeys) - after the older migrations, which still read and write readable identities.
+            _normalizedEngine.LockLearners.ImportAll(Core.KeyRules.SourceKeys.RekeyLearners(InternalSourceKeyMigration.MigrateGrip(
+                GripLearnerKeyMigration.MigrateLegacyKeys(lockLearnerData), RawSourceFallback.RawIdentity(true))));
             _runtimeStore.LoadSlipLearners(out var slipLearnerData);
-            _normalizedEngine.SlipLearners.ImportAll(InternalSourceKeyMigration.MigrateGrip(
-                GripLearnerKeyMigration.MigrateLegacyKeys(slipLearnerData), RawSourceFallback.RawIdentity(false)));
+            _normalizedEngine.SlipLearners.ImportAll(Core.KeyRules.SourceKeys.RekeyLearners(InternalSourceKeyMigration.MigrateGrip(
+                GripLearnerKeyMigration.MigrateLegacyKeys(slipLearnerData), RawSourceFallback.RawIdentity(false))));
 
             if (_runtimeStore.TryGetLegacyLockSeed(out double legacyLockPeak, out int legacyLockSamples))
                 _normalizedEngine.LockLearners.SeedLegacy(legacyLockPeak, legacyLockSamples);
@@ -698,32 +718,28 @@ namespace QAdvanceFeedback
             // ---- LAYER 3 SHAKEIT CALIBRATION (RuntimeDocument Version 11, 1.0.7.1).
             // Resume the calibration histogram exactly as SimHub resumes its own - no reference, no
             // blend, no handover; the learner simply continues accumulating where it stopped.
-            _runtimeStore.LoadShakeItCalibration(out var shakeItCalibration);
-            _legacyEngine.Calibration.ImportCalibrations(shakeItCalibration);
+            _runtimeStore.LoadSlipLockCalibration(out var slipLockCalibration);
+            _legacyEngine.Calibration.ImportCalibrations(slipLockCalibration,
+                fromOlderVersion: _runtimeStore.LoadedVersion > 0 && _runtimeStore.LoadedVersion < Core.KeyRules.KeyRule.LatestVersionNumber);
 
             _runtimeStore.LoadShakeItPrecalibration(out _shakeIt.Presets);
             _runtimeStore.LoadShakeItGameBounds(out _shakeIt.Bounds);
-            _runtimeStore.LoadShakeItSourceTimestamps(out _shakeIt.SourceTimestamps);
 
-            // IMPORT ON EVERY LAUNCH, NEVER OVERRIDING. Running this each start is what keeps the plugin
-            // current: when SimHub updates and ships reference data for new games, it is picked up
-            // automatically rather than waiting for someone to press a button. It is cheap because
-            // onlyChangedFiles compares each source file's last-write time against the one recorded from
-            // the previous import - an unchanged installation costs three timestamp reads and opens
-            // nothing. overrideExisting is hard-coded false here: an automatic, unattended import must
-            // never replace what this plugin has learned. Replacing that is the settings button's job,
-            // and only with its checkbox ticked.
+            // SYNC WITH SIMHUB'S SHAKEIT PRESET FILES ON EVERY START (owner, 2026-11-25): all three files are read, with
+            // no timestamp check, so a SimHub update reaches the plugin on its next start. "Override current data if
+            // exists?" (General, default on) decides a game already held: on, it takes SimHub's values (full upsert); off,
+            // it is kept and only new games / metrics are added. A game SimHub dropped is kept either way. These sections
+            // hold SimHub's data only (nothing here learns into them). An unchanged result is not rewritten.
             try
             {
                 ShakeItConversionOutcome imported = ShakeItPrecalibrationConverter.Convert(
                     ShakeItPrecalibrationConverter.DefaultRootDirectory(), _shakeIt,
-                    overrideExisting: false, onlyChangedFiles: true);
+                    overrideExisting: _settings?.General?.ShakeItImportOverride ?? true);
 
                 if (imported.FilesRead > 0)
                 {
                     _runtimeStore.SaveShakeItPrecalibration(_shakeIt.Presets);
                     _runtimeStore.SaveShakeItGameBounds(_shakeIt.Bounds);
-                    _runtimeStore.SaveShakeItSourceTimestamps(_shakeIt.SourceTimestamps);
                 }
 
                 LogInfoIfDiagnostics("ShakeIt reference data: " + imported.Message);
@@ -736,15 +752,15 @@ namespace QAdvanceFeedback
             }
 
             _runtimeStore.LoadLockScaleLearners(out var lockScaleData);
-            _normalizedEngine.LockScaleLearner.ImportAll(InternalSourceKeyMigration.MigrateScale(lockScaleData, RawSourceFallback.RawIdentity(true)));
+            _normalizedEngine.LockScaleLearner.ImportAll(Core.KeyRules.SourceKeys.RekeyLearners(InternalSourceKeyMigration.MigrateScale(lockScaleData, RawSourceFallback.RawIdentity(true))));
             _runtimeStore.LoadSlipScaleLearners(out var slipScaleData);
-            _normalizedEngine.SlipScaleLearner.ImportAll(InternalSourceKeyMigration.MigrateScale(slipScaleData, RawSourceFallback.RawIdentity(false)));
+            _normalizedEngine.SlipScaleLearner.ImportAll(Core.KeyRules.SourceKeys.RekeyLearners(InternalSourceKeyMigration.MigrateScale(slipScaleData, RawSourceFallback.RawIdentity(false))));
             // SMax EVIDENCE (RuntimeDocument v14, docs\learning-maturity-indicator-report.md) - after the cold
             // ceilings, so a restart continues each key's learning (and its maturity) where it stopped.
             _runtimeStore.LoadScaleEvidence(true, out var lockScaleEvidence);
-            _normalizedEngine.LockScaleLearner.ImportEvidence(InternalSourceKeyMigration.Migrate(lockScaleEvidence, RawSourceFallback.RawIdentity(true), s => s != null));
+            _normalizedEngine.LockScaleLearner.ImportEvidence(Core.KeyRules.SourceKeys.RekeyLearners(InternalSourceKeyMigration.Migrate(lockScaleEvidence, RawSourceFallback.RawIdentity(true), s => s != null)));
             _runtimeStore.LoadScaleEvidence(false, out var slipScaleEvidence);
-            _normalizedEngine.SlipScaleLearner.ImportEvidence(InternalSourceKeyMigration.Migrate(slipScaleEvidence, RawSourceFallback.RawIdentity(false), s => s != null));
+            _normalizedEngine.SlipScaleLearner.ImportEvidence(Core.KeyRules.SourceKeys.RekeyLearners(InternalSourceKeyMigration.Migrate(slipScaleEvidence, RawSourceFallback.RawIdentity(false), s => s != null)));
             // Restart display: the (game, car) the key data was last shown for, so the page and the
             // ShakeIt panels can form the exact persist key while SimHub is still on the menu.
             if (_runtimeStore.TryLoadLastKeyDataContext(out string lastKeyDataGame, out string lastKeyDataCar))
@@ -781,7 +797,7 @@ namespace QAdvanceFeedback
             // FEATURE C (docs\v1068-four-range-report.md, RuntimeDocument Version 8) - WheelLock's own
             // learned S75/S90 anchors. WHEELLOCK ONLY - no Slip equivalent.
             _runtimeStore.LoadLockAnchors(out var lockAnchorsData);
-            _normalizedEngine.LockAnchors.ImportAll(InternalSourceKeyMigration.MigrateAnchors(lockAnchorsData, RawSourceFallback.RawIdentity(true)));
+            _normalizedEngine.LockAnchors.ImportAll(Core.KeyRules.SourceKeys.RekeyLearners(InternalSourceKeyMigration.MigrateAnchors(lockAnchorsData, RawSourceFallback.RawIdentity(true))));
 
             _runtimeStore.LoadGForceLearners(out var accelMaxima, out var decelMaxima, out var latMaxima);
             _settings.GForce.ImportLearnedMaxima(accelMaxima, decelMaxima, latMaxima);
@@ -790,6 +806,12 @@ namespace QAdvanceFeedback
             _settings.GForce.ApplyTo(_gforceEngine);
 
             _publisher.Register(this, _settings.General.EnableDiagnostics);
+
+            // AUTO-UPDATE (owner, 2026-11-25, 1.3.0): a previous update's .dll.old / .dll.new go; what was downloaded last
+            // time shows at once; the latest release is checked on a new background thread (nothing here waits for it).
+            PluginUpdater.DeleteLeftovers();
+            PluginUpdater.ShowDownloaded();
+            PluginUpdater.CheckInBackground(LogWarning);
 
             // TWO-WAY SETTINGS SYNC (docs\shakeit-native-effects-design.md): the hub applies and saves
             // exactly like the settings page's Apply; the watcher is the backup path for writes made
@@ -879,6 +901,9 @@ namespace QAdvanceFeedback
                 FollowKeyDataDisplayContext(_currentGameId, data.NewData?.CarId);
                 FollowSlipAngleDisplayContext(_currentGameId, data.NewData?.CarId);
                 PushCurrentGameToSettingsUi(data.GameName ?? string.Empty);   // after: the page reads CurrentGameId
+                // The calibration's current key (track, car) is identity too - named before the gate so the Reset
+                // Calibration button knows it while paused (nothing is learned here; the gate below still decides that).
+                if (data.NewData != null) _legacyEngine.SetContext(data.GameName ?? string.Empty, data.NewData.TrackIdWithConfig, data.NewData.CarModel);
 
                 // ShakeIt source availability runs every frame, in game or not (the heartbeat and the
                 // profile check matter at the menu too) - see UpdateShakeItAvailability.
@@ -945,7 +970,7 @@ namespace QAdvanceFeedback
                 // LAYER 3 SHAKEIT CALIBRATION: name the (track, car) these frames belong to. SimHub
                 // keys its calibrations as track;car;metric, so using the same two fields is what makes
                 // an imported ShakeIt calibration line up with ours entry for entry.
-                _legacyEngine.SetContext(data.NewData.TrackIdWithConfig, data.NewData.CarModel);
+                _legacyEngine.SetContext(data.GameName ?? string.Empty, data.NewData.TrackIdWithConfig, data.NewData.CarModel);
 
                 if (!string.Equals(_precalibrationInstalledForGame, gameId, StringComparison.Ordinal))
                 {
@@ -1207,35 +1232,17 @@ namespace QAdvanceFeedback
                 // ---- Clutch Bite (docs\clutch-bite-design.md): output, standing-start learning.
                 UpdateClutch(data, sample, gameId, carId);
 
-                // ---- Runtime persistence: in-memory cache only every frame (see RuntimeStore's own
-                // remarks) - the background timer/Flush is what actually reaches disk.
-                // LAYER 3 SHAKEIT CALIBRATION - throttled, unlike the small dictionaries below.
-                if (--_calibrationSaveCountdown <= 0)
+                // ---- Runtime persistence (owner, 2026-11-25): NOTHING is exported per frame any more. The save
+                // thread (RuntimeStore's 5-second tick) asks for the learned data; this frame answers only then - one
+                // volatile read otherwise. A game / car / track change hands it over at once and saves soon.
+                _runtimeStore.MarkLearningFrame();
+                bool saveKeyChanged = FollowSaveKey(gameId, data.NewData.CarModel, data.NewData.TrackIdWithConfig);
+                if (saveKeyChanged || _runtimeStore.SnapshotRequested)
                 {
-                    _calibrationSaveCountdown = CalibrationSaveIntervalFrames;
-                    _runtimeStore.SaveShakeItCalibration(_legacyEngine.Calibration.ExportCalibrations());
-                    // SMax evidence (v14): same throttle - only keys driven since the last save are re-snapshotted.
-                    SaveScaleEvidenceNow();
+                    SaveLearningSnapshotNow();
+                    _runtimeStore.SnapshotTaken();
+                    if (saveKeyChanged) _runtimeStore.SaveSoon();
                 }
-
-                _runtimeStore.SaveLockLearners(_normalizedEngine.LockLearners.ExportAll());
-                _runtimeStore.SaveSlipLearners(_normalizedEngine.SlipLearners.ExportAll());
-                // COLD/WARM (item 3): ExportAll itself protects an already-persisted cold ceiling from a
-                // noisy session - see KeyedScaleLearner.PersistedCeiling's own remarks.
-                _runtimeStore.SaveLockScaleLearners(_normalizedEngine.LockScaleLearner.ExportAll());
-                _runtimeStore.SaveSlipScaleLearners(_normalizedEngine.SlipScaleLearner.ExportAll());
-                // Per-game telemetry support (item 2).
-                _runtimeStore.SaveSurfaceSupport(_normalizedEngine.SurfaceSupport.ExportAll());
-                // COLD-START CONTINUITY AND CROSS-CAR SEEDING (RuntimeDocument Version 4) - see Init's
-                // own remarks.
-                _runtimeStore.SaveLockPhysicalReference(_normalizedEngine.LockPhysicalReference.ExportAll());
-                _runtimeStore.SaveSlipPhysicalReference(_normalizedEngine.SlipPhysicalReference.ExportAll());
-                _runtimeStore.SaveLockScaleCrossCarSeed(_normalizedEngine.LockScaleLearner.ExportCrossCarSeeds());
-                _runtimeStore.SaveSlipScaleCrossCarSeed(_normalizedEngine.SlipScaleLearner.ExportCrossCarSeeds());
-                // FEATURE C (RuntimeDocument Version 8) - WheelLock's own learned S75/S90 anchors.
-                _runtimeStore.SaveLockAnchors(_normalizedEngine.LockAnchors.ExportAll());
-                _settings.GForce.ExportLearnedMaxima(out var accelSnapshot, out var decelSnapshot, out var latSnapshot);
-                _runtimeStore.SaveGForceLearners(accelSnapshot, decelSnapshot, latSnapshot);
 
                 // ---- Diagnostics (always computed; SimHub only sees them if EnableDiagnostics was on
                 // at Init - see PropertyPublisher.Register).
@@ -1393,13 +1400,153 @@ namespace QAdvanceFeedback
             learner.ConfiguredColdStartSMax = applies ? custom.SMax : 0.0;
         }
 
-        /// <summary>Hands the SMax evidence of both channels to the runtime store (v14). Throttled by the
-        /// caller (every <see cref="CalibrationSaveIntervalFrames"/> frames) and forced at End; each call
-        /// re-snapshots only the keys learned since the previous one.</summary>
+        /// <summary>Hands the SMax evidence of both channels to the runtime store (v14) - part of
+        /// <see cref="SaveLearningSnapshotNow"/>; each call re-snapshots only the keys learned since the previous one.</summary>
         private void SaveScaleEvidenceNow()
         {
             _runtimeStore?.SaveScaleEvidence(true, _normalizedEngine.LockScaleLearner.ExportEvidence());
             _runtimeStore?.SaveScaleEvidence(false, _normalizedEngine.SlipScaleLearner.ExportEvidence());
+        }
+
+        /// <summary>
+        /// THE LEARNING SNAPSHOT (owner, 2026-11-25): hands a copy of every frame-fed learner to the runtime store, on the
+        /// DATA thread (the learners are not thread-safe). Called only when the save thread asks
+        /// (<see cref="RuntimeStore.SnapshotRequested"/>, every 5 seconds while driving), on a game / car / track change,
+        /// and at End - never per frame. The store's writer then compares and writes only the sections that changed.
+        /// (The Slip Angle and Clutch learners hand theirs over on their own change-gated throttles.)
+        /// </summary>
+        private void SaveLearningSnapshotNow()
+        {
+            if (_runtimeStore == null) return;
+            // Copies only of the calibration entries that changed since the last snapshot; nothing when none did - and
+            // nothing at all while "Persist Calibration data?" is off (learned for the session only).
+            if (PersistCalibration)
+            {
+                Dictionary<string, Core.RawCalculator.Calibration.CalibrationData> calibrations =
+                    _legacyEngine.Calibration.ExportCalibrations(out bool calibrationsChanged);
+                if (calibrationsChanged) _runtimeStore.SaveSlipLockCalibration(calibrations);
+            }
+            SaveScaleEvidenceNow();
+            _runtimeStore.SaveLockLearners(_normalizedEngine.LockLearners.ExportAll());
+            _runtimeStore.SaveSlipLearners(_normalizedEngine.SlipLearners.ExportAll());
+            // COLD/WARM (item 3): ExportAll itself protects an already-persisted cold ceiling from a noisy session - see
+            // KeyedScaleLearner.PersistedCeiling's own remarks.
+            _runtimeStore.SaveLockScaleLearners(_normalizedEngine.LockScaleLearner.ExportAll());
+            _runtimeStore.SaveSlipScaleLearners(_normalizedEngine.SlipScaleLearner.ExportAll());
+            _runtimeStore.SaveSurfaceSupport(_normalizedEngine.SurfaceSupport.ExportAll());
+            // COLD-START CONTINUITY AND CROSS-CAR SEEDING (RuntimeDocument Version 4).
+            _runtimeStore.SaveLockPhysicalReference(_normalizedEngine.LockPhysicalReference.ExportAll());
+            _runtimeStore.SaveSlipPhysicalReference(_normalizedEngine.SlipPhysicalReference.ExportAll());
+            _runtimeStore.SaveLockScaleCrossCarSeed(_normalizedEngine.LockScaleLearner.ExportCrossCarSeeds());
+            _runtimeStore.SaveSlipScaleCrossCarSeed(_normalizedEngine.SlipScaleLearner.ExportCrossCarSeeds());
+            // FEATURE C (RuntimeDocument Version 8) - WheelLock's own learned S75/S90 anchors.
+            _runtimeStore.SaveLockAnchors(_normalizedEngine.LockAnchors.ExportAll());
+            _settings.GForce.ExportLearnedMaxima(out var accelSnapshot, out var decelSnapshot, out var latSnapshot);
+            _runtimeStore.SaveGForceLearners(accelSnapshot, decelSnapshot, latSnapshot);
+        }
+
+        private string _saveKeyGame;
+        private string _saveKeyCar;
+        private string _saveKeyTrack;
+
+        /// <summary>True when the (game, car, track) of this learning frame differs from the previous one - the learned
+        /// data of the key just left is then saved at once (owner, 2026-11-25). Three reference/ordinal compares per
+        /// frame; the very first frame is not a change.</summary>
+        private bool FollowSaveKey(string gameId, string carModel, string track)
+        {
+            carModel = carModel ?? string.Empty;
+            track = track ?? string.Empty;
+            if (string.Equals(_saveKeyGame, gameId, StringComparison.Ordinal)
+                && string.Equals(_saveKeyCar, carModel, StringComparison.Ordinal)
+                && string.Equals(_saveKeyTrack, track, StringComparison.Ordinal)) return false;
+            bool first = _saveKeyGame == null;
+            _saveKeyGame = gameId;
+            _saveKeyCar = carModel;
+            _saveKeyTrack = track;
+            return !first;
+        }
+
+        // ---------------------------------------------------------------- reset calibration (owner, 2026-11-25)
+
+        /// <summary>"Persist Calibration data?" as applied (on with no settings).</summary>
+        private bool PersistCalibration => _settings?.General?.PersistSlipLockCalibration ?? true;
+
+        /// <summary>
+        /// "Persist Calibration data?" from the Wheel Lock / Wheel Slip tabs - applied AT ONCE (owner, 2026-11-25): the
+        /// config is saved now (UI thread), and turning it off deletes every calibration, in memory and in the parameters
+        /// file (saved soon, off the data thread). The broadcast lets the page draft adopt it and both tabs follow.
+        /// </summary>
+        public void SetPersistCalibration(bool persist)
+        {
+            try
+            {
+                if (_settings?.General == null || _settings.General.PersistSlipLockCalibration == persist) return;
+                _settings.General.PersistSlipLockCalibration = persist;
+                SaveConfigNow();
+                if (!persist)
+                {
+                    lock (_engineLock)
+                    {
+                        int removed = _legacyEngine.Calibration.ClearAll();
+                        _runtimeStore?.SaveSlipLockCalibration(_legacyEngine.Calibration.ExportCalibrations());
+                        LogInfo("QAdvanceFeedback: calibration is no longer saved - " + removed + " saved entries deleted");
+                    }
+                    _runtimeStore?.SaveSoon();
+                }
+                OnUiThread(() => Hub?.NotifyApplied(new[] { SettingField.SlipLockCalibrationPersist }, SettingsOrigin.Runtime));
+            }
+            catch (Exception e)
+            {
+                SimHub.Logging.Current.Error("QAdvanceFeedback: SetPersistCalibration failed - " + e);
+            }
+        }
+
+        /// <summary>
+        /// Whether the slip / lock calibration holds anything for the CURRENT key (the track and car the last frame
+        /// reported - the calibration's own key, shared by Wheel Slip and Wheel Lock). For the Reset Calibration button's
+        /// visibility. UI thread, under the engine lock like the other learned-data reads.
+        /// </summary>
+        public bool HasCalibrationForCurrentKey()
+        {
+            try
+            {
+                lock (_engineLock) return _legacyEngine.HasCalibrationForCurrentContext();
+            }
+            catch (Exception e)
+            {
+                SimHub.Logging.Current.Error("QAdvanceFeedback: HasCalibrationForCurrentKey failed - " + e);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Deletes the slip / lock calibration of the CURRENT key (all its metrics: Slip, RPS-to-speed front and rear)
+        /// and saves the file soon - e.g. after fitting a different wheel to the same car. Driving on that key learns it
+        /// again from nothing. True when something was deleted.
+        /// </summary>
+        public bool ResetCalibrationForCurrentKey()
+        {
+            try
+            {
+                bool removed;
+                lock (_engineLock)
+                {
+                    removed = _legacyEngine.ResetCalibrationForCurrentContext() > 0;
+                    if (removed && _runtimeStore != null && PersistCalibration)
+                        _runtimeStore.SaveSlipLockCalibration(_legacyEngine.Calibration.ExportCalibrations());
+                }
+                if (removed)
+                {
+                    _runtimeStore?.SaveSoon();
+                    LogInfo("QAdvanceFeedback: slip / lock calibration reset for the current track and car");
+                }
+                return removed;
+            }
+            catch (Exception e)
+            {
+                SimHub.Logging.Current.Error("QAdvanceFeedback: ResetCalibrationForCurrentKey failed - " + e);
+                return false;
+            }
         }
 
         private void ResetOnGameSwitch(string gameId)
@@ -1435,27 +1582,17 @@ namespace QAdvanceFeedback
             }
         }
 
-        /// <summary>
-        /// Imports SimHub's shipped ShakeIt precalibration on demand - the settings tab's "Convert
-        /// SimHub ShakeIt Reference Data" button. Persists the result and re-installs the presets for
-        /// the running title immediately, so the effect is audible without a restart.
-        /// </summary>
-        /// <param name="overrideExisting">The tab's "Override current data if exists?" checkbox. False
-        /// keeps whatever this plugin already holds for a game; true replaces it with SimHub's.</param>
+        /// <summary>The settings button: the same sync as every start, now - for a SimHub update installed while the plugin
+        /// runs. <paramref name="overrideExisting"/> is the tab's "Override current data if exists?" as shown.</summary>
         public ShakeItConversionOutcome ImportShakeItPrecalibration(bool overrideExisting)
         {
             try
             {
-                // onlyChangedFiles FALSE: an explicit button press re-reads every file regardless of
-                // timestamps, so a driver who wants to force a refresh (or who has just ticked the
-                // override box) always gets one.
                 ShakeItConversionOutcome outcome = ShakeItPrecalibrationConverter.Convert(
-                    ShakeItPrecalibrationConverter.DefaultRootDirectory(), _shakeIt,
-                    overrideExisting, onlyChangedFiles: false);
+                    ShakeItPrecalibrationConverter.DefaultRootDirectory(), _shakeIt, overrideExisting);
 
                 _runtimeStore?.SaveShakeItPrecalibration(_shakeIt.Presets);
                 _runtimeStore?.SaveShakeItGameBounds(_shakeIt.Bounds);
-                _runtimeStore?.SaveShakeItSourceTimestamps(_shakeIt.SourceTimestamps);
 
                 // Force the next frame to re-resolve this title's presets rather than waiting for a
                 // game change that may never come while the driver is sitting in the settings tab.
@@ -1483,8 +1620,7 @@ namespace QAdvanceFeedback
                 // The calibration save is throttled during play, so force a final one here.
                 lock (_engineLock)   // a last frame may still be running on the data thread
                 {
-                    _runtimeStore?.SaveShakeItCalibration(_legacyEngine.Calibration.ExportCalibrations());
-                    if (_runtimeStore != null) SaveScaleEvidenceNow();
+                    if (_runtimeStore != null) SaveLearningSnapshotNow();
                     if (_runtimeStore != null) SaveClutchLearningNow();
                     if (_runtimeStore != null) SaveSlipAngleLearningNow();
                 }
@@ -1496,7 +1632,9 @@ namespace QAdvanceFeedback
                 _configWatcher = null;
                 _shakeItInspector?.Dispose();
                 _shakeItInspector = null;
-                SaveConfig();
+                SaveConfigNow();
+                _configSaver?.Dispose();
+                _configSaver = null;
                 if (ReferenceEquals(Instance, this)) Instance = null;
                 LogInfoIfDiagnostics("shut down");
             }
@@ -1555,9 +1693,10 @@ namespace QAdvanceFeedback
 
         private void ApplyCore()
         {
+            Core.KeyRules.SourceKeys.SlipAngleDefinitionChanged();   // a unit choice may have changed
             RebuildProjectedEngine();
             _settings.GForce.ApplyTo(_gforceEngine);
-            SaveConfig();
+            SaveConfigNow();
         }
 
         /// <summary>Diffs the shared fields against the last applied state and broadcasts the change.</summary>
@@ -1575,8 +1714,18 @@ namespace QAdvanceFeedback
 
         /// <summary>The Slip Angle reader changed a unit list (data thread): saved like a key data seed, and the
         /// pages told so they re-key the Slip Angle key data (a ratio game has its own learning key).</summary>
+        /// <summary>The text a game's Slip Angle source key hashes (Version 21): the row's canonical settings and the unit
+        /// in use. Any thread (built once per game and definition change, then cached by SourceKeys).</summary>
+        private string SlipAngleDefinitionText(string gameId)
+        {
+            SlipAngleSourceGame row = SlipAngleRawSourceTable.Catalog.Find(gameId);
+            SlipAngleUnit unit = SettingsHub.NativeUnit(gameId, _settings?.SlipAngle?.SourceUnits);
+            return SlipAngleSourceGame.SettingsText(row) + "|unit=" + unit;
+        }
+
         private void OnSlipAngleUnitsChanged()
         {
+            Core.KeyRules.SourceKeys.SlipAngleDefinitionChanged();   // the game's unit is part of its source key
             try
             {
                 SaveConfig();
@@ -1591,7 +1740,27 @@ namespace QAdvanceFeedback
 
         /// <summary>The one place the config file is written. Records the saved content's hash so the
         /// <see cref="ConfigFileWatcher"/> recognises - and ignores - this process's own writes.</summary>
+        /// <summary>
+        /// A save asked for while driving (a key data seed, a Slip Angle seed on a new surface, a new unit list): NEVER
+        /// written on the calling (data) thread - the background <see cref="ConfigSaveScheduler"/> writes it 100 ms after
+        /// the last such request. The settings in memory are already current; nothing reads the file back to use them.
+        /// </summary>
         private void SaveConfig()
+        {
+            if (_configSaver != null) _configSaver.RequestSave();
+            else WriteConfigFile();
+        }
+
+        /// <summary>The same save, synchronously on the caller - plugin Init, the settings page's Apply, End (never the data
+        /// thread). Serialised with the background writes by the scheduler's write lock.</summary>
+        private void SaveConfigNow()
+        {
+            if (_configSaver != null) _configSaver.SaveNow();
+            else WriteConfigFile();
+        }
+
+        /// <summary>The write itself (the scheduler's thread, or <see cref="SaveConfigNow"/>'s caller).</summary>
+        private void WriteConfigFile()
         {
             ConfigStore.Save(_configPath, _settings, LogWarning);
             _lastSavedConfigHash = ConfigFileWatcher.TryHashFile(_configPath);

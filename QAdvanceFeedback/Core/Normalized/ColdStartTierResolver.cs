@@ -54,7 +54,8 @@ namespace QAdvanceFeedback.Core.Normalized
             string[] parts = (key ?? string.Empty).Split(new[] { "|#|" }, StringSplitOptions.None);
             gameId = parts.Length > 0 ? parts[0] : string.Empty;
             carId = parts.Length > 1 ? parts[1] : string.Empty;
-            sourceIdentity = parts.Length > 2 ? parts[2] : string.Empty;
+            // Version 21: the stored source part is hashed - turned back into the identity it was built from.
+            sourceIdentity = parts.Length > 2 ? KeyRules.SourceKeys.FromKey(parts[2]) : string.Empty;
             surfaceBucket = parts.Length > 3 ? parts[3] : string.Empty;
             return parts.Length >= 3;
         }

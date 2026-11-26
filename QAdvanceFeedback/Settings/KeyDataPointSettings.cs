@@ -193,13 +193,71 @@ namespace QAdvanceFeedback.Settings
 
         /// <summary>The tail every one of a source's slot keys ends with - see <see cref="MakeSlotKey"/>,
         /// where both the global and the per-game form end in "|src:&lt;identity&gt;".</summary>
-        private static string SlotSuffixFor(string sourceIdentity) => "|src:" + (sourceIdentity ?? string.Empty);
+        internal static string SlotSuffixFor(string sourceIdentity) => "|src:" + StoredSource(sourceIdentity);
+
+        /// <summary>
+        /// VERSION 21 (owner, 2026-11-25): a source is stored in the config by its hashed key ("21:&lt;number&gt;", see
+        /// <see cref="Core.KeyRules.SourceKeys"/>), the same as in the parameters file - the slot keys and the per-source
+        /// flags. Callers keep passing the readable identity.
+        /// </summary>
+        /// <remarks>A Slip Angle identity (<c>SlipAngle.*</c> - a short constant, whose key data shares
+        /// <see cref="MakeSlotKey"/> through <c>SlipAngleKeyDataSettings</c>) is stored as it is: its learner key already
+        /// hashes the game's whole definition, and its slots are matched by that readable identity.</remarks>
+        private static string StoredSource(string sourceIdentity)
+        {
+            string identity = sourceIdentity ?? string.Empty;
+            return identity.StartsWith(Core.KeyRules.SourceKeys.SlipAngleIdentityPrefix, StringComparison.Ordinal)
+                ? identity
+                : Core.KeyRules.SourceKeys.ToKey(null, identity);
+        }
+
+        /// <summary>
+        /// A config from before Version 21: every slot key's and every flag's source part in the hashed form. True when
+        /// anything changed (the config is then saved once). Already hashed sources are left alone.
+        /// </summary>
+        public bool RekeySources()
+        {
+            bool changed = false;
+            if (Values != null)
+            {
+                var values = new Dictionary<string, KeyDataPointEntry>(Values.Comparer);
+                foreach (KeyValuePair<string, KeyDataPointEntry> pair in Values)
+                {
+                    string key = RekeySlotKey(pair.Key);
+                    if (!string.Equals(key, pair.Key, StringComparison.Ordinal)) changed = true;
+                    if (!values.ContainsKey(key)) values[key] = pair.Value;
+                }
+                if (changed) Values = values;
+            }
+            if (SourceFlags != null)
+            {
+                var flags = new Dictionary<string, KeyDataSourceFlags>(SourceFlags.Comparer);
+                bool flagsChanged = false;
+                foreach (KeyValuePair<string, KeyDataSourceFlags> pair in SourceFlags)
+                {
+                    string key = string.IsNullOrEmpty(pair.Key) ? pair.Key : StoredSource(pair.Key);
+                    if (!string.Equals(key, pair.Key, StringComparison.Ordinal)) flagsChanged = true;
+                    if (!flags.ContainsKey(key)) flags[key] = pair.Value;
+                }
+                if (flagsChanged) { SourceFlags = flags; changed = true; }
+            }
+            return changed;
+        }
+
+        private static string RekeySlotKey(string slotKey)
+        {
+            if (slotKey == null) return null;
+            int at = slotKey.IndexOf("|src:", StringComparison.Ordinal);
+            if (at < 0) return slotKey;
+            string source = slotKey.Substring(at + 5);
+            return slotKey.Substring(0, at + 5) + StoredSource(source);
+        }
 
         private KeyDataSourceFlags FindFlags(string sourceIdentity)
         {
             if (SourceFlags == null || string.IsNullOrEmpty(sourceIdentity)) return null;
             KeyDataSourceFlags flags;
-            return SourceFlags.TryGetValue(sourceIdentity, out flags) ? flags : null;
+            return SourceFlags.TryGetValue(StoredSource(sourceIdentity), out flags) ? flags : null;
         }
 
         private KeyDataSourceFlags EnsureFlags(string sourceIdentity)
@@ -213,12 +271,13 @@ namespace QAdvanceFeedback.Settings
                 return new KeyDataSourceFlags { AutoGenerate = AutoGenerate, PerGame = PerGame };
 
             KeyDataSourceFlags flags;
-            if (!SourceFlags.TryGetValue(sourceIdentity, out flags) || flags == null)
+            string stored = StoredSource(sourceIdentity);
+            if (!SourceFlags.TryGetValue(stored, out flags) || flags == null)
             {
                 // SEEDED FROM THE CHANNEL FALLBACK, not from the type's defaults: a driver who had the
                 // channel on Manual before this was per-source must not find a newly touched source
                 // silently flipped back to Auto.
-                SourceFlags[sourceIdentity] = flags = new KeyDataSourceFlags { AutoGenerate = AutoGenerate, PerGame = PerGame };
+                SourceFlags[stored] = flags = new KeyDataSourceFlags { AutoGenerate = AutoGenerate, PerGame = PerGame };
             }
             return flags;
         }
@@ -271,7 +330,7 @@ namespace QAdvanceFeedback.Settings
         /// </summary>
         public static string MakeSlotKey(bool perGame, string gameId, string sourceIdentity)
         {
-            string source = sourceIdentity ?? string.Empty;
+            string source = StoredSource(sourceIdentity);
             return perGame
                 ? "game:" + (gameId ?? string.Empty) + "|src:" + source
                 : "global|src:" + source;

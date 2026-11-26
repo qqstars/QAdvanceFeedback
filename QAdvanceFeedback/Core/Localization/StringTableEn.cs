@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 
 namespace QAdvanceFeedback.Core.Localization
 {
@@ -178,6 +178,10 @@ namespace QAdvanceFeedback.Core.Localization
             ["Clutch.Readout.Car"] = "Car: {0}",
             ["Clutch.Readout.CarNone"] = "Car: none yet",
             ["Clutch.Forget"] = "Forget learned bite",
+            ["Calibration.Reset"] = "Reset calibration (this track and car)",
+            ["Calibration.Persist"] = "Persist Calibration data?",
+            ["Calibration.Persist.Note"] = "The slip / lock calibration (shared by Wheel Slip and Wheel Lock) is learned per game, track and car. On: saved and resumed at the next start. Off: learned for this session only - turning it off deletes every saved calibration at once. Reset deletes the current track and car's, e.g. after fitting a different wheel.",
+            ["Calibration.Reset.Note"] = "Deletes the learned slip / lock calibration of the current track and car - shared by Wheel Slip and Wheel Lock - e.g. after fitting a different wheel. It is learned again as you drive.",
             ["Clutch.Graph.Caption"] = "Clutch input -> Output",
             ["Clutch.Test.Header"] = "Test Effect",
             ["Clutch.Test.Label"] = "Test",
@@ -508,10 +512,22 @@ namespace QAdvanceFeedback.Core.Localization
             // drifts from the DLL actually shipped, the same lesson docs\curve-help-text-report.md
             // already drew for the curve editor's own help text).
             ["General.Version.Label"] = "QAdvanceFeedback version: {0}",
+            ["Update.Group"] = "VERSION UPDATE",
+            ["Update.Latest"] = " (latest)",
+            ["Update.NewVersion"] = " (new version: {0})",
+            ["Update.Check"] = "Check For Update",
+            ["Update.Checking"] = "Checking for updates...",
+            ["Update.Apply"] = "Update",
+            ["Update.Notice.Line1"] = "New version {0} detected.",
+            ["Update.Notice.Line2"] = "Please go to \"General Tab\" in the QAdvanceFeedback plugin to update.",
+            ["Update.Error.NoPackage"] = "The latest release has no Release_x.x.x.zip package.",
+            ["Update.Error.NoDll"] = "The latest release package holds no QAdvanceFeedback.dll.",
+            ["Update.Error.Check"] = "Update check failed: {0}",
+            ["Update.Error.Apply"] = "Update failed: {0}",
             ["General.ShakeItImport.Group"] = "ShakeIt Reference Data",
-            ["General.ShakeItImport.Note"] = "This plugin's Raw values reproduce SimHub's ShakeIt Motors arithmetic exactly. The one input it cannot ship is SimHub's own per-game calibration file, which SimHub is licensed to distribute and this plugin is not. Importing it from your SimHub installation makes the Raw values match ShakeIt's for every game that file covers. This runs automatically the first time the plugin starts with no calibration of its own, so you normally never need this button.",
+            ["General.ShakeItImport.Note"] = "This plugin's Raw values reproduce SimHub's ShakeIt Motors arithmetic exactly. The one input it cannot ship is SimHub's own per-game calibration file, which SimHub is licensed to distribute and this plugin is not. Every time the plugin starts it reads that file (all three: GameData, GameData_Custom, GameData_External) from your SimHub installation and updates its copy, so the Raw values match ShakeIt's for every game it covers.",
             ["General.ShakeItImport.Override"] = "Override current data if exists?",
-            ["General.ShakeItImport.Override.Note"] = "Off (default): where this plugin has already learned or imported a calibration for a game, that entry is kept and the imported one is skipped. On: the imported SimHub values replace this plugin's own for every matching entry. Leave it off unless you specifically want to discard what this plugin has learned and go back to SimHub's shipped numbers.",
+            ["General.ShakeItImport.Override.Note"] = "On (default): a game already in the plugin's copy takes SimHub's current values on every start, so no manual sync is needed (the button is hidden). Off: it is kept as it is, only games and values SimHub adds are imported, and the button below syncs now. A game SimHub no longer has is kept either way. Saved with Apply.",
             ["General.ShakeItImport.Button"] = "Convert SimHub ShakeIt Reference Data",
 
             // ---- Plugin health section (General tab) - invisible/one-line when nothing is wrong;

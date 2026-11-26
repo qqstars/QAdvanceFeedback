@@ -244,6 +244,23 @@
           <!-- KEY DATA POINTS (agent A2's view, bound to KeyDataPageViewModel). -->
           <v:WheelChannelKeyDataView DataContext="{Binding KeyData}"/>
 
+          <!-- CALIBRATION (owner, 2026-11-25): "Persist Calibration data?" (one switch shared by both tabs, applied at
+               once) and, right of it, Reset Calibration for the current track and car - shown only while that key has
+               data. -->
+          <StackPanel x:Name="CalibrationPanel" Margin="4,10,4,0">
+            <StackPanel Orientation="Horizontal">
+              <StackPanel DataContext="{Binding CalibrationPersist}" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="{v:Loc Calibration.Persist}" VerticalAlignment="Center"/>
+                <mah:ToggleSwitch IsChecked="{Binding IsOn, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="8,0,16,0"
+                                  VerticalAlignment="Center" OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
+              </StackPanel>
+              <Button x:Name="CalibrationResetPanel" DataContext="{Binding CalibrationReset}"
+                      Visibility="{Binding IsVisible, Mode=OneWay, Converter={StaticResource VisibleWhen}}"
+                      Content="{v:Loc Calibration.Reset}" Command="{Binding ResetCommand}" VerticalAlignment="Center" Padding="8,2"/>
+            </StackPanel>
+            <TextBlock Text="{v:Loc Calibration.Persist.Note}" TextWrapping="Wrap" Opacity="0.7" Margin="0,2,0,0"/>
+          </StackPanel>
+
           <!-- CUSTOM SOURCE COLD-START REFERENCE - under the key data points (owner, 2026-09-29): those are what
                the plugin LEARNED, these what it assumes until it has. Custom only. No Watermark: they can never
                read dashes (owner, 2026-09-29). -->

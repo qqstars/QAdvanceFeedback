@@ -132,15 +132,66 @@ namespace QAdvanceFeedback.Tests.Ui.Page
             GeneralViewModel vm = NewPage().GeneralTab;
             Assert.False(vm.ShowShakeItImportResult);   // Collapsed in the XAML until the first import
 
+            // Default ON (owner, 2026-11-25): the button takes SimHub's values for a game already held.
+            Assert.True(vm.ShakeItImportOverride);
             vm.ShakeItImportCommand.Execute(null);
-            Assert.Equal(new[] { false }, _host.Imports);
-            Assert.Equal("kept", vm.ShakeItImportResultText);
+            Assert.Equal(new[] { true }, _host.Imports);
+            Assert.Equal("replaced", vm.ShakeItImportResultText);
             Assert.True(vm.ShowShakeItImportResult);
 
-            vm.ShakeItImportOverride = true;
+            vm.ShakeItImportOverride = false;   // the value shown, applied or not
             vm.ShakeItImportCommand.Execute(null);
-            Assert.Equal(new[] { false, true }, _host.Imports);
-            Assert.Equal("replaced", vm.ShakeItImportResultText);
+            Assert.Equal(new[] { true, false }, _host.Imports);
+            Assert.Equal("kept", vm.ShakeItImportResultText);
+        }
+
+        [Fact]
+        public void The_manual_sync_button_shows_only_while_the_override_switch_is_off()
+        {
+            GeneralViewModel vm = NewPage().GeneralTab;
+            var changed = new System.Collections.Generic.List<string>();
+            vm.PropertyChanged += (s, e) => changed.Add(e.PropertyName);
+            Assert.True(vm.ShakeItImportOverride);
+            Assert.False(vm.ShowShakeItImportButton);   // on (default): every start syncs - no button
+
+            vm.ShakeItImportOverride = false;
+            Assert.True(vm.ShowShakeItImportButton);
+            Assert.Contains(nameof(GeneralViewModel.ShowShakeItImportButton), changed);
+
+            vm.ShakeItImportOverride = true;
+            Assert.False(vm.ShowShakeItImportButton);
+        }
+
+        [Fact]
+        public void An_outside_change_of_the_switch_updates_the_button_through_the_view_model()
+        {
+            SettingsPageViewModel page = NewPage();
+            GeneralViewModel vm = page.GeneralTab;
+            var changed = new System.Collections.Generic.List<string>();
+            vm.PropertyChanged += (s, e) => changed.Add(e.PropertyName);
+
+            _host.Settings.General.ShakeItImportOverride = false;   // e.g. a hand edit picked up live
+            page.Activate();                                        // the page adopts it into the draft
+
+            Assert.False(vm.ShakeItImportOverride);
+            Assert.True(vm.ShowShakeItImportButton);
+            Assert.Contains(changed, n => n == null || n == nameof(GeneralViewModel.ShowShakeItImportButton));
+        }
+
+        [Fact]
+        public void The_override_switch_is_a_setting_saved_with_Apply_and_reset_by_Restore_defaults()
+        {
+            SettingsPageViewModel page = NewPage();
+            Assert.True(_host.Settings.General.ShakeItImportOverride);   // shipped default
+            page.GeneralTab.ShakeItImportOverride = false;
+            Assert.True(page.IsDirty);
+            page.ApplyCommand.Execute(null);
+            Assert.False(_host.Settings.General.ShakeItImportOverride);
+            Assert.False(page.IsDirty);
+
+            page.RestoreDefaultsCommand.Execute(null);
+            Assert.True(page.GeneralTab.ShakeItImportOverride);
+            Assert.True(_host.Settings.General.ShakeItImportOverride);
         }
 
         [Fact]
@@ -159,29 +210,6 @@ namespace QAdvanceFeedback.Tests.Ui.Page
             _host.OnImport = o => new global::QAdvanceFeedback.ShakeItConversionOutcome { Message = "" };
             vm.ShakeItImportCommand.Execute(null);
             Assert.False(vm.ShowShakeItImportResult);
-        }
-
-        [Fact]
-        public void The_override_switch_is_not_a_setting_and_does_not_arm_Apply()
-        {
-            // RULING: the old dirty sweep armed Apply for ShakeItImportOverrideCheckBox (xaml.cs:1650-1660)
-            // although neither LoadFromSettings nor SaveToSettings ever touched it - Apply then had nothing
-            // to write. It is the import's own argument, held by the view model only.
-            SettingsPageViewModel page = NewPage();
-            string before = Newtonsoft.Json.JsonConvert.SerializeObject(page.Context.Settings);
-            page.GeneralTab.ShakeItImportOverride = true;
-            Assert.False(page.IsDirty);
-            Assert.Equal(before, Newtonsoft.Json.JsonConvert.SerializeObject(page.Context.Settings));
-        }
-
-        [Fact]
-        public void The_override_switch_survives_a_draft_reload()
-        {
-            SettingsPageViewModel page = NewPage();
-            page.GeneralTab.ShakeItImportOverride = true;
-            _host.Settings.General.ExportCsv = true;
-            page.Activate();
-            Assert.True(page.GeneralTab.ShakeItImportOverride);
         }
 
         [Fact]

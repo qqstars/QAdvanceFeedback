@@ -111,7 +111,7 @@ namespace QAdvanceFeedback.Tests
         private static string SourceSegment(string key)
         {
             string[] parts = key.Split(new[] { "|#|" }, StringSplitOptions.None);
-            return parts.Length > 2 ? parts[2] : string.Empty;
+            return parts.Length > 2 ? QAdvanceFeedback.Core.KeyRules.SourceKeys.FromKey(parts[2]) : string.Empty;
         }
 
         /// <summary>Every persisted family's entries for one source, plus its crossing counters and

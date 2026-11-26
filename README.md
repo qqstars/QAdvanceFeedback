@@ -575,11 +575,16 @@ short, practical guidance for the tabs most worth tuning.
 
 ![The General tab](docs/images/settings-general.png)
 
-The **ShakeIt Reference Data** section imports SimHub's own per-game calibration file so the Raw values
-match ShakeIt's for every game that file covers. It runs automatically the first time the plugin starts
-with no calibration of its own, and again after a SimHub update ships new data, so you normally never
-need the button. The automatic import never overwrites anything this plugin has already learned —
-only ticking **Override current data if exists?** and pressing the button does that.
+The **ShakeIt Reference Data** section is SimHub's own per-game calibration presets, which make the Raw values
+match ShakeIt's for every game they cover. Every time the plugin starts it reads all three of SimHub's preset files
+(`ShakeIt\ShakeItPrecalibration\GameData.json`, `GameData_Custom.json`, `GameData_External.json`) and updates its
+copy in the parameters file (1.2.2). A new game or value is always added, and a game SimHub no longer has is always
+kept. **Override current data if exists?** (on by default, saved with **Apply**) decides a game the copy already has:
+on, it takes SimHub's current values (a later file then wins for a game in more than one, as in SimHub); off, it is
+kept as it is. This copy holds SimHub's data only - what the plugin learns while you drive is kept separately
+(`SlipLockCalibration`) and is never touched by it. The button, shown only while the switch is off, does the same
+sync at once - for a SimHub update installed while the plugin is running; with the switch on, every start already takes
+SimHub's values.
 
 ### Wheel Lock and Wheel Slip
 
@@ -907,8 +912,6 @@ uncommitted edits into the running plugin.
   reporting an issue or comparing against these release notes — alongside the diagnostics/CSV export
   toggles and the plugin health panel. The health panel is read again each time you open the General
   tab, and at once if a button on the settings page fails.
-- **Override current data if exists?** only tells the import button what to do; it is not a setting, so
-  ticking it does not enable **Apply**.
 
 ---
 

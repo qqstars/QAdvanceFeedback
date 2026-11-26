@@ -298,7 +298,7 @@ namespace QAdvanceFeedback.Tests
             string json = JsonConvert.SerializeObject(doc);
             RuntimeDocument back = JsonConvert.DeserializeObject<RuntimeDocument>(json);
 
-            Assert.Equal(16, back.Version);
+            Assert.Equal(21, back.Version);
             var restarted = new KeyedScaleLearner();
             restarted.ImportAll(back.LockScaleLearners);
             restarted.ImportEvidence(back.LockScaleEvidence);

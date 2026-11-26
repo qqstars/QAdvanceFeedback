@@ -674,6 +674,27 @@ namespace QAdvanceFeedback.Core.SlipAngle
         }
 
         /// <summary>
+        /// A NEVER-FED KEY'S STATE (owner, 2026-11-25, parameters Version 19): what <see cref="Export"/> writes for a key of
+        /// <paramref name="sourceIdentity"/> that was created but never taught and borrows nothing - the shipped window,
+        /// Tier 1, no balance. The parameters file does not save a key whose state equals this (it is rebuilt the same way
+        /// when it is needed again: <see cref="ObserveOne"/> creates it from <see cref="ResolveFresh"/>).
+        /// </summary>
+        public static SlipAngleKeyState FreshState(string sourceIdentity)
+        {
+            var learner = new SlipAngleWindowLearner(SlipAngleWindow.ShippedDefault, SlipAngleWindowLearner.MaxCapDegFor(sourceIdentity));
+            SlipAngleWindow p = learner.Published.CappedAt(SlipAngleWindowLearner.MaxCapDegFor(sourceIdentity));
+            return new SlipAngleKeyState
+            {
+                Learner = learner.Export(),
+                PublishedMin = p.Min,
+                PublishedBest = p.Best,
+                PublishedMax = p.Max,
+                ColdTier = (int)ColdStartTier.Tier1,
+                Balance = null,
+            };
+        }
+
+        /// <summary>
         /// Replaces everything with <paramref name="states"/> (null: empty). Malformed keys and null states
         /// are skipped. Each key's persisted published window becomes its cold reference (w = 0); a
         /// confirmed key's is latched. A key without one (older state) uses its learner's window; an

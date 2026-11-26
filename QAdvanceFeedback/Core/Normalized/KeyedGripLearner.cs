@@ -93,9 +93,13 @@ namespace QAdvanceFeedback.Core.Normalized
         /// remarks). Defaults to empty for the SAME backward-compatibility reason as
         /// <paramref name="sourceIdentity"/> - every pre-existing caller/test keeps compiling and
         /// behaving exactly as before.</param>
+        /// <remarks>VERSION 21 (owner, 2026-11-25): the source part is stored HASHED - "21:&lt;number&gt;", see
+        /// <see cref="KeyRules.SourceKeys"/> (game, car and surface stay readable, for borrowing). Every learner key -
+        /// Lock / Slip, their scale, anchors and evidence, Clutch, Slip Angle - is built here, so this is the one place
+        /// the hash is applied; the parsers (<see cref="ColdStartTierResolver.TryParseKey"/>) turn it back.</remarks>
         public static string MakeKey(string gameId, string carId, string sourceIdentity = "", string surfaceBucket = "")
             => (gameId ?? string.Empty) + KeySeparator + (carId ?? string.Empty) + KeySeparator
-             + (sourceIdentity ?? string.Empty) + KeySeparator + (surfaceBucket ?? string.Empty);
+             + KeyRules.SourceKeys.ToKey(gameId, sourceIdentity) + KeySeparator + (surfaceBucket ?? string.Empty);
 
         /// <summary>The learned peak for this (gameId, carId, sourceIdentity, surfaceBucket), or
         /// <see cref="GripLearner.SeedPeakG"/> if nothing has been observed for it yet - never creates

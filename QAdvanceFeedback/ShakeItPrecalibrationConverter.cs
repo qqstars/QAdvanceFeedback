@@ -12,10 +12,10 @@ namespace QAdvanceFeedback
     {
         public bool SourceFound;
         public int FilesRead;
-        public int FilesSkippedUnchanged;
         public int GamesImported;
         public int MetricsImported;
         public int BoundsImported;
+        /// <summary>Entries kept because the plugin already held them and "Override current data if exists?" is off.</summary>
         public int MetricsSkippedBecauseOursExists;
 
         /// <summary>Metrics present in SimHub's file that nothing in this plugin consumes - see
@@ -25,8 +25,8 @@ namespace QAdvanceFeedback
     }
 
     /// <summary>
-    /// Everything imported from SimHub's shipped ShakeIt reference data, plus the timestamps that make a
-    /// re-import cheap. Passed in and mutated in place so all three live in one persisted document.
+    /// Everything imported from SimHub's shipped ShakeIt reference data. Passed in and mutated in place (UPSERT: an
+    /// entry SimHub no longer has is kept - owner, 2026-11-25).
     /// </summary>
     public sealed class ShakeItImportState
     {
@@ -35,10 +35,6 @@ namespace QAdvanceFeedback
 
         public Dictionary<string, GameCalibrationBounds> Bounds
             = new Dictionary<string, GameCalibrationBounds>(StringComparer.Ordinal);
-
-        /// <summary>Source file name to its last-write time in UTC ticks, so a start-up import can skip
-        /// files that have not changed since the last one.</summary>
-        public Dictionary<string, long> SourceTimestamps = new Dictionary<string, long>(StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -117,17 +113,14 @@ namespace QAdvanceFeedback
         }
 
         /// <summary>
-        /// Reads SimHub's files and merges them into <paramref name="state"/>.
+        /// SYNC WITH SIMHUB'S FILES (owner, 2026-11-25): reads ALL THREE files, in SimHub's order (base, Custom, External),
+        /// on every plugin start (and from the settings button) - no timestamp check. A new game or metric is always added;
+        /// one SimHub no longer has is always kept. <paramref name="overrideExisting"/> ("Override current data if
+        /// exists?", default on) decides one already held: TRUE takes SimHub's current values (a full upsert - a later file
+        /// then wins for the same game), FALSE keeps it (the first file to bring it wins). These sections hold only
+        /// SimHub's data - nothing in the plugin learns into them (what it learns is the slip / lock calibration).
         /// </summary>
-        /// <param name="overrideExisting">The settings checkbox. FALSE (and always so on the automatic
-        /// start-up import) leaves alone any entry this plugin already holds, so a driver's accumulated
-        /// data is never silently replaced. TRUE replaces ours for every matching key.</param>
-        /// <param name="onlyChangedFiles">TRUE on the automatic start-up import: a source file whose
-        /// last-write time matches the one recorded from the previous import is not even opened. This is
-        /// what makes running the import on EVERY launch cheap - a SimHub update that ships new games is
-        /// picked up automatically, while an unchanged installation costs three timestamp reads.</param>
-        public static ShakeItConversionOutcome Convert(
-            string rootDirectory, ShakeItImportState state, bool overrideExisting, bool onlyChangedFiles)
+        public static ShakeItConversionOutcome Convert(string rootDirectory, ShakeItImportState state, bool overrideExisting = true)
         {
             var outcome = new ShakeItConversionOutcome();
             if (state == null) state = new ShakeItImportState();
@@ -145,17 +138,6 @@ namespace QAdvanceFeedback
             foreach (string file in files)
             {
                 string fileKey = Path.GetFileName(file);
-                long stamp;
-                try { stamp = File.GetLastWriteTimeUtc(file).Ticks; }
-                catch { stamp = 0L; }
-
-                if (onlyChangedFiles && stamp != 0L
-                    && state.SourceTimestamps.TryGetValue(fileKey, out long previous) && previous == stamp)
-                {
-                    outcome.FilesSkippedUnchanged++;
-                    continue;
-                }
-
                 GamesCalibrationDto parsed;
                 try
                 {
@@ -163,14 +145,12 @@ namespace QAdvanceFeedback
                 }
                 catch (Exception e)
                 {
-                    // One malformed file must not abort the import of the others, and its timestamp is
-                    // deliberately NOT recorded - so a later fix to that file is picked up.
+                    // One malformed file must not abort the import of the others (it is read again next start).
                     report.AppendLine("Skipped " + fileKey + ": " + e.Message);
                     continue;
                 }
 
                 outcome.FilesRead++;
-                state.SourceTimestamps[fileKey] = stamp;
                 if (parsed?.Games == null) continue;
 
                 foreach (GameCalibrationDto game in parsed.Games)
@@ -197,16 +177,11 @@ namespace QAdvanceFeedback
 
         private static string BuildSummary(ShakeItConversionOutcome outcome)
         {
-            if (outcome.FilesRead == 0 && outcome.FilesSkippedUnchanged > 0)
-                return "SimHub reference data is already up to date (" + outcome.FilesSkippedUnchanged + " file(s) unchanged).";
-
-            return "Imported " + outcome.MetricsImported + " calibration metric(s) and " + outcome.BoundsImported
-                   + " game bound(s) across " + outcome.GamesImported + " game entr(y/ies) from "
-                   + outcome.FilesRead + " file(s)."
-                   + (outcome.FilesSkippedUnchanged > 0 ? " " + outcome.FilesSkippedUnchanged + " file(s) unchanged." : string.Empty)
+            return "Synced " + outcome.MetricsImported + " calibration metric(s) and " + outcome.BoundsImported
+                   + " game bound(s) from " + outcome.FilesRead + " file(s) (" + outcome.GamesImported + " new game entr(y/ies))."
                    + (outcome.MetricsSkippedBecauseOursExists > 0
                        ? " Kept " + outcome.MetricsSkippedBecauseOursExists
-                         + " existing entr(y/ies) - tick \"Override current data if exists?\" to replace them."
+                         + " existing entr(y/ies) - turn on \"Override current data if exists?\" to take SimHub's values."
                        : string.Empty)
                    + (outcome.MetricsIgnoredAsUnused > 0
                        ? " Ignored " + outcome.MetricsIgnoredAsUnused

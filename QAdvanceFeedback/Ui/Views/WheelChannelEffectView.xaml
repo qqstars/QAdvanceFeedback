@@ -22,110 +22,121 @@
     </Style>
   </UserControl.Resources>
 
-  <StackPanel Margin="0,0,0,6" v:LabelColumnSync.Group="{Binding Test}">
-    <!-- Source + output channels -->
-    <Grid Style="{StaticResource RowGrid}">
-      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-      <TextBlock Text="{v:Loc Sources.Mode.Label}" Style="{StaticResource RowLabel}"/>
-      <ComboBox v:EventCommand.DropDownOpened="{Binding RefreshSourcesCommand}" Grid.Column="1" MinWidth="220" HorizontalAlignment="Left"
-                ItemsSource="{Binding Sources}" DisplayMemberPath="Label" SelectedValuePath="Value"
-                SelectedValue="{Binding Source}" IsEnabled="{Binding SourceEnabled}"/>
-    </Grid>
-    <TextBlock Text="{Binding FallbackWarning}" Visibility="{Binding ShowFallbackWarning, Converter={StaticResource VisibleWhen}}"
-               TextWrapping="Wrap" FontWeight="Bold" Foreground="DarkOrange" Margin="0,0,0,6"/>
-    <!-- ShakeIt Built-in source state note (NotSetUp / NotSupported - docs\shakeit-source-design.md §4). -->
-    <TextBlock Text="{Binding ShakeItNote}" Visibility="{Binding ShowShakeItNote, Converter={StaticResource VisibleWhen}}"
-               TextWrapping="Wrap" FontWeight="Bold" Foreground="#FFCC4400" Margin="0,0,0,6"/>
-    <Grid Style="{StaticResource RowGrid}">
-      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-      <TextBlock Text="{v:Loc ShakeItPanel.Routing.Label}" Style="{StaticResource RowLabel}"/>
-      <ComboBox Grid.Column="1" MinWidth="220" HorizontalAlignment="Left"
-                ItemsSource="{Binding RoutingChoices}" DisplayMemberPath="Label" SelectedValuePath="Value"
-                SelectedValue="{Binding Routing}"/>
-    </Grid>
-
-    <!-- ShakeIt algorithm (docs\shakeit-source-design.md §6): only while the source is ShakeIt Built-in. -->
-    <StackPanel DataContext="{Binding Algorithm}" Margin="0,6,0,0"
-                Visibility="{Binding IsVisible, Converter={StaticResource VisibleWhen}}">
-      <TextBlock Text="{Binding Header}" FontWeight="Bold" Margin="0,0,0,4"/>
+  <!-- The new-version notice (owner, 2026-11-25, 1.3.0) above the panel - outside its IsEnabled. -->
+  <StackPanel>
+    <v:UpdateNoticeBar/>
+    <StackPanel Margin="0,0,0,6" v:LabelColumnSync.Group="{Binding Test}">
+      <!-- Source + output channels -->
       <Grid Style="{StaticResource RowGrid}">
         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <TextBlock Text="{Binding LegacyLabel}" Style="{StaticResource RowLabel}"/>
-        <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding UseLegacyIracingAlgorithm}" HorizontalAlignment="Left" VerticalAlignment="Center"
-                          OnLabel="{Binding OnLabel}" OffLabel="{Binding OffLabel}"/>
+        <TextBlock Text="{v:Loc Sources.Mode.Label}" Style="{StaticResource RowLabel}"/>
+        <ComboBox v:EventCommand.DropDownOpened="{Binding RefreshSourcesCommand}" Grid.Column="1" MinWidth="220" HorizontalAlignment="Left"
+                  ItemsSource="{Binding Sources}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                  SelectedValue="{Binding Source}" IsEnabled="{Binding SourceEnabled}"/>
       </Grid>
-      <Grid Style="{StaticResource RowGrid}" Visibility="{Binding IsLock, Converter={StaticResource VisibleWhen}}">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <TextBlock Text="{Binding SensibilityLabel}" Style="{StaticResource RowLabel}"/>
-        <c:NumericEditor Grid.Column="1" Value="{Binding LockSensibility}" Width="120" HorizontalAlignment="Left"
-                         Minimum="0" Maximum="100" Interval="5" StringFormat="0"/>
-      </Grid>
-      <Grid Style="{StaticResource RowGrid}" Visibility="{Binding IsLock, Converter={StaticResource VisibleWhen}}">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <TextBlock Text="{Binding LockOnlyLabel}" Style="{StaticResource RowLabel}"/>
-        <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding LockOnly}" HorizontalAlignment="Left" VerticalAlignment="Center"
-                          OnLabel="{Binding OnLabel}" OffLabel="{Binding OffLabel}"/>
-      </Grid>
-      <Grid Style="{StaticResource RowGrid}" Visibility="{Binding IsSlip, Converter={StaticResource VisibleWhen}}">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <TextBlock Text="{Binding MuteLabel}" Style="{StaticResource RowLabel}"/>
-        <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding MuteWhileLockActive}" HorizontalAlignment="Left" VerticalAlignment="Center"
-                          OnLabel="{Binding OnLabel}" OffLabel="{Binding OffLabel}"/>
-      </Grid>
-      <TextBlock Text="{Binding Note}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,2"/>
-    </StackPanel>
-
-    <!-- Key data points -->
-    <StackPanel DataContext="{Binding KeyData}" Margin="0,6,0,0" IsEnabled="{Binding Available}">
-      <TextBlock Text="{Binding Header}" FontWeight="Bold" Margin="0,0,0,4"/>
+      <TextBlock Text="{Binding FallbackWarning}" Visibility="{Binding ShowFallbackWarning, Converter={StaticResource VisibleWhen}}"
+                 TextWrapping="Wrap" FontWeight="Bold" Foreground="DarkOrange" Margin="0,0,0,6"/>
+      <!-- ShakeIt Built-in source state note (NotSetUp / NotSupported - docs\shakeit-source-design.md §4). -->
+      <TextBlock Text="{Binding ShakeItNote}" Visibility="{Binding ShowShakeItNote, Converter={StaticResource VisibleWhen}}"
+                 TextWrapping="Wrap" FontWeight="Bold" Foreground="#FFCC4400" Margin="0,0,0,6"/>
       <Grid Style="{StaticResource RowGrid}">
         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <TextBlock Text="{v:Loc Curve.NormalizePattern.Label}" Style="{StaticResource RowLabel}"/>
+        <TextBlock Text="{v:Loc ShakeItPanel.Routing.Label}" Style="{StaticResource RowLabel}"/>
         <ComboBox Grid.Column="1" MinWidth="220" HorizontalAlignment="Left"
-                  ItemsSource="{Binding PatternChoices}" DisplayMemberPath="Label" SelectedValuePath="Value"
-                  SelectedValue="{Binding Pattern}"/>
+                  ItemsSource="{Binding RoutingChoices}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                  SelectedValue="{Binding Routing}"/>
       </Grid>
-      <Grid Style="{StaticResource RowGrid}">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <TextBlock Text="{v:Loc KeyData.AutoGenerate.Label}" Style="{StaticResource RowLabel}"/>
-        <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding Auto}" HorizontalAlignment="Left" VerticalAlignment="Center"
-                          OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
-      </Grid>
-      <Grid Style="{StaticResource RowGrid}">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <TextBlock Text="{Binding SMaxLabel}" Style="{StaticResource RowLabel}"/>
-        <!-- Learning indicator RIGHT of the box (owner): Auto only, collapsed (no space) under Manual. -->
-        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
-          <c:NumericEditor Value="{Binding SMax}" IsEnabled="{Binding ValuesEditable}" Width="120"
-                           Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" Watermark="---"/>
-          <v:LearningLed DataContext="{Binding SMaxIndicator}" Margin="6,0,0,0"/>
-        </StackPanel>
-      </Grid>
-      <Grid Style="{StaticResource RowGrid}" Visibility="{Binding ShowLowerAnchors, Converter={StaticResource VisibleWhen}}">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <TextBlock Text="{Binding S90Label}" Style="{StaticResource RowLabel}"/>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
-          <c:NumericEditor Value="{Binding S90}" IsEnabled="{Binding ValuesEditable}" Width="120"
-                           Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" Watermark="---"/>
-          <v:LearningLed DataContext="{Binding S90Indicator}" Margin="6,0,0,0"/>
-        </StackPanel>
-      </Grid>
-      <Grid Style="{StaticResource RowGrid}" Visibility="{Binding ShowLowerAnchors, Converter={StaticResource VisibleWhen}}">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <TextBlock Text="{Binding S75Label}" Style="{StaticResource RowLabel}"/>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
-          <c:NumericEditor Value="{Binding S75}" IsEnabled="{Binding ValuesEditable}" Width="120"
-                           Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" Watermark="---"/>
-          <v:LearningLed DataContext="{Binding S75Indicator}" Margin="6,0,0,0"/>
-        </StackPanel>
-      </Grid>
-      <TextBlock Text="{Binding Status}" Visibility="{Binding ShowStatus, Converter={StaticResource VisibleWhen}}"
-                 TextWrapping="Wrap" Opacity="0.7" Margin="0,2,0,0"/>
+
+      <!-- ShakeIt algorithm (docs\shakeit-source-design.md §6): only while the source is ShakeIt Built-in. -->
+      <StackPanel DataContext="{Binding Algorithm}" Margin="0,6,0,0"
+                  Visibility="{Binding IsVisible, Converter={StaticResource VisibleWhen}}">
+        <TextBlock Text="{Binding Header}" FontWeight="Bold" Margin="0,0,0,4"/>
+        <Grid Style="{StaticResource RowGrid}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{Binding LegacyLabel}" Style="{StaticResource RowLabel}"/>
+          <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding UseLegacyIracingAlgorithm}" HorizontalAlignment="Left" VerticalAlignment="Center"
+                            OnLabel="{Binding OnLabel}" OffLabel="{Binding OffLabel}"/>
+        </Grid>
+        <Grid Style="{StaticResource RowGrid}" Visibility="{Binding IsLock, Converter={StaticResource VisibleWhen}}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{Binding SensibilityLabel}" Style="{StaticResource RowLabel}"/>
+          <c:NumericEditor Grid.Column="1" Value="{Binding LockSensibility}" Width="120" HorizontalAlignment="Left"
+                           Minimum="0" Maximum="100" Interval="5" StringFormat="0"/>
+        </Grid>
+        <Grid Style="{StaticResource RowGrid}" Visibility="{Binding IsLock, Converter={StaticResource VisibleWhen}}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{Binding LockOnlyLabel}" Style="{StaticResource RowLabel}"/>
+          <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding LockOnly}" HorizontalAlignment="Left" VerticalAlignment="Center"
+                            OnLabel="{Binding OnLabel}" OffLabel="{Binding OffLabel}"/>
+        </Grid>
+        <Grid Style="{StaticResource RowGrid}" Visibility="{Binding IsSlip, Converter={StaticResource VisibleWhen}}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{Binding MuteLabel}" Style="{StaticResource RowLabel}"/>
+          <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding MuteWhileLockActive}" HorizontalAlignment="Left" VerticalAlignment="Center"
+                            OnLabel="{Binding OnLabel}" OffLabel="{Binding OffLabel}"/>
+        </Grid>
+        <TextBlock Text="{Binding Note}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,2"/>
+      </StackPanel>
+
+      <!-- Key data points -->
+      <StackPanel DataContext="{Binding KeyData}" Margin="0,6,0,0" IsEnabled="{Binding Available}">
+        <TextBlock Text="{Binding Header}" FontWeight="Bold" Margin="0,0,0,4"/>
+        <Grid Style="{StaticResource RowGrid}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{v:Loc Curve.NormalizePattern.Label}" Style="{StaticResource RowLabel}"/>
+          <ComboBox Grid.Column="1" MinWidth="220" HorizontalAlignment="Left"
+                    ItemsSource="{Binding PatternChoices}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                    SelectedValue="{Binding Pattern}"/>
+        </Grid>
+        <Grid Style="{StaticResource RowGrid}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{v:Loc KeyData.AutoGenerate.Label}" Style="{StaticResource RowLabel}"/>
+          <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding Auto}" HorizontalAlignment="Left" VerticalAlignment="Center"
+                            OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
+        </Grid>
+        <Grid Style="{StaticResource RowGrid}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{Binding SMaxLabel}" Style="{StaticResource RowLabel}"/>
+          <!-- Learning indicator RIGHT of the box (owner): Auto only, collapsed (no space) under Manual. -->
+          <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
+            <c:NumericEditor Value="{Binding SMax}" IsEnabled="{Binding ValuesEditable}" Width="120"
+                             Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" Watermark="---"/>
+            <v:LearningLed DataContext="{Binding SMaxIndicator}" Margin="6,0,0,0"/>
+          </StackPanel>
+        </Grid>
+        <Grid Style="{StaticResource RowGrid}" Visibility="{Binding ShowLowerAnchors, Converter={StaticResource VisibleWhen}}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{Binding S90Label}" Style="{StaticResource RowLabel}"/>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
+            <c:NumericEditor Value="{Binding S90}" IsEnabled="{Binding ValuesEditable}" Width="120"
+                             Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" Watermark="---"/>
+            <v:LearningLed DataContext="{Binding S90Indicator}" Margin="6,0,0,0"/>
+          </StackPanel>
+        </Grid>
+        <Grid Style="{StaticResource RowGrid}" Visibility="{Binding ShowLowerAnchors, Converter={StaticResource VisibleWhen}}">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <TextBlock Text="{Binding S75Label}" Style="{StaticResource RowLabel}"/>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left">
+            <c:NumericEditor Value="{Binding S75}" IsEnabled="{Binding ValuesEditable}" Width="120"
+                             Minimum="0" Maximum="100" Interval="0.5" StringFormat="0.0" Watermark="---"/>
+            <v:LearningLed DataContext="{Binding S75Indicator}" Margin="6,0,0,0"/>
+          </StackPanel>
+        </Grid>
+        <TextBlock Text="{Binding Status}" Visibility="{Binding ShowStatus, Converter={StaticResource VisibleWhen}}"
+                   TextWrapping="Wrap" Opacity="0.7" Margin="0,2,0,0"/>
+      </StackPanel>
+
+      <!-- Reset Calibration (owner, 2026-11-25): shown only while the current track and car have calibration data. -->
+      <StackPanel DataContext="{Binding CalibrationReset}" Margin="0,8,0,0"
+                  Visibility="{Binding IsVisible, Mode=OneWay, Converter={StaticResource VisibleWhen}}">
+        <Button Content="{v:Loc Calibration.Reset}" Command="{Binding ResetCommand}" HorizontalAlignment="Left" Padding="8,2"/>
+        <TextBlock Text="{v:Loc Calibration.Reset.Note}" TextWrapping="Wrap" Opacity="0.7" Margin="0,2,0,0"/>
+      </StackPanel>
+
+      <TextBlock Text="{v:Loc ShakeItPanel.SharedNote}" TextWrapping="Wrap" Opacity="0.7" Margin="0,4,0,0"/>
+      <TextBlock Text="{Binding Status}" Visibility="{Binding Status, Converter={StaticResource VisibleWhen}}"
+                 TextWrapping="Wrap" Opacity="0.7" Margin="0,4,0,0"/>
+
     </StackPanel>
-
-    <TextBlock Text="{v:Loc ShakeItPanel.SharedNote}" TextWrapping="Wrap" Opacity="0.7" Margin="0,4,0,0"/>
-    <TextBlock Text="{Binding Status}" Visibility="{Binding Status, Converter={StaticResource VisibleWhen}}"
-               TextWrapping="Wrap" Opacity="0.7" Margin="0,4,0,0"/>
-
   </StackPanel>
 </UserControl>

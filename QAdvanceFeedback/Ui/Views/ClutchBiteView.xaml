@@ -116,129 +116,133 @@
     </DataTemplate>
   </UserControl.Resources>
 
-  <StackPanel Margin="0,0,0,6">
-    <HeaderedContentControl Header="{v:Loc Clutch.Header}" Style="{StaticResource Section}">
-      <StackPanel IsEnabled="{Binding Available}">
-        <TextBlock Text="{v:Loc Clutch.Note}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,8" MaxWidth="560" HorizontalAlignment="Left"/>
-        <Grid Style="{StaticResource RowGrid}">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <TextBlock Text="{v:Loc Clutch.Apply.Label}" Style="{StaticResource RowLabel}"/>
-          <ComboBox Grid.Column="1" MinWidth="220" HorizontalAlignment="Left"
-                    ItemsSource="{Binding ApplyChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Apply}"/>
-        </Grid>
-        <Grid Style="{StaticResource RowGrid}">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <TextBlock Text="{v:Loc Clutch.Mode.Label}" Style="{StaticResource RowLabel}"/>
-          <ComboBox Grid.Column="1" MinWidth="220" HorizontalAlignment="Left"
-                    ItemsSource="{Binding ModeChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Mode}"/>
-        </Grid>
-        <Grid Style="{StaticResource RowGrid}">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <TextBlock Text="{v:Loc Clutch.BitePoint.Label}" Style="{StaticResource RowLabel}"/>
-          <c:NumericEditor Grid.Column="1" Value="{Binding BitePoint, TargetNullValue=50}" Width="120" HorizontalAlignment="Left" Margin="0"
-                           Minimum="10" Maximum="90" Interval="1" StringFormat="0.0"/>
-        </Grid>
-        <Grid Style="{StaticResource RowGrid}">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <TextBlock Text="{v:Loc Clutch.FadedRange.Label}" Style="{StaticResource RowLabel}"/>
-          <c:NumericEditor Grid.Column="1" Value="{Binding FadedRange, TargetNullValue=30}" Width="120" HorizontalAlignment="Left" Margin="0"
-                           Minimum="1" Maximum="50" Interval="1" StringFormat="0.0"/>
-        </Grid>
-        <Grid Style="{StaticResource RowGrid}">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <TextBlock Text="{v:Loc Clutch.Gamma.Label}" Style="{StaticResource RowLabel}"/>
-          <c:NumericEditor Grid.Column="1" Value="{Binding Gamma, TargetNullValue=2.5}" Width="120" HorizontalAlignment="Left" Margin="0"
-                           Minimum="1" Maximum="6" Interval="0.1" StringFormat="0.0"/>
-        </Grid>
-      </StackPanel>
-    </HeaderedContentControl>
+  <!-- The new-version notice (owner, 2026-11-25, 1.3.0) above the panel - outside its IsEnabled. -->
+  <StackPanel>
+    <v:UpdateNoticeBar/>
+    <StackPanel Margin="0,0,0,6">
+      <HeaderedContentControl Header="{v:Loc Clutch.Header}" Style="{StaticResource Section}">
+        <StackPanel IsEnabled="{Binding Available}">
+          <TextBlock Text="{v:Loc Clutch.Note}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,8" MaxWidth="560" HorizontalAlignment="Left"/>
+          <Grid Style="{StaticResource RowGrid}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Text="{v:Loc Clutch.Apply.Label}" Style="{StaticResource RowLabel}"/>
+            <ComboBox Grid.Column="1" MinWidth="220" HorizontalAlignment="Left"
+                      ItemsSource="{Binding ApplyChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Apply}"/>
+          </Grid>
+          <Grid Style="{StaticResource RowGrid}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Text="{v:Loc Clutch.Mode.Label}" Style="{StaticResource RowLabel}"/>
+            <ComboBox Grid.Column="1" MinWidth="220" HorizontalAlignment="Left"
+                      ItemsSource="{Binding ModeChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Mode}"/>
+          </Grid>
+          <Grid Style="{StaticResource RowGrid}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Text="{v:Loc Clutch.BitePoint.Label}" Style="{StaticResource RowLabel}"/>
+            <c:NumericEditor Grid.Column="1" Value="{Binding BitePoint, TargetNullValue=50}" Width="120" HorizontalAlignment="Left" Margin="0"
+                             Minimum="10" Maximum="90" Interval="1" StringFormat="0.0"/>
+          </Grid>
+          <Grid Style="{StaticResource RowGrid}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Text="{v:Loc Clutch.FadedRange.Label}" Style="{StaticResource RowLabel}"/>
+            <c:NumericEditor Grid.Column="1" Value="{Binding FadedRange, TargetNullValue=30}" Width="120" HorizontalAlignment="Left" Margin="0"
+                             Minimum="1" Maximum="50" Interval="1" StringFormat="0.0"/>
+          </Grid>
+          <Grid Style="{StaticResource RowGrid}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Text="{v:Loc Clutch.Gamma.Label}" Style="{StaticResource RowLabel}"/>
+            <c:NumericEditor Grid.Column="1" Value="{Binding Gamma, TargetNullValue=2.5}" Width="120" HorizontalAlignment="Left" Margin="0"
+                             Minimum="1" Maximum="6" Interval="0.1" StringFormat="0.0"/>
+          </Grid>
+        </StackPanel>
+      </HeaderedContentControl>
 
-    <HeaderedContentControl Header="{v:Loc Clutch.Group.Axis}" Style="{StaticResource PageSection}">
-      <StackPanel IsEnabled="{Binding Available}">
-        <Grid Style="{StaticResource RowGrid}">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <TextBlock Text="{v:Loc Clutch.Axis.Label}" Style="{StaticResource RowLabel}"/>
-          <StackPanel Grid.Column="1" Orientation="Horizontal">
-            <ComboBox MinWidth="220" HorizontalAlignment="Left"
-                      ItemsSource="{Binding AxisChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding FallbackAxis}"/>
-            <Button Content="{v:Loc Clutch.Detect.Button}" Command="{Binding DetectAxisCommand}" Margin="8,0,0,0" Padding="8,2"/>
-          </StackPanel>
-        </Grid>
-        <Grid Style="{StaticResource RowGrid}" Visibility="{Binding DetectText, Converter={StaticResource VisibleWhen}}">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <TextBlock Grid.Column="1" Text="{Binding DetectText}" TextWrapping="Wrap" FontStyle="Italic"/>
-        </Grid>
-        <Grid Style="{StaticResource RowGrid}">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <TextBlock Text="{v:Loc Clutch.Axis.Invert}" Style="{StaticResource RowLabel}"/>
-          <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding InvertAxis}" HorizontalAlignment="Left" VerticalAlignment="Center"
-                            OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
-        </Grid>
-        <!-- Auto only (owner). -->
-        <TextBlock Text="{v:Loc Clutch.Axis.Note}" TextWrapping="Wrap" Opacity="0.7"
-                   Visibility="{Binding IsAuto, Converter={StaticResource VisibleWhen}}"/>
-      </StackPanel>
-    </HeaderedContentControl>
+      <HeaderedContentControl Header="{v:Loc Clutch.Group.Axis}" Style="{StaticResource PageSection}">
+        <StackPanel IsEnabled="{Binding Available}">
+          <Grid Style="{StaticResource RowGrid}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Text="{v:Loc Clutch.Axis.Label}" Style="{StaticResource RowLabel}"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+              <ComboBox MinWidth="220" HorizontalAlignment="Left"
+                        ItemsSource="{Binding AxisChoices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding FallbackAxis}"/>
+              <Button Content="{v:Loc Clutch.Detect.Button}" Command="{Binding DetectAxisCommand}" Margin="8,0,0,0" Padding="8,2"/>
+            </StackPanel>
+          </Grid>
+          <Grid Style="{StaticResource RowGrid}" Visibility="{Binding DetectText, Converter={StaticResource VisibleWhen}}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="1" Text="{Binding DetectText}" TextWrapping="Wrap" FontStyle="Italic"/>
+          </Grid>
+          <Grid Style="{StaticResource RowGrid}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Text="{v:Loc Clutch.Axis.Invert}" Style="{StaticResource RowLabel}"/>
+            <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding InvertAxis}" HorizontalAlignment="Left" VerticalAlignment="Center"
+                              OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
+          </Grid>
+          <!-- Auto only (owner). -->
+          <TextBlock Text="{v:Loc Clutch.Axis.Note}" TextWrapping="Wrap" Opacity="0.7"
+                     Visibility="{Binding IsAuto, Converter={StaticResource VisibleWhen}}"/>
+        </StackPanel>
+      </HeaderedContentControl>
 
-    <!-- Auto only (owner): the learning readout, and on the plugin page the learning parameters. -->
-    <HeaderedContentControl Header="{v:Loc Clutch.Learning.Header}" Style="{StaticResource PageSection}"
-                            Visibility="{Binding IsAuto, Converter={StaticResource VisibleWhen}}">
-      <StackPanel IsEnabled="{Binding Available}">
-        <!-- Readout: the same pattern as the Lock/Slip key data under Auto. -->
-        <Grid Style="{StaticResource RowGrid}">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <StackPanel Grid.Column="1">
-            <TextBlock Text="{Binding FinalText}" FontWeight="Bold"/>
-            <TextBlock Text="{Binding LearnedText}"/>
-            <TextBlock Text="{Binding SamplesText}"/>
-            <TextBlock Text="{Binding CarText}" Opacity="0.8"/>
-            <TextBlock Text="{Binding SourceText}" Opacity="0.8"/>
-            <Button Content="{v:Loc Clutch.Forget}" Command="{Binding ForgetCommand}" HorizontalAlignment="Left" Margin="0,4,0,0" Padding="8,2"/>
-          </StackPanel>
-        </Grid>
-        <!-- Learning parameters: plugin page only. LearningSection is null in the ShakeIt panel, so no
-             template applies and these rows are never created there (a ContentTemplate would render
-             even for null content, and hidden rows still widen the shared "Label" column). The rows
-             are the typed ClutchLearningViewModel template in the resources. -->
-        <ContentControl Content="{Binding LearningSection}" Focusable="False"/>
-      </StackPanel>
-    </HeaderedContentControl>
+      <!-- Auto only (owner): the learning readout, and on the plugin page the learning parameters. -->
+      <HeaderedContentControl Header="{v:Loc Clutch.Learning.Header}" Style="{StaticResource PageSection}"
+                              Visibility="{Binding IsAuto, Converter={StaticResource VisibleWhen}}">
+        <StackPanel IsEnabled="{Binding Available}">
+          <!-- Readout: the same pattern as the Lock/Slip key data under Auto. -->
+          <Grid Style="{StaticResource RowGrid}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="1">
+              <TextBlock Text="{Binding FinalText}" FontWeight="Bold"/>
+              <TextBlock Text="{Binding LearnedText}"/>
+              <TextBlock Text="{Binding SamplesText}"/>
+              <TextBlock Text="{Binding CarText}" Opacity="0.8"/>
+              <TextBlock Text="{Binding SourceText}" Opacity="0.8"/>
+              <Button Content="{v:Loc Clutch.Forget}" Command="{Binding ForgetCommand}" HorizontalAlignment="Left" Margin="0,4,0,0" Padding="8,2"/>
+            </StackPanel>
+          </Grid>
+          <!-- Learning parameters: plugin page only. LearningSection is null in the ShakeIt panel, so no
+               template applies and these rows are never created there (a ContentTemplate would render
+               even for null content, and hidden rows still widen the shared "Label" column). The rows
+               are the typed ClutchLearningViewModel template in the resources. -->
+          <ContentControl Content="{Binding LearningSection}" Focusable="False"/>
+        </StackPanel>
+      </HeaderedContentControl>
 
-    <HeaderedContentControl Header="{v:Loc Clutch.Group.Graph}" Style="{StaticResource PageSection}">
-      <StackPanel HorizontalAlignment="Left">
-        <Border BorderBrush="Gray" BorderThickness="1" HorizontalAlignment="Left">
-          <v:ClutchGraph Curve="{Binding Graph.Curve}" BiteMarker="{Binding Graph.BiteMarker}"
-                         ConfiguredMarker="{Binding Graph.ConfiguredMarker}" TestBall="{Binding Graph.TestBall}"/>
-        </Border>
-        <TextBlock Text="{v:Loc Clutch.Graph.Caption}" FontStyle="Italic" HorizontalAlignment="Center" Margin="0,2,0,0"/>
-      </StackPanel>
-    </HeaderedContentControl>
+      <HeaderedContentControl Header="{v:Loc Clutch.Group.Graph}" Style="{StaticResource PageSection}">
+        <StackPanel HorizontalAlignment="Left">
+          <Border BorderBrush="Gray" BorderThickness="1" HorizontalAlignment="Left">
+            <v:ClutchGraph Curve="{Binding Graph.Curve}" BiteMarker="{Binding Graph.BiteMarker}"
+                           ConfiguredMarker="{Binding Graph.ConfiguredMarker}" TestBall="{Binding Graph.TestBall}"/>
+          </Border>
+          <TextBlock Text="{v:Loc Clutch.Graph.Caption}" FontStyle="Italic" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+        </StackPanel>
+      </HeaderedContentControl>
 
-    <HeaderedContentControl Header="{v:Loc Clutch.Test.Header}" Style="{StaticResource Section}" DataContext="{Binding Test}">
-      <StackPanel>
-        <Grid Style="{StaticResource RowGrid}">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <TextBlock Text="{v:Loc Clutch.Test.Label}" Style="{StaticResource RowLabel}"/>
-          <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding IsTestEnabled}" HorizontalAlignment="Left" VerticalAlignment="Center"
-                            OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
-        </Grid>
-        <!-- Inputs and note only while the test is on (owner). With a readable pedal the slider follows it. -->
-        <Grid Style="{StaticResource RowGrid}" Visibility="{Binding IsTestEnabled, Converter={StaticResource VisibleWhen}}">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="220"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <TextBlock Text="{v:Loc Clutch.Test.Slider}" Style="{StaticResource RowLabel}"/>
-          <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding Slider}" IsEnabled="{Binding UseSlider}" VerticalAlignment="Center"/>
-          <TextBlock Grid.Column="2" Text="{Binding Slider, StringFormat={}{0:0}}" Width="32" TextAlignment="Right" VerticalAlignment="Center"/>
-        </Grid>
-        <Grid Style="{StaticResource RowGrid}" Visibility="{Binding IsTestEnabled, Converter={StaticResource VisibleWhen}}">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <StackPanel Grid.Column="1" Orientation="Horizontal">
-            <TextBlock Text="{Binding InputText}" FontFamily="Consolas" Margin="0,0,16,0"/>
-            <TextBlock Text="{Binding OutputText}" FontFamily="Consolas"/>
-          </StackPanel>
-        </Grid>
-        <TextBlock Text="{v:Loc Clutch.Test.Note}" TextWrapping="Wrap" Opacity="0.7"
-                   Visibility="{Binding IsTestEnabled, Converter={StaticResource VisibleWhen}}"/>
-      </StackPanel>
-    </HeaderedContentControl>
+      <HeaderedContentControl Header="{v:Loc Clutch.Test.Header}" Style="{StaticResource Section}" DataContext="{Binding Test}">
+        <StackPanel>
+          <Grid Style="{StaticResource RowGrid}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <TextBlock Text="{v:Loc Clutch.Test.Label}" Style="{StaticResource RowLabel}"/>
+            <mah:ToggleSwitch Grid.Column="1" IsChecked="{Binding IsTestEnabled}" HorizontalAlignment="Left" VerticalAlignment="Center"
+                              OnLabel="{v:Loc GForce.Shake.On}" OffLabel="{v:Loc GForce.Shake.Off}"/>
+          </Grid>
+          <!-- Inputs and note only while the test is on (owner). With a readable pedal the slider follows it. -->
+          <Grid Style="{StaticResource RowGrid}" Visibility="{Binding IsTestEnabled, Converter={StaticResource VisibleWhen}}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="220"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock Text="{v:Loc Clutch.Test.Slider}" Style="{StaticResource RowLabel}"/>
+            <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding Slider}" IsEnabled="{Binding UseSlider}" VerticalAlignment="Center"/>
+            <TextBlock Grid.Column="2" Text="{Binding Slider, StringFormat={}{0:0}}" Width="32" TextAlignment="Right" VerticalAlignment="Center"/>
+          </Grid>
+          <Grid Style="{StaticResource RowGrid}" Visibility="{Binding IsTestEnabled, Converter={StaticResource VisibleWhen}}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" SharedSizeGroup="Label"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+              <TextBlock Text="{Binding InputText}" FontFamily="Consolas" Margin="0,0,16,0"/>
+              <TextBlock Text="{Binding OutputText}" FontFamily="Consolas"/>
+            </StackPanel>
+          </Grid>
+          <TextBlock Text="{v:Loc Clutch.Test.Note}" TextWrapping="Wrap" Opacity="0.7"
+                     Visibility="{Binding IsTestEnabled, Converter={StaticResource VisibleWhen}}"/>
+        </StackPanel>
+      </HeaderedContentControl>
+    </StackPanel>
   </StackPanel>
 </UserControl>
