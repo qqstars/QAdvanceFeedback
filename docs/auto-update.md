@@ -8,11 +8,9 @@ Owner request, 2026-11-25. The design is modelled on the AZOM plugin's updater.
   a new background thread at below-normal priority. Nothing waits for it, and one check never runs twice at once.
 - **Steps:**
   1. Read `https://api.github.com/repos/qqstars/QAdvanceFeedback/releases/latest`.
-  2. Take the release's package (see Releases below): a zipped package first, otherwise the bare `QAdvanceFeedback.dll`.
-     Only https URLs on GitHub's hosts are used.
-  3. Download it, delete `%TEMP%\QAdvanceFeedbackLatest`, and create it again. A zip is unpacked into it (an entry that
-     would land outside the folder is refused); a bare DLL is put in as `QAdvanceFeedback.dll`. The asset's name is kept
-     in `_package.txt` there, for the notice.
+  2. Take the release's zipped package (see Releases below). Only https URLs on GitHub's hosts are used.
+  3. Download it, delete `%TEMP%\QAdvanceFeedbackLatest`, and create it again. The zip is unpacked into it (an entry
+     that would land outside the folder is refused). The asset's name is kept in `_package.txt` there, for the notice.
   4. The package may hold other files. The `QAdvanceFeedback.dll` found at any depth is the one compared.
 - **Comparison:** the DLL's file version is compared with the running DLL's. Any difference, larger or smaller, is a
   new version. `1.3.0` and `1.3.0.0` are the same version.
@@ -58,12 +56,14 @@ next start deletes both (`PluginUpdater.DeleteLeftovers`).
 
 A release carries the plugin as one of these assets (owner, 2026-11-25), case ignored:
 - `Release_x.x.x.zip` or `Release_x.x.x.x.zip`;
-- `QAdvanceFeedback_x.x.x.zip` or `QAdvanceFeedback_x.x.x.x.zip`;
-- `QAdvanceFeedback.dll` itself.
+- `QAdvanceFeedback_x.x.x.zip` or `QAdvanceFeedback_x.x.x.x.zip`.
+
+A bare `QAdvanceFeedback.dll` asset is never downloaded (owner, 2026-11-25): Windows Defender reports a downloaded DLL as
+a virus.
 
 The `_` may be a space. A dot is accepted there too, because GitHub renames a space in an uploaded asset's name to a dot
-(`Release 1.3.0.zip` is published as `Release.1.3.0.zip`). A zip is used before the bare DLL; within each, the
-release's own order decides. The existing `release-1.2.1` (asset `QAdvanceFeedback_1.2.1.zip`) is therefore picked up.
+(`Release 1.3.0.zip` is published as `Release.1.3.0.zip`). If a release has several zips, the release's own order
+decides. The existing `release-1.2.1` (asset `QAdvanceFeedback_1.2.1.zip`) is therefore picked up.
 
 ## Code and tests
 

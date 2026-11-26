@@ -521,7 +521,7 @@ namespace QAdvanceFeedback.Core.Localization
             ["Update.Notice.Line1"] = "New version {0} detected.",
             ["Update.Notice.Line1.Package"] = "New version {0} detected ({1}).",
             ["Update.Notice.Line2"] = "Please go to \"General Tab\" in the QAdvanceFeedback plugin to update.",
-            ["Update.Error.NoPackage"] = "The latest release has no package (Release_x.x.x.zip, QAdvanceFeedback_x.x.x.zip or QAdvanceFeedback.dll).",
+            ["Update.Error.NoPackage"] = "The latest release has no package (Release_x.x.x.zip or QAdvanceFeedback_x.x.x.zip).",
             ["Update.Error.NoDll"] = "The latest release package holds no QAdvanceFeedback.dll.",
             ["Update.Error.Check"] = "Update check failed: {0}",
             ["Update.Error.Apply"] = "Update failed: {0}",

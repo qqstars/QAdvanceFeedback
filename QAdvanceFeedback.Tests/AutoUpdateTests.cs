@@ -99,23 +99,24 @@ namespace QAdvanceFeedback.Tests
             {
                 "Release_1.3.0.zip", "release_1.3.0.1.ZIP", "Release 1.3.0.zip", "Release.1.3.0.zip",
                 "QAdvanceFeedback_1.2.1.zip", "qadvancefeedback 1.3.0.0.zip", "QAdvanceFeedback.1.3.0.zip",
-                "QAdvanceFeedback.dll", "qadvancefeedback.DLL",
             })
                 Assert.True(PluginUpdater.IsReleasePackage(ok), ok);
             foreach (string no in new[]
             {
                 "Source code.zip", "Release_notes.txt", "Release_1.3.zip", "Release_1.3.0.0.0.zip", "Release-1.3.0.zip",
                 "QAdvanceFeedback_1.3.0.rar", "QAdvanceFeedback.Tests.dll", null,
+                // Never the bare DLL (owner: Windows Defender reports a downloaded DLL as a virus).
+                "QAdvanceFeedback.dll", "qadvancefeedback.DLL",
             })
                 Assert.False(PluginUpdater.IsReleasePackage(no), no ?? "null");
 
-            // A zipped package wins over the bare DLL, in the release's order otherwise.
+            // The first zip in the release's order; a release with only the bare DLL has no package.
             var assets = new Newtonsoft.Json.Linq.JArray(
                 new Newtonsoft.Json.Linq.JObject { ["name"] = "QAdvanceFeedback.dll" },
                 new Newtonsoft.Json.Linq.JObject { ["name"] = "Release 1.3.0.zip" },
                 new Newtonsoft.Json.Linq.JObject { ["name"] = "QAdvanceFeedback_1.3.0.zip" });
             Assert.Equal("Release 1.3.0.zip", (string)PluginUpdater.PickPackage(assets)["name"]);
-            Assert.Equal("QAdvanceFeedback.dll", (string)PluginUpdater.PickPackage(new Newtonsoft.Json.Linq.JArray(assets[0]))["name"]);
+            Assert.Null(PluginUpdater.PickPackage(new Newtonsoft.Json.Linq.JArray(assets[0])));
             Assert.Null(PluginUpdater.PickPackage(new Newtonsoft.Json.Linq.JArray()));
 
             Assert.True(PluginUpdater.IsTrustedUrl("https://github.com/qqstars/QAdvanceFeedback/releases/download/v1.3.0/Release_1.3.0.zip"));
