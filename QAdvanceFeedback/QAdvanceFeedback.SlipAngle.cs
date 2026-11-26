@@ -183,8 +183,12 @@ namespace QAdvanceFeedback
             _runtimeStore.LoadSlipAngleLearners(out Dictionary<string, SlipAngleKeyState> data);
             // RATIO SCALE CHANGE (owner, 2026-11-22; runtime file v16): a file from before it holds the slip-ratio windows at
             // twice the new angles - they start again (speed groups and k do not depend on the scale and stay).
-            if (_runtimeStore.LoadedOlderVersion) KeyedSlipAngleLearner.DropSource(data, SlipAngleFrameProcessor.NativeRatioIdentity);
+            if (_runtimeStore.LoadedVersion > 0 && _runtimeStore.LoadedVersion < 16)
+                KeyedSlipAngleLearner.DropSource(data, SlipAngleFrameProcessor.NativeRatioIdentity);
             _runtimeStore.LoadSlipAngleSpeedBands(out Dictionary<string, SlipAngleSpeedBandSetState> bands);
+            // Version 21: the source part of each key in the hashed form (with the game's definition).
+            data = Core.KeyRules.SourceKeys.RekeyLearners(data);
+            bands = Core.KeyRules.SourceKeys.RekeyLearners(bands);
             lock (_slipAngleLock)
             {
                 _slipAngleLearner.Import(data);

@@ -206,6 +206,10 @@ namespace QAdvanceFeedback
         public static bool SameSettings(SlipAngleSourceGame a, SlipAngleSourceGame b) =>
             JToken.DeepEquals(Key(a), Key(b));
 
+        /// <summary>The merge key as one canonical text (id and note excluded) - what a Slip Angle learner's source
+        /// key hashes (parameters Version 21), so the same settings always give the same key.</summary>
+        public static string SettingsText(SlipAngleSourceGame g) => Key(g).ToString(Newtonsoft.Json.Formatting.None);
+
         private static JObject Key(SlipAngleSourceGame g)
         {
             var o = new JObject();

@@ -22,7 +22,6 @@ namespace QAdvanceFeedback.Ui.ViewModels
     {
         private readonly IGeneralPageHost _host;
         private readonly RelayCommand _import;
-        private bool _importOverride;
         private string _importResult = string.Empty;
 
         public GeneralViewModel(SettingsPageContext ctx) : base(ctx)
@@ -30,6 +29,12 @@ namespace QAdvanceFeedback.Ui.ViewModels
             _host = ctx.Host as IGeneralPageHost;
             Health = new HealthListViewModel(ReadHealth, ctx.Clipboard);
             _import = new RelayCommand(RunImport, () => _host != null);
+            _updateHost = ctx.Host as IUpdateHost;
+            _check = new RelayCommand(() => _updateHost?.CheckForUpdate(), () => _updateHost != null && Update.IsNotChecking);
+            _apply = new RelayCommand(ApplyUpdate, () => _updateHost != null && Update.HasNewVersion && Update.IsNotChecking);
+            // The check runs on its own thread and sets the shared status; the buttons follow it (WPF re-queries a
+            // RelayCommand's CanExecute on the UI thread).
+            Update.PropertyChanged += (s, e) => ctx.Ui.Post(() => { _check.RaiseCanExecuteChanged(); _apply.RaiseCanExecuteChanged(); });
             // Any page action that failed (any tab) shows on the health list at once. Same lifetime as
             // the context, so no unsubscribe.
             ctx.ActionFailed += (s, e) => Health.Refresh();
@@ -54,14 +59,57 @@ namespace QAdvanceFeedback.Ui.ViewModels
 
         public string VersionText => string.Format(Strings.Get("General.Version.Label"), _host?.PluginVersion ?? "unknown");
 
+        // ---------------------------------------------------------------- VERSION UPDATE (owner, 2026-11-25, 1.3.0)
+
+        private readonly IUpdateHost _updateHost;
+        private readonly RelayCommand _check;
+        private readonly RelayCommand _apply;
+        private string _updateError = string.Empty;
+
+        /// <summary>The shared update status - the view binds to it ONE-WAY (version line, " (latest)", the green
+        /// " (new version: ...)", the Update button's visibility).</summary>
+        public UpdateStatusViewModel Update => UpdateStatusViewModel.Current;
+
+        /// <summary>"Check For Update": the same check as at start, again (its own thread).</summary>
+        public ICommand CheckForUpdateCommand => _check;
+
+        /// <summary>"Update": shown only while a different version was downloaded.</summary>
+        public ICommand UpdateCommand => _apply;
+
+        /// <summary>A failed update's message (the check's own message is <see cref="UpdateStatusViewModel.Message"/>).</summary>
+        public string UpdateError
+        {
+            get => _updateError;
+            private set { if (SetProperty(ref _updateError, value ?? string.Empty)) OnPropertyChanged(nameof(HasUpdateError)); }
+        }
+
+        public bool HasUpdateError => !string.IsNullOrEmpty(_updateError);
+
+        private void ApplyUpdate()
+        {
+            UpdateError = string.Empty;
+            string error = _updateHost?.ApplyUpdate();
+            if (!string.IsNullOrEmpty(error)) UpdateError = error;
+        }
+
         // ---------------------------------------------------------------- ShakeIt reference data import
 
-        /// <summary>"Override current data if exists?" - passed to the import; not saved, never dirty.</summary>
+        /// <summary>"Override current data if exists?" - a setting (owner, 2026-11-25, default on): the start-up sync and
+        /// the button take SimHub's values for a game already held (on) or keep ours and only add new ones (off). Saved
+        /// with Apply; the button uses the value shown.</summary>
         public bool ShakeItImportOverride
         {
-            get => _importOverride;
-            set => SetProperty(ref _importOverride, value);
+            get => S.General.ShakeItImportOverride;
+            set
+            {
+                Edit(S.General.ShakeItImportOverride, value, v => S.General.ShakeItImportOverride = v);
+                OnPropertyChanged(nameof(ShowShakeItImportButton));
+            }
         }
+
+        /// <summary>The manual sync button shows only while the switch is OFF (owner, 2026-11-25): with it on, every start
+        /// already takes SimHub's current values. Follows the switch as shown, applied or not.</summary>
+        public bool ShowShakeItImportButton => !ShakeItImportOverride;
 
         public ICommand ShakeItImportCommand => _import;
 
@@ -98,7 +146,7 @@ namespace QAdvanceFeedback.Ui.ViewModels
         {
             try
             {
-                global::QAdvanceFeedback.ShakeItConversionOutcome outcome = _host.ImportShakeItPrecalibration(_importOverride);
+                global::QAdvanceFeedback.ShakeItConversionOutcome outcome = _host.ImportShakeItPrecalibration(ShakeItImportOverride);
                 ShakeItImportResultText = outcome?.Message ?? string.Empty;
             }
             catch (Exception e)

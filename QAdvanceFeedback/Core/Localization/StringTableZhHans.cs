@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 
 namespace QAdvanceFeedback.Core.Localization
 {
@@ -155,6 +155,10 @@ namespace QAdvanceFeedback.Core.Localization
             ["Clutch.Readout.Car"] = "车辆：{0}",
             ["Clutch.Readout.CarNone"] = "车辆：暂无",
             ["Clutch.Forget"] = "忘记已学习的结合点",
+            ["Calibration.Reset"] = "重置校准（当前赛道和车辆）",
+            ["Calibration.Persist"] = "保存校准数据？",
+            ["Calibration.Persist.Note"] = "打滑/抱死校准（Wheel Slip和Wheel Lock共用）按游戏、赛道和车辆学习。开：保存并在下次启动时继续使用。关：仅在本次会话中学习，关闭时会立即删除所有已保存的校准。重置会删除当前赛道和车辆的校准，例如更换车轮后使用。",
+            ["Calibration.Reset.Note"] = "删除当前赛道和车辆已学习的打滑/抱死校准（Wheel Slip和Wheel Lock共用），例如更换车轮后使用。驾驶时会重新学习。",
             ["Clutch.Graph.Caption"] = "离合器输入 -> 输出",
             ["Clutch.Test.Header"] = "测试效果",
             ["Clutch.Test.Label"] = "测试",
@@ -386,10 +390,22 @@ namespace QAdvanceFeedback.Core.Localization
             ["General.ExportCsv"] = "\u5c06\u672c\u6b21\u4f1a\u8bdd\u5bfc\u51fa\u4e3aCSV",
             ["General.ExportCsv.Note"] = "\u5f00\u542f\u65f6\uff0c\u6240\u6709\u5c5e\u6027\uff08\u5305\u62ec\u8bca\u65ad\u5c5e\u6027\uff09\u90fd\u4f1a\u5199\u5165CSV\u6587\u4ef6\u4ee5\u4fbf\u6392\u67e5\u95ee\u9898\uff0c\u4fdd\u5b58\u4f4d\u7f6e\u4e0e\u672c\u63d2\u4ef6\u7684\u8bbe\u7f6e\u6587\u4ef6\u76f8\u540c\u3002\u5173\u95ed\u65f6\u4e0d\u4f1a\u5199\u5165\u4efb\u4f55\u5185\u5bb9\u3002\u6b64\u8bbe\u7f6e\u7acb\u5373\u751f\u6548\uff0c\u65e0\u9700\u91cd\u542f\u3002",
             ["General.Version.Label"] = "QAdvanceFeedback \u7248\u672c\uff1a{0}",
+            ["Update.Group"] = "版本更新",
+            ["Update.Latest"] = "（最新）",
+            ["Update.NewVersion"] = "（新版本：{0}）",
+            ["Update.Check"] = "检查更新",
+            ["Update.Checking"] = "正在检查更新...",
+            ["Update.Apply"] = "更新",
+            ["Update.Notice.Line1"] = "检测到新版本{0}。",
+            ["Update.Notice.Line2"] = "请前往QAdvanceFeedback插件的“常规”标签页进行更新。",
+            ["Update.Error.NoPackage"] = "最新发布中没有Release_x.x.x.zip安装包。",
+            ["Update.Error.NoDll"] = "最新发布的安装包中没有QAdvanceFeedback.dll。",
+            ["Update.Error.Check"] = "检查更新失败：{0}",
+            ["Update.Error.Apply"] = "更新失败：{0}",
             ["General.ShakeItImport.Group"] = "ShakeIt \u53c2\u8003\u6570\u636e",
-            ["General.ShakeItImport.Note"] = "\u672c\u63d2\u4ef6\u7684 Raw \u6570\u503c\u5b8c\u5168\u590d\u73b0 SimHub ShakeIt Motors \u7684\u7b97\u6cd5\u3002\u552f\u4e00\u65e0\u6cd5\u968f\u63d2\u4ef6\u5206\u53d1\u7684\u662f SimHub \u81ea\u5e26\u7684\u5404\u6e38\u620f\u6821\u51c6\u6587\u4ef6\u3002\u4ece\u60a8\u7684 SimHub \u5b89\u88c5\u76ee\u5f55\u5bfc\u5165\u540e\uff0cRaw \u6570\u503c\u5c06\u4e0e ShakeIt \u4e00\u81f4\u3002\u9996\u6b21\u542f\u52a8\u4e14\u65e0\u81ea\u6709\u6821\u51c6\u6570\u636e\u65f6\u4f1a\u81ea\u52a8\u6267\u884c\uff0c\u901a\u5e38\u65e0\u9700\u624b\u52a8\u70b9\u51fb\u3002",
-            ["General.ShakeItImport.Override"] = "\u5982\u5df2\u5b58\u5728\uff0c\u662f\u5426\u8986\u76d6\u5f53\u524d\u6570\u636e\uff1f",
-            ["General.ShakeItImport.Override.Note"] = "\u5173\u95ed\uff08\u9ed8\u8ba4\uff09\uff1a\u5df2\u6709\u7684\u6821\u51c6\u6761\u76ee\u5c06\u4fdd\u7559\uff0c\u8df3\u8fc7\u5bfc\u5165\u3002\u5f00\u542f\uff1a\u5bfc\u5165\u7684 SimHub \u6570\u503c\u5c06\u66ff\u6362\u672c\u63d2\u4ef6\u81ea\u6709\u7684\u5bf9\u5e94\u6761\u76ee\u3002\u9664\u975e\u60a8\u786e\u5b9e\u5e0c\u671b\u653e\u5f03\u5df2\u5b66\u4e60\u7684\u6570\u636e\uff0c\u5426\u5219\u8bf7\u4fdd\u6301\u5173\u95ed\u3002",
+            ["General.ShakeItImport.Note"] = "本插件的Raw数值完全复现SimHub ShakeIt Motors的算法。唯一不能随插件提供的是SimHub自己的每款游戏校准文件（由SimHub分发，本插件无权分发）。插件每次启动都会从你的SimHub安装中读取该文件（全部三个：GameData、GameData_Custom、GameData_External）并更新自己的副本，因此Raw数值与ShakeIt对其覆盖的每款游戏都一致。",
+            ["General.ShakeItImport.Override"] = "如已存在，是否覆盖当前数据？",
+            ["General.ShakeItImport.Override.Note"] = "开启（默认）：插件副本中已有的游戏会在每次启动时采用SimHub当前的数值，因此无需手动同步（按钮隐藏）。关闭：已有的游戏保持不变，只导入SimHub新增的游戏和数值，可用下方按钮立即同步。无论开关如何，SimHub已删除的游戏都会被保留。点击应用后保存。",
             ["General.ShakeItImport.Button"] = "\u8f6c\u6362 SimHub ShakeIt \u53c2\u8003\u6570\u636e",
             ["Common.RestoreAllDefaults"] = "\u6062\u590d\u6240\u6709\u9ed8\u8ba4\u8bbe\u7f6e",
             ["Common.RestoreAllConfirm"] = "\u6b64\u64cd\u4f5c\u4f1a\u5c06\u8f66\u8f6e\u62b1\u6b7b\u3001\u8f66\u8f6e\u6253\u6ed1\u3001G\u529b\u548c\u5e38\u89c4\u6807\u7b7e\u9875\u4e2d\u7684\u6240\u6709\u8bbe\u7f6e\u6062\u590d\u4e3a\u51fa\u5382\u9ed8\u8ba4\u503c\uff0c\u5305\u62ec\u4f60\u81ea\u5df1\u8c03\u6574\u8fc7\u7684\u5185\u5bb9\uff0c\u4e14\u65e0\u6cd5\u64a4\u9500\u3002\u662f\u5426\u7ee7\u7eed\uff1f",

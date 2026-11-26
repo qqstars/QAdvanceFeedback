@@ -67,8 +67,9 @@ namespace QAdvanceFeedback
             _runtimeStore.LoadClutchBiteLearners(out Dictionary<string, ClutchBiteLearnerState> data);
             lock (_clutchLock)
             {
-                _clutchLearner.Import(data);
-                _lastClutchKey = _runtimeStore.LoadLastClutchKey();
+                // Version 21: the source part of each key (and of the last key) in the hashed form.
+                _clutchLearner.Import(Core.KeyRules.SourceKeys.RekeyLearners(data));
+                _lastClutchKey = Core.KeyRules.SourceKeys.RekeyLearnerKey(_runtimeStore.LoadLastClutchKey());
             }
         }
 

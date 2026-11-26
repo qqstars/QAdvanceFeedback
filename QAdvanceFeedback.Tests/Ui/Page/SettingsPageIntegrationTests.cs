@@ -467,8 +467,9 @@ namespace QAdvanceFeedback.Tests.Ui.Page
 
         // ================================================================ the plugin side (not instantiable: read as text)
 
+        // Read with LF line endings whatever the file uses (the repo's files may be CRLF or LF - owner, 2026-11-25).
         private static string PluginFile(string name, [CallerFilePath] string thisFile = "") => File.ReadAllText(Path.Combine(
-            Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(thisFile)))), "QAdvanceFeedback", name));
+            Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(thisFile)))), "QAdvanceFeedback", name)).Replace("\r\n", "\n");
 
         [Fact]
         public void The_game_reaches_the_page_even_while_paused_or_in_a_game_menu()
@@ -495,7 +496,7 @@ namespace QAdvanceFeedback.Tests.Ui.Page
             Assert.DoesNotContain("UpdateLearnedKeyDataPoints", plugin);
             Assert.DoesNotContain("UpdateCurrentGame", plugin);
             // The 1 Hz learned readout, the seed revision bump, ShakeIt / nativeness changes.
-            Assert.Contains("_keyDataRevision++;\r\n            RaiseSettingsPageStateChanged();", plugin);
+            Assert.Contains("_keyDataRevision++;\n            RaiseSettingsPageStateChanged();", plugin);
             string nativeness = plugin.Substring(plugin.IndexOf("private void NotifyNativenessChanged()", StringComparison.Ordinal), 300);
             Assert.Contains("SettingField.SourceAvailability", nativeness);   // the hub broadcast is kept
             Assert.Contains("RaiseSettingsPageStateChanged();", nativeness);

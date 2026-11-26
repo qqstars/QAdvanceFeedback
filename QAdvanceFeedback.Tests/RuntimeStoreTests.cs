@@ -442,7 +442,7 @@ namespace QAdvanceFeedback.Tests
         // ------------------------------------------------------------------------------------
 
         [Fact]
-        public void ShakeItCalibration_survives_a_real_write_and_reopen()
+        public void SlipLockCalibration_survives_a_real_write_and_reopen()
         {
             string key = Core.RawCalculator.Calibration.CalibrationDataProvider.BuildKey("Spa", "Sauber", "Slip");
             var calibration = new Core.RawCalculator.Calibration.CalibrationData();
@@ -450,17 +450,16 @@ namespace QAdvanceFeedback.Tests
             calibration.AddValue(4.0); // moves Max away from the bucket values
 
             _store = new RuntimeStore(_path, flushInterval: NoAutoFlush);
-            _store.SaveShakeItCalibration(new Dictionary<string, Core.RawCalculator.Calibration.CalibrationData> { [key] = calibration });
+            _store.SaveSlipLockCalibration(new Dictionary<string, Core.RawCalculator.Calibration.CalibrationData> { [key] = calibration });
             _store.SaveShakeItGameBounds(new Dictionary<string, Core.RawCalculator.Calibration.GameCalibrationBounds>
             {
                 ["F1*"] = new Core.RawCalculator.Calibration.GameCalibrationBounds { WheelSpeedDeltaHighbound = 0.42 },
             });
-            _store.SaveShakeItSourceTimestamps(new Dictionary<string, long> { ["GameData.json"] = 12345L });
             _store.Flush();
 
             using (var reopened = new RuntimeStore(_path, flushInterval: NoAutoFlush))
             {
-                reopened.LoadShakeItCalibration(out var data);
+                reopened.LoadSlipLockCalibration(out var data);
                 Core.RawCalculator.Calibration.CalibrationData restored = data[key];
 
                 // THE PROPERTY THAT MATTERS: the restored calibration must answer identically. A naming
@@ -475,18 +474,38 @@ namespace QAdvanceFeedback.Tests
                 reopened.LoadShakeItGameBounds(out var bounds);
                 Assert.Equal(0.42, bounds["F1*"].WheelSpeedDeltaHighbound, 9);
 
-                reopened.LoadShakeItSourceTimestamps(out var stamps);
-                Assert.Equal(12345L, stamps["GameData.json"]);
             }
         }
 
         [Fact]
-        public void ShakeItCalibration_is_written_with_short_names_and_no_live_only_members()
+        public void An_older_files_ShakeItCalibration_section_is_moved_to_SlipLockCalibration()
+        {
+            // Version 18 (owner, 2026-11-25): the learned slip / lock calibration is no longer named after ShakeIt.
+            string key = Core.RawCalculator.Calibration.CalibrationDataProvider.BuildKey("Spa", "Sauber", "Slip");
+            File.WriteAllText(_path, "{\"Version\":17,\"ShakeItCalibration\":{\"" + key + "\":{\"mx\":0.5,\"v\":{\"0.25\":600},\"s\":150.0,\"c\":600,\"p\":601.0}}}");
+
+            _store = new RuntimeStore(_path, flushInterval: NoAutoFlush);
+            _store.LoadSlipLockCalibration(out var data);
+            // Version 21: a key from before carries no game - kept as a legacy entry until its game is known.
+            key = Core.RawCalculator.Calibration.CalibrationDataProvider.LegacyPrefix + key;
+            Assert.Equal(600, data[key].Count);
+            Assert.Equal(0.25, data[key].GetPercentile(99.0), 9);
+
+            _store.SaveSlipLockCalibration(data);
+            _store.Flush();
+            Newtonsoft.Json.Linq.JObject written = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(_path));
+            Assert.Null(written["ShakeItCalibration"]);
+            Assert.NotNull(written["SlipLockCalibration"][key]);
+            Assert.Equal(new RuntimeDocument().Version, (int)written["Version"]);
+        }
+
+        [Fact]
+        public void SlipLockCalibration_is_written_with_short_names_and_no_live_only_members()
         {
             _store = new RuntimeStore(_path, flushInterval: NoAutoFlush);
             var calibration = new Core.RawCalculator.Calibration.CalibrationData();
             calibration.AddValue(0.5);
-            _store.SaveShakeItCalibration(new Dictionary<string, Core.RawCalculator.Calibration.CalibrationData>
+            _store.SaveSlipLockCalibration(new Dictionary<string, Core.RawCalculator.Calibration.CalibrationData>
             {
                 [Core.RawCalculator.Calibration.CalibrationDataProvider.BuildKey("Spa", "Sauber", "Slip")] = calibration,
             });
@@ -567,7 +586,8 @@ namespace QAdvanceFeedback.Tests
                 PriorScale = 1.0,
                 BestHistory = new[] { 6.5 },
             };
-            const string key = "GameA|#|Car1|#|Native/all|#|sealed";
+            // As MakeKey stores it (Version 21: the source part hashed) - a readable one would be converted on load.
+            string key = Core.KeyRules.SourceKeys.RekeyLearnerKey("GameA|#|Car1|#|Native/all|#|sealed");
             var keyState = new Core.SlipAngle.SlipAngleKeyState
             {
                 Learner = state, PublishedMin = 4.1, PublishedBest = 6.4, PublishedMax = 8.3, ColdTier = 4,

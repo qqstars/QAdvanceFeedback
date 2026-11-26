@@ -12,7 +12,7 @@ namespace QAdvanceFeedback.Integration.ShakeIt
     /// before the plugin started (or across a restart) still reaches the live plugin. Null-safe
     /// throughout: with no plugin, settings read as null and publishes do nothing.
     /// </summary>
-    public sealed class PluginPanelHost : IPanelHost, IShakeItSourceStateHost, IClutchHost, ISlipAngleEffectHost, ILearningMaturityHost
+    public sealed class PluginPanelHost : IPanelHost, IShakeItSourceStateHost, IClutchHost, ISlipAngleEffectHost, ILearningMaturityHost, ICalibrationResetHost
     {
         /// <summary>The plugin's published ShakeIt Built-in source state per channel (docs\shakeit-source-design.md §4);
         /// NotSetUp for both with no plugin.</summary>
@@ -89,6 +89,11 @@ namespace QAdvanceFeedback.Integration.ShakeIt
 
         public global::QAdvanceFeedback.Core.SlipAngle.SlipAngleWindowMaturity? LearnedSlipAngleMaturity(string sourceIdentity) =>
             Plugin?.GetLearnedSlipAngleMaturityForDisplay(sourceIdentity);
+
+        public bool HasCalibrationForCurrentKey() => Plugin?.HasCalibrationForCurrentKey() ?? false;
+        public bool ResetCalibrationForCurrentKey() => Plugin?.ResetCalibrationForCurrentKey() ?? false;
+        public bool PersistCalibration => Plugin?.Settings?.General?.PersistSlipLockCalibration ?? true;
+        public void SetPersistCalibration(bool persist) => Plugin?.SetPersistCalibration(persist);
 
         public void PublishGForceTest(GForceOutput outputOrNull) => Plugin?.PublishTestEffect(outputOrNull);
 

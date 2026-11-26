@@ -281,9 +281,10 @@ namespace QAdvanceFeedback.Tests.ShakeItEffects
             string dir = AppContext.BaseDirectory;
             while (dir != null && !System.IO.File.Exists(System.IO.Path.Combine(dir, "QAdvanceFeedback", "QAdvanceFeedback.cs")))
                 dir = System.IO.Path.GetDirectoryName(dir);
-            string code = System.IO.File.ReadAllText(System.IO.Path.Combine(dir, "QAdvanceFeedback", "QAdvanceFeedback.cs"));
-            Assert.Contains("SupportFor(tap, gameId, isLock: true)\r\n                    ?? (gameId.Length > 0 ? Integration.ShakeIt.ShakeItBuiltInTap.SupportedByCapabilities(pluginManager, isLock: true) : null);", code);
-            Assert.Contains("SupportFor(tap, gameId, isLock: false)\r\n                    ?? (gameId.Length > 0 ? Integration.ShakeIt.ShakeItBuiltInTap.SupportedByCapabilities(pluginManager, isLock: false) : null);", code);
+            // LF whatever the file uses (CRLF or LF - owner, 2026-11-25).
+            string code = System.IO.File.ReadAllText(System.IO.Path.Combine(dir, "QAdvanceFeedback", "QAdvanceFeedback.cs")).Replace("\r\n", "\n");
+            Assert.Contains("SupportFor(tap, gameId, isLock: true)\n                    ?? (gameId.Length > 0 ? Integration.ShakeIt.ShakeItBuiltInTap.SupportedByCapabilities(pluginManager, isLock: true) : null);", code);
+            Assert.Contains("SupportFor(tap, gameId, isLock: false)\n                    ?? (gameId.Length > 0 ? Integration.ShakeIt.ShakeItBuiltInTap.SupportedByCapabilities(pluginManager, isLock: false) : null);", code);
             string tap = System.IO.File.ReadAllText(System.IO.Path.Combine(dir, "QAdvanceFeedback", "Integration", "ShakeIt", "ShakeItBuiltInTap.cs"));
             Assert.Contains("pluginManager?.GameManager?.GetFeedbackCapabilities()", tap);
         }

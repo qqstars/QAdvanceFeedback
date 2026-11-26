@@ -67,7 +67,8 @@ namespace QAdvanceFeedback.Core.Normalized
                     if (segments <= 3) key += Separator + KeyedGripLearner.LegacyPreSurfaceSplitBucket;
                 }
 
-                migrated[key] = pair.Value;
+                // Version 21: the source part in the hashed form, so the result is exactly what MakeKey builds.
+                migrated[KeyRules.SourceKeys.RekeyLearnerKey(key)] = pair.Value;
             }
 
             return migrated;

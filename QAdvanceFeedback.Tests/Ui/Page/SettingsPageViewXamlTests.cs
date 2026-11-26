@@ -73,6 +73,14 @@ namespace QAdvanceFeedback.Tests.Ui.Page
                 Assert.Equal(name, (string)item.Attribute(X + "Name"));
                 Assert.Equal("{v:Loc " + header + "}", (string)item.Attribute("Header"));
                 XElement scroll = item.Elements().Single();
+                // 1.3.0: a tab with the new-version notice holds a DockPanel - the notice docked on top, then the scroll
+                // viewer as before (Clutch's view and the General tab have none here).
+                if (scroll.Name == P + "DockPanel")
+                {
+                    Assert.Equal(V + "UpdateNoticeBar", scroll.Elements().First().Name);
+                    Assert.Equal("Top", (string)scroll.Elements().First().Attribute("DockPanel.Dock"));
+                    scroll = scroll.Elements().Last();
+                }
                 Assert.Equal(P + "ScrollViewer", scroll.Name);
                 Assert.Equal("Auto", (string)scroll.Attribute("VerticalScrollBarVisibility"));
                 XElement content = scroll.Elements().Single();
@@ -211,10 +219,9 @@ namespace QAdvanceFeedback.Tests.Ui.Page
             {
                 ["EnableDiagnosticsCheckBox"] = ("IsChecked", "{Binding EnableDiagnostics}"),
                 ["ExportCsvCheckBox"] = ("IsChecked", "{Binding ExportCsv}"),
-                ["ShakeItImportOverrideCheckBox"] = ("IsChecked", "{Binding ShakeItImportOverride}"),
+                ["ShakeItImportOverrideCheckBox"] = ("IsChecked", "{Binding ShakeItImportOverride, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"),
                 ["ShakeItImportButton"] = ("Command", "{Binding ShakeItImportCommand}"),
                 ["ShakeItImportResultText"] = ("Visibility", "{Binding ShowShakeItImportResult, Converter={StaticResource VisibleWhen}}"),
-                ["GeneralVersionText"] = ("Text", "{Binding VersionText, Mode=OneWay}"),
                 ["HealthAllGoodText"] = ("Visibility", "{Binding IsHealthy, Converter={StaticResource VisibleWhen}}"),
                 ["HealthIssuesPanel"] = ("ItemsSource", "{Binding Issues}"),
                 ["HealthCopyDetailsButton"] = ("Command", "{Binding CopyDetailsCommand}"),
@@ -222,6 +229,20 @@ namespace QAdvanceFeedback.Tests.Ui.Page
             };
             foreach (var pair in expected)
                 Assert.Equal(pair.Value.value, (string)Named(g, pair.Key).Attribute(pair.Value.attr));
+            // 1.3.0: the version line moved to VERSION UPDATE - the version and, in green, the new version (one-way).
+            XElement[] runs = Named(g, "GeneralVersionText").Elements(P + "Run").ToArray();
+            Assert.Equal("{Binding Update.VersionLine, Mode=OneWay}", (string)runs[0].Attribute("Text"));
+            Assert.Equal("{Binding Update.NewVersionText, Mode=OneWay}", (string)runs[1].Attribute("Text"));
+        }
+
+        [Fact]
+        public void The_manual_sync_button_is_shown_by_a_one_way_binding_to_the_view_model()
+        {
+            // MVVM (owner, 2026-11-25): no code-behind - the button's visibility follows the switch through the view model.
+            XElement button = General().Descendants().Single(e => (string)e.Attribute(X + "Name") == "ShakeItImportButton");
+            Assert.Equal("{Binding ShowShakeItImportButton, Mode=OneWay, Converter={StaticResource VisibleWhen}}", (string)button.Attribute("Visibility"));
+            string codeBehind = File.ReadAllText(Path.Combine(PluginDir(), "Ui", "Views", "GeneralPageView.xaml.cs"));
+            Assert.DoesNotContain("ShakeItImport", codeBehind);
         }
 
         [Fact]
@@ -230,7 +251,7 @@ namespace QAdvanceFeedback.Tests.Ui.Page
             // Old: ApplyOnOffLabelsToEverySwitch (SettingsControl.xaml.cs:285-303) - a toggle's state is
             // never inferred from a highlight alone.
             List<XElement> switches = General().Descendants(Mah + "ToggleSwitch").ToList();
-            Assert.Equal(3, switches.Count);
+            Assert.Equal(3, switches.Count);   // diagnostics, CSV export, the import's "Override current data if exists?"
             foreach (XElement s in switches)
             {
                 Assert.Equal("{v:Loc GForce.Shake.On}", (string)s.Attribute("OnLabel"));

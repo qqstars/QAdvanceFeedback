@@ -41,8 +41,8 @@ namespace QAdvanceFeedback.Tests
             ]
         }";
 
-        private ShakeItConversionOutcome Import(ShakeItImportState state, bool overrideExisting = false, bool onlyChanged = false)
-            => ShakeItPrecalibrationConverter.Convert(_root, state, overrideExisting, onlyChanged);
+        private ShakeItConversionOutcome Import(ShakeItImportState state, bool overrideExisting = true)
+            => ShakeItPrecalibrationConverter.Convert(_root, state, overrideExisting);
 
         [Fact]
         public void ReportsClearlyWhenSimHubIsNotInstalled()
@@ -98,8 +98,12 @@ namespace QAdvanceFeedback.Tests
             Assert.Equal(GameCalibrationBounds.Defaults.WheelSpeedDeltaLowLockbound, bounds.WheelSpeedDeltaLowLockbound, 9);
         }
 
+        // ------------------------------------------------------------------------------------
+        // SYNC ON EVERY START (owner, 2026-11-25): all three files, UPSERT, no timestamp check.
+        // ------------------------------------------------------------------------------------
+
         [Fact]
-        public void WithoutOverride_OurOwnDataIsKept()
+        public void Every_run_takes_SimHubs_current_values_for_a_game_already_held()
         {
             WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], OneGameJson);
 
@@ -108,106 +112,114 @@ namespace QAdvanceFeedback.Tests
             {
                 ["Slip"] = new PreloadedCalibrationData { MeasuredMaximum = 99.0 },
             };
+            state.Bounds["F12025"] = new GameCalibrationBounds { WheelSpeedDeltaHighbound = 9.0 };
 
             ShakeItConversionOutcome outcome = Import(state);
 
-            Assert.Equal(0, outcome.MetricsImported);
-            Assert.Equal(99.0, state.Presets["F12025"]["Slip"].MeasuredMaximum, 9);
+            Assert.Equal(1, outcome.MetricsImported);
+            Assert.Equal(2.5, state.Presets["F12025"]["Slip"].MeasuredMaximum, 9);
+            Assert.Equal(0.25, state.Bounds["F12025"].WheelSpeedDeltaHighbound, 9);
+        }
+
+        [Fact]
+        public void A_SimHub_update_lands_on_the_next_run_new_games_and_changed_values_alike()
+        {
+            string file = Path.Combine(_root, ShakeItPrecalibrationConverter.RelativeSourceFiles[0]);
+            WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], OneGameJson);
+            var state = new ShakeItImportState();
+            Import(state);
+            DateTime stamp = File.GetLastWriteTimeUtc(file);
+
+            // SimHub updates: F12025's preset changes and a new game arrives - even with the same file time.
+            WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], @"{
+                ""Games"": [
+                    { ""GameCodes"": ""F12025"", ""PrecalibrationData"": { ""Slip"": { ""MeasuredMaximum"": 3.0 } } },
+                    { ""GameCodes"": ""WRC"", ""PrecalibrationData"": { ""Slip"": { ""MeasuredMaximum"": 3.5 } } }
+                ]
+            }");
+            File.SetLastWriteTimeUtc(file, stamp);
+
+            ShakeItConversionOutcome outcome = Import(state);
+
+            Assert.Equal(1, outcome.FilesRead);
+            Assert.Equal(3.0, state.Presets["F12025"]["Slip"].MeasuredMaximum, 9);
+            Assert.Equal(3.5, state.Presets["WRC"]["Slip"].MeasuredMaximum, 9);
+        }
+
+        [Fact]
+        public void With_override_off_a_game_already_held_is_kept_and_only_new_ones_are_added()
+        {
+            WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], @"{
+                ""Games"": [
+                    { ""GameCodes"": ""F12025"", ""WheelSpeedDeltaHighbound"": 0.25,
+                      ""PrecalibrationData"": { ""Slip"": { ""MeasuredMaximum"": 2.5 }, ""RPSToSpeedFront"": { ""MeasuredMaximum"": 1.1 } } },
+                    { ""GameCodes"": ""WRC"", ""PrecalibrationData"": { ""Slip"": { ""MeasuredMaximum"": 3.5 } } }
+                ]
+            }");
+            var state = new ShakeItImportState();
+            state.Presets["F12025"] = new Dictionary<string, PreloadedCalibrationData>
+            {
+                ["Slip"] = new PreloadedCalibrationData { MeasuredMaximum = 99.0 },
+            };
+            state.Bounds["F12025"] = new GameCalibrationBounds { WheelSpeedDeltaHighbound = 9.0 };
+
+            ShakeItConversionOutcome outcome = Import(state, overrideExisting: false);
+
+            Assert.Equal(99.0, state.Presets["F12025"]["Slip"].MeasuredMaximum, 9);       // kept
+            Assert.Equal(9.0, state.Bounds["F12025"].WheelSpeedDeltaHighbound, 9);         // kept
+            Assert.True(state.Presets["F12025"].ContainsKey("RPSToSpeedFront"));               // a new metric is added
+            Assert.Equal(3.5, state.Presets["WRC"]["Slip"].MeasuredMaximum, 9);           // a new game is added
+            Assert.Equal(2, outcome.MetricsSkippedBecauseOursExists);
             Assert.Contains("Override current data if exists?", outcome.Message);
         }
 
         [Fact]
-        public void WithOverride_SimHubsDataReplacesOurs()
+        public void A_game_SimHub_no_longer_has_is_kept()
         {
             WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], OneGameJson);
-
             var state = new ShakeItImportState();
-            state.Presets["F12025"] = new Dictionary<string, PreloadedCalibrationData>
-            {
-                ["Slip"] = new PreloadedCalibrationData { MeasuredMaximum = 99.0 },
-            };
+            Import(state);
 
-            ShakeItConversionOutcome outcome = Import(state, overrideExisting: true);
-
-            Assert.Equal(1, outcome.MetricsImported);
-            Assert.Equal(2.5, state.Presets["F12025"]["Slip"].MeasuredMaximum, 9);
-        }
-
-        // ------------------------------------------------------------------------------------
-        // Timestamp gating - what makes running this on EVERY launch cheap.
-        // ------------------------------------------------------------------------------------
-
-        [Fact]
-        public void AnUnchangedFileIsNotReopenedOnASubsequentStartupImport()
-        {
-            WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], OneGameJson);
-
-            var state = new ShakeItImportState();
-            ShakeItConversionOutcome first = Import(state, onlyChanged: true);
-            Assert.Equal(1, first.FilesRead);
-            Assert.Single(state.SourceTimestamps);
-
-            ShakeItConversionOutcome second = Import(state, onlyChanged: true);
-            Assert.Equal(0, second.FilesRead);
-            Assert.Equal(1, second.FilesSkippedUnchanged);
-            Assert.Contains("already up to date", second.Message);
-        }
-
-        [Fact]
-        public void ANewerFileIsPickedUpAutomatically_SoASimHubUpdateLandsWithoutAskingOnce()
-        {
-            WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], OneGameJson);
-
-            var state = new ShakeItImportState();
-            Import(state, onlyChanged: true);
-
-            // SimHub updates and ships a new game.
-            Thread.Sleep(20);
             WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], @"{
-                ""Games"": [
-                    { ""GameCodes"": ""F12025"", ""PrecalibrationData"": { ""Slip"": { ""MeasuredMaximum"": 2.5 } } },
-                    { ""GameCodes"": ""WRC"", ""PrecalibrationData"": { ""Slip"": { ""MeasuredMaximum"": 3.5 } } }
-                ]
+                ""Games"": [ { ""GameCodes"": ""WRC"", ""PrecalibrationData"": { ""Slip"": { ""MeasuredMaximum"": 3.5 } } } ]
             }");
-            File.SetLastWriteTimeUtc(Path.Combine(_root, ShakeItPrecalibrationConverter.RelativeSourceFiles[0]),
-                DateTime.UtcNow.AddMinutes(1));
+            Import(state);
 
-            ShakeItConversionOutcome outcome = Import(state, onlyChanged: true);
-
-            Assert.Equal(1, outcome.FilesRead);
-            Assert.True(state.Presets.ContainsKey("WRC"), "a newly shipped game must arrive without a button press");
-            // ...and the existing entry is still ours, because the automatic import never overrides.
-            Assert.Equal(2.5, state.Presets["F12025"]["Slip"].MeasuredMaximum, 9);
+            Assert.Equal(2.5, state.Presets["F12025"]["Slip"].MeasuredMaximum, 9);   // upsert: never deleted
+            Assert.True(state.Bounds.ContainsKey("F12025"));
+            Assert.True(state.Presets.ContainsKey("WRC"));
         }
 
         [Fact]
-        public void AnExplicitButtonPressRereadsEverythingRegardlessOfTimestamps()
+        public void A_later_file_wins_for_the_same_game_like_SimHubs_own_layering()
         {
             WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], OneGameJson);
+            WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[1], @"{
+                ""Games"": [ { ""GameCodes"": ""F12025"", ""PrecalibrationData"": { ""Slip"": { ""MeasuredMaximum"": 4.0 } } } ]
+            }");
 
             var state = new ShakeItImportState();
-            Import(state, onlyChanged: true);
+            ShakeItConversionOutcome outcome = Import(state);
 
-            ShakeItConversionOutcome forced = Import(state, overrideExisting: true, onlyChanged: false);
-            Assert.Equal(1, forced.FilesRead);
-            Assert.Equal(0, forced.FilesSkippedUnchanged);
+            Assert.Equal(2, outcome.FilesRead);
+            Assert.Equal(4.0, state.Presets["F12025"]["Slip"].MeasuredMaximum, 9);
+            // ...and every run gives the same answer (all files are read each time).
+            Import(state);
+            Assert.Equal(4.0, state.Presets["F12025"]["Slip"].MeasuredMaximum, 9);
         }
 
         [Fact]
-        public void AMalformedFileDoesNotAbortTheOthers_AndIsRetriedNextTime()
+        public void A_malformed_file_does_not_abort_the_others()
         {
             WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[0], "{ this is not json");
             WriteSourceFile(ShakeItPrecalibrationConverter.RelativeSourceFiles[1], OneGameJson);
 
             var state = new ShakeItImportState();
-            ShakeItConversionOutcome outcome = Import(state, onlyChanged: true);
+            ShakeItConversionOutcome outcome = Import(state);
 
+            Assert.Equal(1, outcome.FilesRead);
             Assert.Equal(1, outcome.MetricsImported);
             Assert.Contains("Skipped GameData.json", outcome.Message);
-
-            // Its timestamp was deliberately not recorded, so a later fix to that file is picked up.
-            Assert.False(state.SourceTimestamps.ContainsKey("GameData.json"));
-            Assert.True(state.SourceTimestamps.ContainsKey("GameData_Custom.json"));
         }
 
         [Fact]

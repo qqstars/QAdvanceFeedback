@@ -184,7 +184,7 @@ namespace QAdvanceFeedback.Settings
         }
 
         /// <summary>Both slot forms of <see cref="KeyDataPointSettings.MakeSlotKey"/> end in "|src:&lt;identity&gt;".</summary>
-        private static string SlotSuffixFor(string sourceIdentity) => "|src:" + (sourceIdentity ?? string.Empty);
+        private static string SlotSuffixFor(string sourceIdentity) => KeyDataPointSettings.SlotSuffixFor(sourceIdentity);   // the same stored form as MakeSlotKey (v21)
 
         public bool IsSeeded(string gameId, string sourceIdentity)
             => Values != null

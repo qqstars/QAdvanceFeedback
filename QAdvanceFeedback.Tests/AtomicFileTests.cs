@@ -155,6 +155,9 @@ namespace QAdvanceFeedback.Tests
             {
                 if (file.Contains("\\obj\\") || file.Contains("\\bin\\")) continue;
                 if (Path.GetFileName(file) == "AtomicFile.cs") continue;
+                // Not a store: the 1.3.0 update swaps the plugin DLL itself. A LOADED DLL cannot be overwritten (so no
+                // atomic replace), only renamed aside - delete the previous leftover, rename, move the new one in.
+                if (Path.GetFileName(file) == "PluginUpdater.cs") continue;
 
                 string text = File.ReadAllText(file);
                 bool deletesThenMoves = text.Contains("File.Delete(") && text.Contains("File.Move(");

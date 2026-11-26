@@ -359,10 +359,10 @@ namespace QAdvanceFeedback.Tests
         {
             var provider = new CalibrationDataProvider();
             provider.GetSlipCalibration("Spa", "Sauber", front: false);
-            Assert.Empty(provider.ExportCalibrations());
+            Assert.Empty(provider.CalibrationData);
 
             provider.GetSlipCalibration("Spa", "Sauber", front: false, store: true);
-            Assert.Single(provider.ExportCalibrations());
+            Assert.Single(provider.CalibrationData);
         }
 
         [Fact]
@@ -379,12 +379,12 @@ namespace QAdvanceFeedback.Tests
                 wheelRps: null, wheelSlip: new double?[] { 0.5, 0.5, 0.5, 0.5 });
 
             string key = CalibrationDataProvider.BuildKey("Spa", "Sauber", CalibrationDataProvider.SlipMetric);
-            Assert.Equal(4, provider.ExportCalibrations()[key].Count);
+            Assert.Equal(4, provider.CalibrationData[key].Count);
 
             // The read path still resolves to the preset, with the live data attached underneath.
             ICalibrationData read = provider.GetSlipCalibration("Spa", "Sauber", front: false);
             Assert.True(read.IsPreset());
-            Assert.Same(provider.ExportCalibrations()[key], read.GetUnderlyingAutocalibration());
+            Assert.Same(provider.CalibrationData[key], read.GetUnderlyingAutocalibration());
         }
 
         [Fact]
@@ -396,23 +396,23 @@ namespace QAdvanceFeedback.Tests
 
             // Below the global speed gate nothing is fed at all.
             provider.Update("Spa", "Sauber", true, true, speedKmh: 1.0, brakePercent: 0.0, wheelRps: rps, wheelSlip: slip);
-            Assert.Empty(provider.ExportCalibrations());
+            Assert.Empty(provider.CalibrationData);
 
             // Braking suppresses the RPS cruise reference but NOT slip.
             provider.Update("Spa", "Sauber", true, true, speedKmh: 100.0, brakePercent: 50.0, wheelRps: rps, wheelSlip: slip);
-            Assert.False(provider.ExportCalibrations().ContainsKey(
+            Assert.False(provider.CalibrationData.ContainsKey(
                 CalibrationDataProvider.BuildKey("Spa", "Sauber", CalibrationDataProvider.RpsToSpeedMetric + CalibrationDataProvider.FrontSuffix)));
-            Assert.True(provider.ExportCalibrations().ContainsKey(
+            Assert.True(provider.CalibrationData.ContainsKey(
                 CalibrationDataProvider.BuildKey("Spa", "Sauber", CalibrationDataProvider.SlipMetric)));
 
             // Cruising below 50 km/h also suppresses the RPS reference.
             provider.Update("Spa", "Sauber", true, true, speedKmh: 30.0, brakePercent: 0.0, wheelRps: rps, wheelSlip: slip);
-            Assert.False(provider.ExportCalibrations().ContainsKey(
+            Assert.False(provider.CalibrationData.ContainsKey(
                 CalibrationDataProvider.BuildKey("Spa", "Sauber", CalibrationDataProvider.RpsToSpeedMetric + CalibrationDataProvider.FrontSuffix)));
 
             // Light-throttle cruising above 50 km/h feeds it.
             provider.Update("Spa", "Sauber", true, true, speedKmh: 100.0, brakePercent: 0.0, wheelRps: rps, wheelSlip: slip);
-            Assert.True(provider.ExportCalibrations().ContainsKey(
+            Assert.True(provider.CalibrationData.ContainsKey(
                 CalibrationDataProvider.BuildKey("Spa", "Sauber", CalibrationDataProvider.RpsToSpeedMetric + CalibrationDataProvider.FrontSuffix)));
         }
 
@@ -424,7 +424,7 @@ namespace QAdvanceFeedback.Tests
             for (int frame = 0; frame < 2200; frame++)
                 provider.Update("Spa", "Sauber", false, true, 100.0, 0.0, null, slip);
 
-            CalibrationData calibration = provider.ExportCalibrations()[
+            CalibrationData calibration = provider.CalibrationData[
                 CalibrationDataProvider.BuildKey("Spa", "Sauber", CalibrationDataProvider.SlipMetric)];
 
             // 2200 frames x 4 wheels = 8800 offered, but feeding stops just past the 7000 cap.

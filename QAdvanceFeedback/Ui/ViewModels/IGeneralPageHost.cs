@@ -18,10 +18,22 @@ namespace QAdvanceFeedback.Ui.ViewModels
         /// if neither can be read) - never hardcoded, so the General tab cannot drift from the DLL loaded.</summary>
         string PluginVersion { get; }
 
-        /// <summary>Imports SimHub's shipped ShakeIt precalibration now (the "Convert SimHub ShakeIt
-        /// Reference Data" button); <paramref name="overrideExisting"/> replaces data this plugin already
-        /// holds. Persists at once - not part of the page's Apply. Never throws (the plugin reports a
-        /// failure in the outcome's message).</summary>
+        /// <summary>Syncs the parameters file with SimHub's ShakeIt preset files now (the "Convert SimHub ShakeIt Reference
+        /// Data" button) - the same as every plugin start. <paramref name="overrideExisting"/>: a game already held takes
+        /// SimHub's values (true) or is kept, only new ones added (false).</summary>
         global::QAdvanceFeedback.ShakeItConversionOutcome ImportShakeItPrecalibration(bool overrideExisting);
+    }
+
+    /// <summary>
+    /// Optional host capability (owner, 2026-11-25, 1.3.0): the auto-update. The state itself is
+    /// <see cref="UpdateStatusViewModel.Current"/>, which the check sets from its own thread.
+    /// </summary>
+    public interface IUpdateHost
+    {
+        /// <summary>Starts the update check on a new background thread and returns at once.</summary>
+        void CheckForUpdate();
+
+        /// <summary>Puts the downloaded DLL in place and restarts SimHub; an error message, or null when restarting.</summary>
+        string ApplyUpdate();
     }
 }

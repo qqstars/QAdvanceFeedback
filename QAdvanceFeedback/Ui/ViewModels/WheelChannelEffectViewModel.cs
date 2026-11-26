@@ -106,7 +106,11 @@ namespace QAdvanceFeedback.Ui.ViewModels
             KeyData.Refreshed += Graph.Refresh;
             Algorithm = new ShakeItAlgorithmViewModel(isLock);
             Algorithm.Edited += (field, value) => Host.Hub?.Set(field, value, SettingsOrigin.ShakeItPanel);
+            CalibrationReset = new CalibrationResetViewModel(() => Host);
         }
+
+        /// <summary>Reset Calibration for the current track and car (shared with the other channel).</summary>
+        public CalibrationResetViewModel CalibrationReset { get; }
 
         /// <summary>The ShakeIt algorithm block (docs\shakeit-source-design.md §6): shown while the channel's
         /// source is ShakeIt Built-in; every edit applies through the hub at once, like the rest of the panel.</summary>
@@ -209,7 +213,13 @@ namespace QAdvanceFeedback.Ui.ViewModels
             OnPropertyChanged(nameof(Routing));
             KeyData.Activate();
             Graph.Refresh();
-            _refresh = Ticker.Every(TimeSpan.FromSeconds(1), () => { RefreshFallbackWarning(); if (KeyData.Auto) Graph.Refresh(); });
+            CalibrationReset.Refresh();
+            _refresh = Ticker.Every(TimeSpan.FromSeconds(1), () =>
+            {
+                RefreshFallbackWarning();
+                if (KeyData.Auto) Graph.Refresh();
+                CalibrationReset.Refresh();
+            });
         }
 
         protected override void OnDeactivated()

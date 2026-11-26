@@ -34,6 +34,7 @@ namespace QAdvanceFeedback.Ui.ViewModels
             Pulse = new PulseViewModel(ctx, isLock);
             // The key data the page shows drives the source graph; a pattern edit reaches the key data.
             Curve.Attach(KeyData);
+            CalibrationReset = new CalibrationResetViewModel(() => Ctx.Host);
 
             Sources.SourceChanged += (s, e) =>
             {
@@ -54,6 +55,24 @@ namespace QAdvanceFeedback.Ui.ViewModels
         public CurveEditorViewModel Curve { get; }
         public PulseViewModel Pulse { get; }
 
+        /// <summary>Reset Calibration for the current track and car (shared with the other channel's tab).</summary>
+        public CalibrationResetViewModel CalibrationReset { get; }
+
+        private CalibrationPersistViewModel _calibrationPersist;
+
+        /// <summary>"Persist Calibration data?" - the page gives both tabs the SAME instance
+        /// (<see cref="SettingsPageViewModel"/>); a tab built alone gets its own.</summary>
+        public CalibrationPersistViewModel CalibrationPersist
+        {
+            get => _calibrationPersist ?? (CalibrationPersist = new CalibrationPersistViewModel(() => Ctx.Host));
+            set
+            {
+                if (_calibrationPersist != null) _calibrationPersist.Changed -= CalibrationReset.Refresh;
+                _calibrationPersist = value;
+                if (_calibrationPersist != null) _calibrationPersist.Changed += CalibrationReset.Refresh;
+            }
+        }
+
         public void Activate()
         {
             if (_active) return;
@@ -61,8 +80,15 @@ namespace QAdvanceFeedback.Ui.ViewModels
             Ctx.Host.PluginStateChanged += OnPluginStateChanged;
             _hub = Ctx.Host.Hub;
             if (_hub != null) _hub.Changed += OnHubChanged;
-            _tick = Ctx.Ticker.Every(TimeSpan.FromSeconds(1), Sources.RefreshFallbackWarning);
+            _tick = Ctx.Ticker.Every(TimeSpan.FromSeconds(1), () =>
+            {
+                Sources.RefreshFallbackWarning();
+                CalibrationReset.Refresh();
+                CalibrationPersist.Refresh();
+            });
             Sources.Refresh();
+            CalibrationReset.Refresh();
+            CalibrationPersist.Refresh();
         }
 
         public void Deactivate()

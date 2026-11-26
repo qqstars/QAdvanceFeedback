@@ -61,7 +61,7 @@ namespace QAdvanceFeedback.Core.Normalized
             {
                 if (pair.Key == null) continue;
                 if (IsHiddenKey(pair.Key)) hidden.Add(pair);
-                else result[pair.Key] = pair.Value;
+                else result[KeyRules.SourceKeys.RekeyLearnerKey(pair.Key)] = pair.Value;   // Version 21: hashed source
             }
 
             // An empty internal identity has nowhere to move the hidden state to: it is still dropped.
@@ -82,13 +82,13 @@ namespace QAdvanceFeedback.Core.Normalized
         {
             string[] parts = (key ?? string.Empty).Split(new[] { Separator }, StringSplitOptions.None);
             return parts.Length > SourceSegment
-                && string.Equals(parts[SourceSegment], RetiredHiddenSourceIdentity, StringComparison.Ordinal);
+                && string.Equals(KeyRules.SourceKeys.FromKey(parts[SourceSegment]), RetiredHiddenSourceIdentity, StringComparison.Ordinal);
         }
 
         private static string WithSource(string key, string sourceIdentity)
         {
             string[] parts = key.Split(new[] { Separator }, StringSplitOptions.None);
-            parts[SourceSegment] = sourceIdentity;
+            parts[SourceSegment] = KeyRules.SourceKeys.ToKey(parts[0], sourceIdentity);   // Version 21: hashed source
             return string.Join(Separator, parts);
         }
     }

@@ -25,7 +25,7 @@ namespace QAdvanceFeedback.Integration.ShakeIt
     /// script editor / version code, so the page asks the plugin rather than re-deriving what the engine
     /// reads. Everything that touches SimHub or WPF lives here, never in a view model.
     /// </summary>
-    public sealed class PluginPageHost : IPluginSettingsPageHost, ILearningMaturityHost
+    public sealed class PluginPageHost : IPluginSettingsPageHost, ILearningMaturityHost, ICalibrationResetHost, IUpdateHost
     {
         private readonly QAdvanceFeedback _plugin;
         private readonly PluginManager _pluginManager;
@@ -70,6 +70,18 @@ namespace QAdvanceFeedback.Integration.ShakeIt
 
         public KeyDataMaturity LearnedKeyDataMaturity(bool isLock, string sourceIdentity) => _plugin.GetLearnedKeyDataMaturityForDisplay(isLock, sourceIdentity);
         public SlipAngleWindowMaturity? LearnedSlipAngleMaturity(string sourceIdentity) => _plugin.GetLearnedSlipAngleMaturityForDisplay(sourceIdentity);
+
+        // ---------------------------------------------------------------- ICalibrationResetHost
+
+        public bool HasCalibrationForCurrentKey() => _plugin.HasCalibrationForCurrentKey();
+        public bool ResetCalibrationForCurrentKey() => _plugin.ResetCalibrationForCurrentKey();
+        public bool PersistCalibration => _plugin.Settings?.General?.PersistSlipLockCalibration ?? true;
+        public void SetPersistCalibration(bool persist) => _plugin.SetPersistCalibration(persist);
+
+        // ---------------------------------------------------------------- IUpdateHost (1.3.0)
+
+        public void CheckForUpdate() => global::QAdvanceFeedback.PluginUpdater.CheckInBackground(m => SimHub.Logging.Current.Warn(m));
+        public string ApplyUpdate() => global::QAdvanceFeedback.PluginUpdater.Apply(global::QAdvanceFeedback.SimHubRestarter.Restart, m => SimHub.Logging.Current.Info(m));
 
         public TestEffectSession Session => QAdvanceFeedback.TestSession;
         public void PublishGForceTest(GForceOutput outputOrNull) => _plugin.PublishTestEffect(outputOrNull);

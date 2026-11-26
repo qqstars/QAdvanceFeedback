@@ -62,13 +62,15 @@ namespace QAdvanceFeedback.Tests
         }
 
         [Fact]
-        public void The_shipped_version_is_1_2_1_0()
+        public void The_shipped_version_is_1_3_0_0()
         {
             // 1.2.1.0: per-wheel slip-angle sources from QAdvanceFeedback.SlipAngleSource.json.
+            // 1.2.2.0: finished ShakeIt calibrations saved compact (parameters Version 17).
+            // 1.3.0.0: auto-update; hashed source keys (parameters Version 21).
             string csproj = File.ReadAllText(Path.Combine(
                 RepoRoot(), "QAdvanceFeedback", "QAdvanceFeedback.csproj"));
-            Assert.Contains("<AssemblyVersion>1.2.1.0</AssemblyVersion>", csproj);
-            Assert.Contains("<FileVersion>1.2.1.0</FileVersion>", csproj);
+            Assert.Contains("<AssemblyVersion>1.3.0.0</AssemblyVersion>", csproj);
+            Assert.Contains("<FileVersion>1.3.0.0</FileVersion>", csproj);
         }
     }
 }

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using Newtonsoft.Json;
 using QAdvanceFeedback.Core.Health;
@@ -35,6 +36,12 @@ namespace QAdvanceFeedback
     /// END of the previous one, two writes can never overlap and nothing ever queues. Only changed sections are
     /// regenerated (<see cref="RuntimeDocumentWriter"/>), and a write whose sections all came out as before is
     /// skipped.</item>
+    /// <item>THE SNAPSHOT IS TAKEN BY THE SAVE (owner, 2026-11-25): the data thread no longer hands its learners over
+    /// every frame. Each tick, at the LOWEST thread priority, raises <see cref="SnapshotRequested"/>; the data thread's
+    /// next frame hands over a copy (calibration: only the entries that changed) and the tick, after waiting at most
+    /// <see cref="SnapshotWait"/>, regenerates only the changed sections and writes - or writes nothing when they came
+    /// out as before. A game / car / track change and a calibration reset hand over at once and call
+    /// <see cref="SaveSoon"/>. No frame ever waits for the save.</item>
     /// <item>Shutdown (<see cref="Dispose"/>, AppDomain unload, process exit - whichever comes first, once): the timer
     /// is stopped (due infinite), disposed - waiting for a tick in progress - and the very last write is made.</item>
     /// <item>Startup recovery: a leftover temporary file next to a present parameters file is a write that never
@@ -103,6 +110,7 @@ namespace QAdvanceFeedback
             // An older file is rewritten in the current format by the first tick (5 s after start), not left as it
             // was until enough new driving happens to save every section again (owner, 2026-11-22: "the parameter
             // file, were not updated, when restart the simhub").
+            LoadedVersion = loadedVersion;
             LoadedOlderVersion = loadedVersion > 0 && loadedVersion < document.Version;
             if (importedFromLegacy || LoadedOlderVersion) _cache.MarkDirty();
 
@@ -117,6 +125,10 @@ namespace QAdvanceFeedback
         /// current format by the first tick. Learners whose saved shape changed (the Slip Angle learners, v15) are
         /// re-exported by the plugin right after their import, so that write carries the new shape.</summary>
         public bool LoadedOlderVersion { get; }
+
+        /// <summary>The Version of the file read at startup (0: none, or unreadable) - for migrations that apply only
+        /// below a given version.</summary>
+        public int LoadedVersion { get; }
 
         public void LoadLockLearners(out Dictionary<string, GripLearnerState> data) => _cache.LoadLockLearners(out data);
 
@@ -182,11 +194,11 @@ namespace QAdvanceFeedback
 
         /// <summary>Version 11 (1.0.7.1) - Layer 3's ShakeIt calibration and the converted shipped
         /// presets. See <c>Core.RawCalculator.Calibration.CalibrationDataProvider</c>.</summary>
-        public void LoadShakeItCalibration(out Dictionary<string, Core.RawCalculator.Calibration.CalibrationData> data)
-            => _cache.LoadShakeItCalibration(out data);
+        public void LoadSlipLockCalibration(out Dictionary<string, Core.RawCalculator.Calibration.CalibrationData> data)
+            => _cache.LoadSlipLockCalibration(out data);
 
-        public void SaveShakeItCalibration(Dictionary<string, Core.RawCalculator.Calibration.CalibrationData> data)
-            => _cache.SaveShakeItCalibration(data);
+        public void SaveSlipLockCalibration(Dictionary<string, Core.RawCalculator.Calibration.CalibrationData> data)
+            => _cache.SaveSlipLockCalibration(data);
 
         public void LoadShakeItPrecalibration(out Dictionary<string, Dictionary<string, Core.RawCalculator.Calibration.PreloadedCalibrationData>> data)
             => _cache.LoadShakeItPrecalibration(out data);
@@ -223,11 +235,7 @@ namespace QAdvanceFeedback
         public void SaveScaleEvidence(bool isLock, Dictionary<string, ScaleEvidenceState> data)
             => _cache.SaveScaleEvidence(isLock, data);
 
-        public void LoadShakeItSourceTimestamps(out Dictionary<string, long> data)
-            => _cache.LoadShakeItSourceTimestamps(out data);
 
-        public void SaveShakeItSourceTimestamps(Dictionary<string, long> data)
-            => _cache.SaveShakeItSourceTimestamps(data);
 
         /// <summary>The pre-per-car global Lock peak/samples imported from a legacy-named runtime
         /// file at construction, if any - false when nothing usable was found (fresh install, or the
@@ -304,8 +312,14 @@ namespace QAdvanceFeedback
         /// </summary>
         private void FlushTick()
         {
+            // The save runs at the LOWEST priority: it must never compete with the game's or SimHub's threads for a CPU.
+            // (A pool thread - its priority is restored at the end of the tick, before it goes back to the pool.)
+            Thread thread = Thread.CurrentThread;
+            ThreadPriority priority = thread.Priority;
             try
             {
+                thread.Priority = ThreadPriority.Lowest;
+                TakeLearningSnapshot();
                 WriteIfDirty();
             }
             catch (Exception e)
@@ -321,6 +335,7 @@ namespace QAdvanceFeedback
             }
             finally
             {
+                try { thread.Priority = priority; } catch (ThreadStateException) { }
                 // RE-ARM: the next write is due one interval after THIS one finished (owner's pattern) - never
                 // while shutting down, and a timer disposed meanwhile is simply left alone.
                 if (Volatile.Read(ref _shutDown) == 0)
@@ -329,6 +344,70 @@ namespace QAdvanceFeedback
                     catch (ObjectDisposedException) { }
                 }
             }
+        }
+
+        // ---------------------------------------------------------------- the learning snapshot (owner, 2026-11-25)
+
+        /// <summary>How long a save waits for the data thread to hand over the learned data - a few frames.</summary>
+        public static readonly TimeSpan SnapshotWait = TimeSpan.FromMilliseconds(250);
+
+        /// <summary>A learning frame within this long counts as "the game is running" (see <see cref="MarkLearningFrame"/>).</summary>
+        private const int LearningFrameRecentMs = 1000;
+
+        private int _snapshotRequested;
+        private int _lastLearningFrameTick;
+        private int _learningFrameSeen;
+        private readonly ManualResetEventSlim _snapshotTaken = new ManualResetEventSlim(false);
+
+        /// <summary>
+        /// Called by the DATA thread once per learning frame - one volatile write, nothing else. Tells a save whether a
+        /// game is feeding the learners right now (and so whether it is worth asking for their data).
+        /// </summary>
+        public void MarkLearningFrame()
+        {
+            Volatile.Write(ref _lastLearningFrameTick, Environment.TickCount);
+            Volatile.Write(ref _learningFrameSeen, 1);
+        }
+
+        /// <summary>
+        /// THE SAVE ASKS, THE DATA THREAD ANSWERS (owner, 2026-11-25: "only take the snapshot when the new saving thread
+        /// being created"). The learners belong to the data thread and are not thread-safe, so the save cannot read them
+        /// itself without stopping a frame. Instead it raises this flag; the data thread checks it once per frame (one
+        /// volatile read), and only when it is raised hands over a copy of the learned data
+        /// (<c>Save*</c>) and calls <see cref="SnapshotTaken"/>. No frame ever waits for the save.
+        /// </summary>
+        public bool SnapshotRequested => Volatile.Read(ref _snapshotRequested) != 0;
+
+        /// <summary>The data thread handed its learned data over (see <see cref="SnapshotRequested"/>).</summary>
+        public void SnapshotTaken()
+        {
+            Volatile.Write(ref _snapshotRequested, 0);
+            _snapshotTaken.Set();
+        }
+
+        /// <summary>
+        /// Writes as soon as possible instead of at the next 5-second tick - on a game / car / track change, or after a
+        /// reset (owner, 2026-11-25). The caller has already handed its data over (<c>Save*</c>); the tick runs on the
+        /// timer's own thread, never on the caller's.
+        /// </summary>
+        public void SaveSoon()
+        {
+            if (Volatile.Read(ref _shutDown) != 0) return;
+            try { _timer?.Change(TimeSpan.Zero, Timeout.InfiniteTimeSpan); }
+            catch (ObjectDisposedException) { }
+        }
+
+        /// <summary>
+        /// Asks the data thread for its learned data and waits up to <see cref="SnapshotWait"/> for it - only while a game
+        /// is feeding the learners (no frames: nothing has changed, so there is nothing to ask for). On the save thread.
+        /// </summary>
+        private void TakeLearningSnapshot()
+        {
+            if (Volatile.Read(ref _learningFrameSeen) == 0) return;
+            if (unchecked(Environment.TickCount - Volatile.Read(ref _lastLearningFrameTick)) > LearningFrameRecentMs) return;
+            _snapshotTaken.Reset();
+            Volatile.Write(ref _snapshotRequested, 1);
+            _snapshotTaken.Wait(SnapshotWait);
         }
 
         /// <summary>
@@ -418,7 +497,12 @@ namespace QAdvanceFeedback
                     if (loaded != null)
                     {
                         loadedVersion = loaded.Version;
-                        return Normalise(loaded);
+                        RuntimeDocument normalised = Normalise(loaded, out bool keysWereOld);
+                        // A file stamped Version 21 by a build that left the readable keys in it IS the older format:
+                        // reported as Version 20, so every section is written back and the calibration migrates too.
+                        if (keysWereOld && loadedVersion >= Core.KeyRules.KeyRule.LatestVersionNumber)
+                            loadedVersion = int.Parse(Core.KeyRules.KeyRule.LegacyVersion, System.Globalization.CultureInfo.InvariantCulture);
+                        return normalised;
                     }
                 }
             }
@@ -497,8 +581,12 @@ namespace QAdvanceFeedback
         /// leave either dictionary null (Newtonsoft does not run field initialisers for a property
         /// present-but-null in the source JSON) - normalised back to empty here so every downstream
         /// caller can rely on "never null", same guarantee <see cref="RuntimeCache"/> already gives.</summary>
-        private static RuntimeDocument Normalise(RuntimeDocument document)
+        private static RuntimeDocument Normalise(RuntimeDocument document) => Normalise(document, out _);
+
+        /// <param name="keysWereOld">The learner keys were in a pre-Version-21 form (and were converted).</param>
+        private static RuntimeDocument Normalise(RuntimeDocument document, out bool keysWereOld)
         {
+            int fileVersion = document.Version;
             document.Version = new RuntimeDocument().Version;   // it is written back in the current format
             document.LockLearners ??= new Dictionary<string, GripLearnerState>();
             document.SlipLearners ??= new Dictionary<string, GripLearnerState>();
@@ -517,7 +605,102 @@ namespace QAdvanceFeedback
             document.SlipAngleSpeedBands ??= new Dictionary<string, Core.SlipAngle.SlipAngleSpeedBandSetState>();
             document.LockScaleEvidence ??= new Dictionary<string, ScaleEvidenceState>();
             document.SlipScaleEvidence ??= new Dictionary<string, ScaleEvidenceState>();
+            // Version 18: the old name's section moves to SlipLockCalibration (a file with both keeps the new one).
+            document.SlipLockCalibration ??= new Dictionary<string, Core.RawCalculator.Calibration.CalibrationData>();
+            if (document.ShakeItCalibration != null && document.ShakeItCalibration.Count > 0 && document.SlipLockCalibration.Count == 0)
+                document.SlipLockCalibration = document.ShakeItCalibration;
+            document.ShakeItCalibration = null;
+            document.ShakeItSourceTimestamps = null;   // Version 18: no longer kept (the preset files are read every start)
+            keysWereOld = fileVersion < Core.KeyRules.KeyRule.LatestVersionNumber || HasReadableSourceKeys(document);
+            if (keysWereOld) RekeyToLatest(document);
             return document;
+        }
+
+        /// <summary>
+        /// A file written before Version 21 in the Version 21 key form, IN THE DOCUMENT ITSELF (owner, 2026-11-25: "the
+        /// parameters json show version 21, but still using the old key"). Converting only the learners' copies left
+        /// this document - the one the writer saves - with the readable keys, and a section is replaced only when its
+        /// learner next hands data over (while driving), so the first write stamped Version 21 on old keys. Now every
+        /// learner section's source part (a Version 20 part has no prefix and is read under <c>KeyRule20</c>) is hashed
+        /// here, <c>LastClutchKey</c> too, and the calibration takes its Version 21 form
+        /// (<see cref="Core.RawCalculator.Calibration.CalibrationDataProvider.MigrateLegacyKeys"/>). The vestigial
+        /// cross-car seeds are dropped (unused since 1.0.7). Every section is written back by the first tick
+        /// (<see cref="LoadedOlderVersion"/> marks them all).
+        /// </summary>
+        /// <summary>Every game the document's learner sections name (the first key part).</summary>
+        private static HashSet<string> KnownGames(RuntimeDocument d)
+        {
+            var games = new HashSet<string>(StringComparer.Ordinal);
+            void Add<T>(Dictionary<string, T> section)
+            {
+                if (section == null) return;
+                foreach (string k in section.Keys)
+                {
+                    int cut = k?.IndexOf("|#|", StringComparison.Ordinal) ?? -1;
+                    if (cut > 0) games.Add(k.Substring(0, cut));
+                }
+            }
+            Add(d.LockLearners); Add(d.SlipLearners); Add(d.LockScaleLearners); Add(d.SlipScaleLearners);
+            Add(d.SlipAngleLearners); Add(d.ClutchBiteLearners);
+            if (d.SurfaceSupportByGame != null) foreach (string g in d.SurfaceSupportByGame.Keys) if (!string.IsNullOrEmpty(g)) games.Add(g);
+            return games;
+        }
+
+        /// <summary>
+        /// A key stored INSIDE a value (owner, 2026-11-25: "the Latches.ReferenceKey does not updated to the new
+        /// definition"): each SMax evidence entry's borrowing latches name the key they borrowed from - converted like the
+        /// section keys, so a restart still finds its lender.
+        /// </summary>
+        private static void RekeyLatches(Dictionary<string, ScaleEvidenceState> section)
+        {
+            if (section == null) return;
+            foreach (ScaleEvidenceState state in section.Values)
+            {
+                if (state?.Latches == null) continue;
+                foreach (ScaleTierLatch latch in state.Latches)
+                    if (latch != null && !string.IsNullOrEmpty(latch.ReferenceKey))
+                        latch.ReferenceKey = Core.KeyRules.SourceKeys.RekeyLearnerKey(latch.ReferenceKey);
+            }
+        }
+
+        private static bool HasReadableLatch(Dictionary<string, ScaleEvidenceState> section) =>
+            section != null && section.Values.Any(state => state?.Latches != null && state.Latches.Any(latch =>
+                latch != null && !string.IsNullOrEmpty(latch.ReferenceKey)
+                && !string.Equals(Core.KeyRules.SourceKeys.RekeyLearnerKey(latch.ReferenceKey), latch.ReferenceKey, StringComparison.Ordinal)));
+
+        /// <summary>True when any learner key still holds a readable (Version 20) source part.</summary>
+        private static bool HasReadableSourceKeys(RuntimeDocument d)
+        {
+            bool Old<T>(Dictionary<string, T> section) => section != null
+                && section.Keys.Any(k => !string.Equals(Core.KeyRules.SourceKeys.RekeyLearnerKey(k), k, StringComparison.Ordinal));
+            return Old(d.LockLearners) || Old(d.SlipLearners) || Old(d.LockScaleLearners) || Old(d.SlipScaleLearners)
+                || Old(d.LockAnchors) || Old(d.LockScaleEvidence) || Old(d.SlipScaleEvidence) || Old(d.ClutchBiteLearners)
+                || Old(d.SlipAngleLearners) || Old(d.SlipAngleSpeedBands)
+                || HasReadableLatch(d.LockScaleEvidence) || HasReadableLatch(d.SlipScaleEvidence)
+                || !string.Equals(Core.KeyRules.SourceKeys.RekeyLearnerKey(d.LastClutchKey), d.LastClutchKey, StringComparison.Ordinal);
+        }
+
+        private static void RekeyToLatest(RuntimeDocument document)
+        {
+            document.LockLearners = Core.KeyRules.SourceKeys.RekeyLearners(document.LockLearners);
+            document.SlipLearners = Core.KeyRules.SourceKeys.RekeyLearners(document.SlipLearners);
+            document.LockScaleLearners = Core.KeyRules.SourceKeys.RekeyLearners(document.LockScaleLearners);
+            document.SlipScaleLearners = Core.KeyRules.SourceKeys.RekeyLearners(document.SlipScaleLearners);
+            document.LockPhysicalReference = Core.KeyRules.SourceKeys.RekeyLearners(document.LockPhysicalReference);
+            document.SlipPhysicalReference = Core.KeyRules.SourceKeys.RekeyLearners(document.SlipPhysicalReference);
+            document.LockAnchors = Core.KeyRules.SourceKeys.RekeyLearners(document.LockAnchors);
+            document.LockScaleEvidence = Core.KeyRules.SourceKeys.RekeyLearners(document.LockScaleEvidence);
+            document.SlipScaleEvidence = Core.KeyRules.SourceKeys.RekeyLearners(document.SlipScaleEvidence);
+            RekeyLatches(document.LockScaleEvidence);
+            RekeyLatches(document.SlipScaleEvidence);
+            document.ClutchBiteLearners = Core.KeyRules.SourceKeys.RekeyLearners(document.ClutchBiteLearners);
+            document.SlipAngleLearners = Core.KeyRules.SourceKeys.RekeyLearners(document.SlipAngleLearners);
+            document.SlipAngleSpeedBands = Core.KeyRules.SourceKeys.RekeyLearners(document.SlipAngleSpeedBands);
+            document.LastClutchKey = Core.KeyRules.SourceKeys.RekeyLearnerKey(document.LastClutchKey);
+            document.SlipLockCalibration = Core.RawCalculator.Calibration.CalibrationDataProvider.MigrateLegacyKeys(
+                document.SlipLockCalibration, KnownGames(document));
+            document.LockScaleCrossCarSeed = new Dictionary<string, ScaleLearnerState>(StringComparer.Ordinal);
+            document.SlipScaleCrossCarSeed = new Dictionary<string, ScaleLearnerState>(StringComparer.Ordinal);
         }
 
         /// <summary>Shuts down (see <see cref="Shutdown"/>): stops the timer and makes the very last write.</summary>

@@ -63,7 +63,28 @@ namespace QAdvanceFeedback.Core.RawCalculator
         {
             _trackIdWithConfig = trackIdWithConfig ?? string.Empty;
             _carModel = carModel ?? string.Empty;
+            _hasContext = true;
         }
+
+        /// <summary>As <see cref="SetContext(string, string)"/>, with the game - the first part of the calibration key
+        /// (Version 21, see <see cref="Calibration.CalibrationDataProvider.BuildKey(string, string, string, string)"/>).</summary>
+        public void SetContext(string gameId, string trackIdWithConfig, string carModel)
+        {
+            _calibration.GameId = gameId ?? string.Empty;
+            SetContext(trackIdWithConfig, carModel);
+        }
+
+        /// <summary>No frame has named a track / car yet: there is no current calibration key.</summary>
+        private bool _hasContext;
+
+        /// <summary>Whether the calibration holds any entry for the current (track, car) - see
+        /// <see cref="Calibration.CalibrationDataProvider.HasCalibration"/>.</summary>
+        public bool HasCalibrationForCurrentContext() =>
+            _hasContext && _calibration.HasCalibration(_trackIdWithConfig, _carModel);
+
+        /// <summary>Deletes every calibration entry of the current (track, car); the number deleted.</summary>
+        public int ResetCalibrationForCurrentContext() =>
+            _hasContext ? _calibration.ResetCalibration(_trackIdWithConfig, _carModel) : 0;
 
 
         /// <summary>

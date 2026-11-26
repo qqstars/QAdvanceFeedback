@@ -329,22 +329,23 @@ namespace QAdvanceFeedback.Core.Runtime
 
         private static readonly Dictionary<string, LockAnchorState> EmptyLockAnchors = new Dictionary<string, LockAnchorState>();
 
-        // ---- Version 11 (1.0.7.1): Layer 3's ShakeIt calibration, and the converted shipped presets.
+        // ---- Version 11 (1.0.7.1): Layer 3's slip / lock calibration (SlipLockCalibration, Version 18 name), and the
+        // presets converted from ShakeIt's own files.
         // NOTE both are stored BY REFERENCE, unlike every other section here. RawCalculatorEngine holds
         // the live provider and mutates its dictionary every frame; deep-copying on save would cost a
         // histogram clone at 60fps for no benefit, and the flush path already snapshots under the lock.
 
-        public void LoadShakeItCalibration(out Dictionary<string, RawCalculator.Calibration.CalibrationData> data)
+        public void LoadSlipLockCalibration(out Dictionary<string, RawCalculator.Calibration.CalibrationData> data)
         {
-            lock (_gate) { data = new Dictionary<string, RawCalculator.Calibration.CalibrationData>(_document.ShakeItCalibration, StringComparer.Ordinal); }
+            lock (_gate) { data = new Dictionary<string, RawCalculator.Calibration.CalibrationData>(_document.SlipLockCalibration, StringComparer.Ordinal); }
         }
 
-        public void SaveShakeItCalibration(Dictionary<string, RawCalculator.Calibration.CalibrationData> data)
+        public void SaveSlipLockCalibration(Dictionary<string, RawCalculator.Calibration.CalibrationData> data)
         {
             lock (_gate)
             {
-                _document.ShakeItCalibration = data ?? new Dictionary<string, RawCalculator.Calibration.CalibrationData>(StringComparer.Ordinal);
-                MarkSection(nameof(RuntimeDocument.ShakeItCalibration));
+                _document.SlipLockCalibration = data ?? new Dictionary<string, RawCalculator.Calibration.CalibrationData>(StringComparer.Ordinal);
+                MarkSection(nameof(RuntimeDocument.SlipLockCalibration));
             }
         }
 
@@ -376,19 +377,6 @@ namespace QAdvanceFeedback.Core.Runtime
             }
         }
 
-        public void LoadShakeItSourceTimestamps(out Dictionary<string, long> data)
-        {
-            lock (_gate) { data = new Dictionary<string, long>(_document.ShakeItSourceTimestamps, StringComparer.Ordinal); }
-        }
-
-        public void SaveShakeItSourceTimestamps(Dictionary<string, long> data)
-        {
-            lock (_gate)
-            {
-                _document.ShakeItSourceTimestamps = data ?? new Dictionary<string, long>(StringComparer.Ordinal);
-                MarkSection(nameof(RuntimeDocument.ShakeItSourceTimestamps));
-            }
-        }
 
 
         // ---- Version 12 (slip-angle plan, Task 15): the Slip Angle learners. Stored BY REFERENCE (a
@@ -490,7 +478,7 @@ namespace QAdvanceFeedback.Core.Runtime
 
         private static readonly Dictionary<string, double> EmptyMap = new Dictionary<string, double>();
 
-        private static readonly Dictionary<string, RawCalculator.Calibration.CalibrationData> EmptyShakeItCalibration
+        private static readonly Dictionary<string, RawCalculator.Calibration.CalibrationData> EmptySlipLockCalibration
             = new Dictionary<string, RawCalculator.Calibration.CalibrationData>();
 
         private static readonly Dictionary<string, Dictionary<string, RawCalculator.Calibration.PreloadedCalibrationData>> EmptyShakeItPrecalibration
@@ -499,7 +487,6 @@ namespace QAdvanceFeedback.Core.Runtime
         private static readonly Dictionary<string, RawCalculator.Calibration.GameCalibrationBounds> EmptyShakeItBounds
             = new Dictionary<string, RawCalculator.Calibration.GameCalibrationBounds>();
 
-        private static readonly Dictionary<string, long> EmptyShakeItStamps = new Dictionary<string, long>();
 
         public void Clear()
         {
@@ -551,10 +538,9 @@ namespace QAdvanceFeedback.Core.Runtime
             LockScaleCrossCarSeed = CloneScaleLearners(source.LockScaleCrossCarSeed),
             SlipScaleCrossCarSeed = CloneScaleLearners(source.SlipScaleCrossCarSeed),
             LockAnchors = CloneLockAnchors(source.LockAnchors),
-            ShakeItCalibration = new Dictionary<string, RawCalculator.Calibration.CalibrationData>(source.ShakeItCalibration ?? EmptyShakeItCalibration, StringComparer.Ordinal),
+            SlipLockCalibration = new Dictionary<string, RawCalculator.Calibration.CalibrationData>(source.SlipLockCalibration ?? EmptySlipLockCalibration, StringComparer.Ordinal),
             ShakeItPrecalibration = new Dictionary<string, Dictionary<string, RawCalculator.Calibration.PreloadedCalibrationData>>(source.ShakeItPrecalibration ?? EmptyShakeItPrecalibration, StringComparer.Ordinal),
             ShakeItGameBounds = new Dictionary<string, RawCalculator.Calibration.GameCalibrationBounds>(source.ShakeItGameBounds ?? EmptyShakeItBounds, StringComparer.Ordinal),
-            ShakeItSourceTimestamps = new Dictionary<string, long>(source.ShakeItSourceTimestamps ?? EmptyShakeItStamps, StringComparer.Ordinal),
             ClutchBiteLearners = CloneClutch(source.ClutchBiteLearners),
             LastClutchKey = source.LastClutchKey,
             LastKeyDataGame = source.LastKeyDataGame,
